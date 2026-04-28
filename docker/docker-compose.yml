@@ -1,0 +1,30 @@
+services:
+  patch-machine:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: patch-machine:0.1.0
+    container_name: patch-machine
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      PM_WORKSPACE_DIR: /var/pm/workspaces
+      PM_ARCHIVE_DIR: /app/archive
+      PM_HTTP_HOST: 0.0.0.0
+      PM_HTTP_PORT: 8080
+      PM_DISCORD_CHANNEL_MAP_PATH: /app/config/channel_map.yml
+    volumes:
+      - ../archive:/app/archive
+      - ../config:/app/config:ro
+      - pm-workspaces:/var/pm/workspaces
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health').read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  pm-workspaces:

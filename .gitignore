@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.env.local
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# Runtime workspaces (cloned repos)
+.pm_workspaces/
+/var/pm/
+workspaces/
+
+# IDE
+.idea/
+.vscode/
+
+# Do NOT ignore archive/ - GitOps source of truth

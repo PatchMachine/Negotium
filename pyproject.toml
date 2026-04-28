@@ -1,0 +1,125 @@
+[project]
+name = "patch-machine"
+version = "0.1.0"
+description = "Auto SI/SE agent system: GitHub Issues + Discord bug reports -> PM/Developer/Reviewer agents -> patch Diff proposals with MD GitOps archive."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Patch Machine Team" }]
+keywords = ["llm", "agents", "gitops", "automation", "si", "se"]
+
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "httpx>=0.27",
+    "discord.py>=2.3",
+    "GitPython>=3.1",
+    "PyGithub>=2.3",
+    "langgraph>=0.2",
+    "openai>=1.30",
+    "tree-sitter>=0.21",
+    "tree-sitter-languages>=1.10",
+    "rank-bm25>=0.2.2",
+    "portalocker>=2.8",
+    "structlog>=24.1",
+    "jinja2>=3.1",
+    "typer>=0.12",
+    "pyyaml>=6.0",
+    "detect-secrets>=1.4",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "respx>=0.21",
+    "ruff>=0.4",
+    "mypy>=1.10",
+    "pre-commit>=3.7",
+    "types-PyYAML",
+]
+sandbox = ["docker>=7.0"]
+local-ai = ["vllm>=0.4; platform_system == 'Linux'"]
+
+[project.scripts]
+patch-machine = "patch_machine.app.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["patch_machine"]
+
+[tool.hatch.build.targets.sdist]
+include = ["patch_machine", "templates", "README.md", "pyproject.toml"]
+
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["archive", "tests/fixtures"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B011", "N802"]
+"patch_machine/app/cli.py" = ["B008"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_configs = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]
+exclude = ["archive/", "tests/fixtures/"]
+
+[[tool.mypy.overrides]]
+module = [
+    "tree_sitter_languages.*",
+    "rank_bm25.*",
+    "github.*",
+    "discord.*",
+    "discord.ext.*",
+    "portalocker.*",
+    "git",
+    "git.*",
+    "langgraph.*",
+    "openai",
+    "openai.*",
+]
+ignore_missing_imports = true
+
+# External-SDK boundary adapters: we rely on duck-typing into untyped libs.
+[[tool.mypy.overrides]]
+module = [
+    "patch_machine.adapters.ingestion.discord_bot",
+    "patch_machine.adapters.llm.openai_adapter",
+    "patch_machine.adapters.llm.vllm_adapter",
+    "patch_machine.adapters.llm.ollama_adapter",
+    "patch_machine.adapters.notifier.github_notifier",
+    "patch_machine.adapters.notifier.discord_notifier",
+    "patch_machine.context.ast_indexer",
+    "patch_machine.context.md_retriever",
+    "patch_machine.context.repo_snapshot",
+]
+disallow_untyped_calls = false
+disallow_any_decorated = false
+disallow_untyped_decorators = false
+warn_return_any = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.coverage.run]
+branch = true
+source = ["patch_machine"]
+omit = ["patch_machine/adapters/llm/vllm_adapter.py", "patch_machine/adapters/llm/ollama_adapter.py"]
