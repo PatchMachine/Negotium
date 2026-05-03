@@ -8,9 +8,13 @@ from typing import Any
 from patch_machine.adapters.ingestion.channel_map import ChannelMap
 from patch_machine.adapters.ingestion.discord_bot import DiscordBotAdapter
 from patch_machine.adapters.ingestion.github_webhook import GitHubWebhookRouter
+from patch_machine.adapters.llm.anthropic_adapter import AnthropicProvider
 from patch_machine.adapters.llm.fake_adapter import FakeLlmProvider
 from patch_machine.adapters.llm.gateway import LlmGateway
+from patch_machine.adapters.llm.gemini_adapter import GeminiProvider
 from patch_machine.adapters.llm.openai_adapter import OpenAiProvider
+from patch_machine.adapters.llm.vllm_adapter import VllmProvider
+from patch_machine.adapters.llm.vllm_embedded_adapter import VllmEmbeddedProvider
 from patch_machine.adapters.notifier.discord_notifier import DiscordNotifier
 from patch_machine.adapters.notifier.github_notifier import GitHubNotifier
 from patch_machine.agents.developer import DeveloperAgent
@@ -20,6 +24,11 @@ from patch_machine.agents.reviewer import ReviewerAgent
 from patch_machine.app.settings import Settings, load_settings
 from patch_machine.application.event_bus import EventBus
 from patch_machine.application.orchestrator import Orchestrator
+from patch_machine.archive.access_control import AccessControlStore
+from patch_machine.archive.llm_runtime import LlmRuntimeStore
+from patch_machine.archive.operations_memory import OperationsMemoryStore
+from patch_machine.archive.secret_store import SecretStore
+from patch_machine.archive.uploads import UploadStore
 from patch_machine.archive.writer import ArchiveWriter
 from patch_machine.context.md_retriever import MarkdownRetriever
 from patch_machine.context.repo_snapshot import RepoSnapshotService
@@ -34,12 +43,25 @@ class Container:
     archive: ArchiveWriter
     repo_snapshot: RepoSnapshotService
     retriever: MarkdownRetriever
+    operations_memory: OperationsMemoryStore
+    llm_runtime: LlmRuntimeStore
+    access_control: AccessControlStore
+    secret_store: SecretStore
+    uploads: UploadStore
     llm: LlmProvider
     graph: AgentGraph
     discord: DiscordBotAdapter
     github_router: GitHubWebhookRouter
     orchestrator: Orchestrator
     metrics: AgentMetrics = field(default_factory=AgentMetrics)
+
+    def embedded_vllm(self) -> VllmEmbeddedProvider | None:
+        if not isinstance(self.llm, LlmGateway) or not self.llm.local_providers:
+            return None
+        provider = self.llm.local_providers.get("vllm")
+        if isinstance(provider, VllmEmbeddedProvider):
+            return provider
+        return None
 
     @classmethod
     def build(cls, settings: Settings | None = None) -> Container:
@@ -50,6 +72,11 @@ class Container:
         bus = EventBus(max_size=settings.event_queue_size)
 
         archive = ArchiveWriter(settings.archive_dir)
+        operations_memory = OperationsMemoryStore(settings.archive_dir)
+        llm_runtime = LlmRuntimeStore(settings.archive_dir)
+        access_control = AccessControlStore(settings.archive_dir)
+        secret_store = SecretStore(settings.archive_dir, master_key=settings.secret_key)
+        uploads = UploadStore(settings.archive_dir)
         repo_snapshot = RepoSnapshotService(settings.workspace_dir)
         retriever = MarkdownRetriever(
             archive_root=settings.archive_dir,
@@ -86,6 +113,7 @@ class Container:
             graph=graph,
             repo_snapshot=repo_snapshot,
             retriever=retriever,
+            operations_memory=operations_memory,
             archive=archive,
             notifiers=notifiers,
         )
@@ -101,6 +129,11 @@ class Container:
             archive=archive,
             repo_snapshot=repo_snapshot,
             retriever=retriever,
+            operations_memory=operations_memory,
+            llm_runtime=llm_runtime,
+            access_control=access_control,
+            secret_store=secret_store,
+            uploads=uploads,
             llm=llm,
             graph=graph,
             discord=discord,
@@ -111,16 +144,53 @@ class Container:
 
     @staticmethod
     def _build_llm(settings: Settings) -> LlmProvider:
-        cloud: LlmProvider
-        if settings.llm.provider == "openai":
-            cloud = OpenAiProvider(
+        fake = FakeLlmProvider()
+        cloud_providers: dict[str, LlmProvider] = {"fake": fake}
+        vllm_provider: LlmProvider
+        if settings.llm.vllm_mode == "embedded":
+            vllm_provider = VllmEmbeddedProvider(
+                model=settings.llm.vllm_model,
+                dtype=settings.llm.vllm_dtype,
+                max_model_len=settings.llm.vllm_max_model_len,
+                gpu_memory_utilization=settings.llm.vllm_gpu_memory_utilization,
+                enforce_eager=settings.llm.vllm_enforce_eager,
+                trust_remote_code=settings.llm.vllm_trust_remote_code,
+            )
+        else:
+            vllm_provider = VllmProvider(
+                base_url=settings.llm.vllm_base_url or settings.llm.local_base_url,
+                model=settings.llm.vllm_model,
+            )
+        local_providers: dict[str, LlmProvider] = {
+            "vllm": vllm_provider,
+            "fake": fake,
+        }
+        if settings.llm.openai_api_key or settings.llm.provider == "openai":
+            cloud_providers["openai"] = OpenAiProvider(
                 api_key=settings.llm.openai_api_key,
                 model=settings.llm.openai_model,
                 base_url=settings.llm.openai_base_url or None,
             )
-        else:
-            cloud = FakeLlmProvider()
-        return LlmGateway(cloud=cloud, default_route=settings.llm.default_route)
+        if settings.llm.anthropic_api_key:
+            cloud_providers["anthropic"] = AnthropicProvider(
+                api_key=settings.llm.anthropic_api_key,
+                model=settings.llm.anthropic_model,
+            )
+        if settings.llm.gemini_api_key:
+            cloud_providers["gemini"] = GeminiProvider(
+                api_key=settings.llm.gemini_api_key,
+                model=settings.llm.gemini_model,
+            )
+
+        cloud = cloud_providers.get(settings.llm.provider) or cloud_providers.get("openai") or fake
+        local = local_providers.get("vllm")
+        return LlmGateway(
+            cloud=cloud,
+            local=local,
+            default_route=settings.llm.default_route,
+            cloud_providers=cloud_providers,
+            local_providers=local_providers,
+        )
 
 
 def build_container(

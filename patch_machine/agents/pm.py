@@ -45,12 +45,14 @@ class PmAgent:
         issue: object,
         ast_summary: str,
         related_logs: list[str],
+        operations_memory_md: str = "",
     ) -> PmOutput:
         prompt = render(
             "pm.md",
             issue=issue,
             ast_summary=ast_summary or "_(summary unavailable)_",
             related_logs=related_logs,
+            operations_memory_md=operations_memory_md or "_(운영 메모리 없음)_",
         )
         messages = [
             LlmMessage("system", self._system_prompt),

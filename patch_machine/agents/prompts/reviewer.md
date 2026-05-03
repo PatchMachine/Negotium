@@ -4,6 +4,9 @@
 작업 명세서:
 {{ workspec_md }}
 
+운영 메모리:
+{{ operations_memory_md }}
+
 제안된 Diff:
 ```diff
 {{ diff }}

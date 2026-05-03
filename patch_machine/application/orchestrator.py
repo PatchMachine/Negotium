@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from patch_machine.agents.graph import AgentGraph, GraphState
 from patch_machine.application.event_bus import EventBus
+from patch_machine.archive.operations_memory import OperationsMemoryStore
 from patch_machine.archive.writer import ArchiveWriter
 from patch_machine.context.md_retriever import MarkdownRetriever
 from patch_machine.context.repo_snapshot import RepoSnapshotService
@@ -25,6 +26,7 @@ class Orchestrator:
     graph: AgentGraph
     repo_snapshot: RepoSnapshotService
     retriever: MarkdownRetriever
+    operations_memory: OperationsMemoryStore
     archive: ArchiveWriter
     notifiers: dict[str, Notifier]
 
@@ -37,11 +39,13 @@ class Orchestrator:
 
         snapshot_path = self.repo_snapshot.ensure(event.repo)
         related = self.retriever.find_related(event, limit=5)
+        operations_memory_md = self.operations_memory.read().to_markdown()
 
         state: GraphState = {
             "issue": event,
             "snapshot_path": str(snapshot_path),
             "related_logs": [str(p) for p in related],
+            "operations_memory_md": operations_memory_md,
             "workspec_md": "",
             "diff": "",
             "review_verdict": "",

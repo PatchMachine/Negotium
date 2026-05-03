@@ -23,6 +23,7 @@ class GraphState(TypedDict, total=False):
     issue: IssueEvent
     snapshot_path: str
     related_logs: list[str]
+    operations_memory_md: str
     ast_summary: str
     context_md: str
     workspec_md: str
@@ -79,6 +80,7 @@ class AgentGraph:
             issue=issue,
             ast_summary=state.get("ast_summary", ""),
             related_logs=list(state.get("related_logs", [])),
+            operations_memory_md=state.get("operations_memory_md", ""),
         )
         state["target_modules"] = pm_output.modules
         state["workspec_md"] = pm_output.rationale_md
@@ -89,6 +91,7 @@ class AgentGraph:
         dev_output = await self.developer.run(
             workspec_md=state.get("workspec_md", ""),
             ast_summary=state.get("ast_summary", ""),
+            operations_memory_md=state.get("operations_memory_md", ""),
             previous_review=state.get("suggested_fix_md") or None,
         )
         state["developer_md"] = dev_output.thought_md
@@ -99,6 +102,7 @@ class AgentGraph:
     async def _node_reviewer(self, state: GraphState) -> GraphState:
         rv = await self.reviewer.run(
             workspec_md=state.get("workspec_md", ""),
+            operations_memory_md=state.get("operations_memory_md", ""),
             diff=state.get("diff", ""),
         )
         state["review_verdict"] = rv.verdict

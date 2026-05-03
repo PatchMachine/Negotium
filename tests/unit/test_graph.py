@@ -57,7 +57,7 @@ def _issue() -> IssueEvent:
 
 
 async def test_happy_path_produces_diff_and_approval() -> None:
-    graph, _ = _make_graph(
+    graph, llm = _make_graph(
         [
             ScriptedResponse(text=_PM_OUTPUT, tag="pm"),
             ScriptedResponse(text=_DEV_OUTPUT, tag="developer"),
@@ -68,11 +68,13 @@ async def test_happy_path_produces_diff_and_approval() -> None:
         "issue": _issue(),
         "ast_summary": "",
         "related_logs": [],
+        "operations_memory_md": "## 운영 메모리\n- 회사 이름: Acme Retail",
     }
     result = await graph.run(state)
     assert result["review_verdict"] == "approve"
     assert result["target_modules"] == ["refund", "webhook"]
     assert "refund.py" in result["diff"]
+    assert any("Acme Retail" in message.content for call in llm.calls for message in call)
 
 
 async def test_self_correction_exhausts_then_rejects() -> None:

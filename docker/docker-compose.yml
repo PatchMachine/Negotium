@@ -7,13 +7,20 @@ services:
     container_name: patch-machine
     restart: unless-stopped
     env_file:
-      - ../.env
+      - path: ../.env
+        required: false
     environment:
       PM_WORKSPACE_DIR: /var/pm/workspaces
       PM_ARCHIVE_DIR: /app/archive
       PM_HTTP_HOST: 0.0.0.0
       PM_HTTP_PORT: 8080
       PM_DISCORD_CHANNEL_MAP_PATH: /app/config/channel_map.yml
+      # The Docker image does not ship the heavy local LLM stack. To run
+      # vLLM (Qwen3-4B etc.), launch the backend on the GPU host directly
+      # with `uv pip install -e '.[dev,local-ai]'` + `uv run patch-machine serve`.
+      PM_LLM_PROVIDER: openai
+      PM_LLM_DEFAULT_ROUTE: cloud
+      PM_VLLM_MODE: http
     volumes:
       - ../archive:/app/archive
       - ../config:/app/config:ro
@@ -26,5 +33,24 @@ services:
       timeout: 5s
       retries: 3
 
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/frontend.Dockerfile
+    image: patch-machine-frontend:0.1.0
+    container_name: patch-machine-frontend
+    restart: unless-stopped
+    depends_on:
+      - patch-machine
+    environment:
+      VITE_API_PROXY_TARGET: http://patch-machine:8080
+    volumes:
+      - ../frontend:/app
+      - frontend-node-modules:/app/node_modules
+    ports:
+      - "5173:5173"
+    command: npm run dev
+
 volumes:
+  frontend-node-modules:
   pm-workspaces:

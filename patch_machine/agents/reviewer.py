@@ -50,9 +50,15 @@ class ReviewerAgent:
         self,
         *,
         workspec_md: str,
+        operations_memory_md: str = "",
         diff: str,
     ) -> ReviewerOutput:
-        prompt = render("reviewer.md", workspec_md=workspec_md, diff=diff)
+        prompt = render(
+            "reviewer.md",
+            workspec_md=workspec_md,
+            operations_memory_md=operations_memory_md or "_(운영 메모리 없음)_",
+            diff=diff,
+        )
         messages = [
             LlmMessage("system", self._system_prompt),
             LlmMessage("user", prompt),

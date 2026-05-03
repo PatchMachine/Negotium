@@ -44,12 +44,14 @@ class DeveloperAgent:
         *,
         workspec_md: str,
         ast_summary: str,
+        operations_memory_md: str = "",
         previous_review: str | None = None,
     ) -> DeveloperOutput:
         prompt = render(
             "developer.md",
             workspec_md=workspec_md,
             ast_summary=ast_summary or "_(summary unavailable)_",
+            operations_memory_md=operations_memory_md or "_(운영 메모리 없음)_",
             previous_review=previous_review or "",
         )
         messages = [

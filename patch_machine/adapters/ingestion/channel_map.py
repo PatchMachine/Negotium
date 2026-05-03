@@ -24,8 +24,13 @@ class ChannelBinding:
 
 class ChannelMap:
     def __init__(self, bindings: list[ChannelBinding]) -> None:
+        self._bindings = bindings
         self._by_channel_id = {b.channel_id: b for b in bindings}
         self._by_channel_name = {(b.guild_id, b.channel_name): b for b in bindings}
+
+    @property
+    def bindings(self) -> list[ChannelBinding]:
+        return list(self._bindings)
 
     def by_channel_id(self, channel_id: str) -> ChannelBinding | None:
         return self._by_channel_id.get(channel_id)

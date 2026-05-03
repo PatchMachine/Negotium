@@ -28,11 +28,24 @@ class DiscordSettings(BaseSettings):
 
 class LlmSettings(BaseSettings):
     default_route: Literal["cloud", "local"] = "cloud"
-    provider: Literal["openai", "vllm", "ollama", "fake"] = "openai"
+    provider: Literal["openai", "vllm", "ollama", "anthropic", "gemini", "fake"] = "openai"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
     openai_base_url: str = ""
-    local_base_url: str = "http://localhost:11434"
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-3-5-sonnet-latest"
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-1.5-flash"
+    vllm_base_url: str = "http://localhost:8000/v1"
+    vllm_model: str = "Qwen/Qwen3-4B"
+    vllm_mode: Literal["embedded", "http"] = "embedded"
+    vllm_dtype: Literal["auto", "bfloat16", "float16"] = "bfloat16"
+    vllm_max_model_len: int = 8192
+    vllm_gpu_memory_utilization: float = 0.9
+    vllm_enforce_eager: bool = False
+    vllm_trust_remote_code: bool = True
+    vllm_preload_on_startup: bool = True
+    local_base_url: str = "http://localhost:8000/v1"
 
     model_config = SettingsConfigDict(env_prefix="PM_")
 
@@ -53,6 +66,7 @@ class Settings(BaseSettings):
     http_port: int = 8080
     event_queue_size: int = 100
     max_self_correction: int = 2
+    secret_key: str = ""
 
     github: GitHubSettings = Field(default_factory=GitHubSettings)
     discord: DiscordSettings = Field(default_factory=DiscordSettings)

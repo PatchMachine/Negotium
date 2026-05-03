@@ -10,6 +10,9 @@
 {{ issue.body }}
 ---
 
+운영 메모리:
+{{ operations_memory_md }}
+
 레포 AST 요약:
 {{ ast_summary }}
 

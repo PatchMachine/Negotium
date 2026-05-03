@@ -12,6 +12,8 @@ venv/
 htmlcov/
 dist/
 build/
+node_modules/
+frontend/dist/
 
 # Runtime workspaces (cloned repos)
 .pm_workspaces/
@@ -23,3 +25,5 @@ workspaces/
 .vscode/
 
 # Do NOT ignore archive/ - GitOps source of truth
+archive/secrets/
+archive/uploads/

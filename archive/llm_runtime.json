@@ -1,0 +1,8 @@
+{
+  "local_enabled": true,
+  "api_enabled": true,
+  "default_route": "local",
+  "default_provider": "vllm",
+  "local_model": "Qwen/Qwen3-4B",
+  "updated_at": "2026-05-03T14:02:32.921543+00:00"
+}

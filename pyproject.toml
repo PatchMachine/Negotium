@@ -43,7 +43,15 @@ dev = [
     "types-PyYAML",
 ]
 sandbox = ["docker>=7.0"]
-local-ai = ["vllm>=0.4; platform_system == 'Linux'"]
+# Heavy GPU stack — installed only on Linux dev machines with CUDA.
+# flash-attn requires the host CUDA toolchain and tends to fail under
+# pip's build isolation; install it manually after this group:
+#   uv pip install --no-build-isolation 'flash-attn>=2.6'
+local-ai = [
+    "vllm>=0.6; platform_system == 'Linux'",
+    "transformers>=4.44",
+    "accelerate>=0.30",
+]
 
 [project.scripts]
 patch-machine = "patch_machine.app.cli:app"
@@ -102,6 +110,7 @@ module = [
     "patch_machine.adapters.ingestion.discord_bot",
     "patch_machine.adapters.llm.openai_adapter",
     "patch_machine.adapters.llm.vllm_adapter",
+    "patch_machine.adapters.llm.vllm_embedded_adapter",
     "patch_machine.adapters.llm.ollama_adapter",
     "patch_machine.adapters.notifier.github_notifier",
     "patch_machine.adapters.notifier.discord_notifier",
@@ -122,4 +131,8 @@ filterwarnings = ["ignore::DeprecationWarning"]
 [tool.coverage.run]
 branch = true
 source = ["patch_machine"]
-omit = ["patch_machine/adapters/llm/vllm_adapter.py", "patch_machine/adapters/llm/ollama_adapter.py"]
+omit = [
+    "patch_machine/adapters/llm/vllm_adapter.py",
+    "patch_machine/adapters/llm/vllm_embedded_adapter.py",
+    "patch_machine/adapters/llm/ollama_adapter.py",
+]

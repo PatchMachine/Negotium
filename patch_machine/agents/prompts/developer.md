@@ -4,6 +4,9 @@
 작업 명세서:
 {{ workspec_md }}
 
+운영 메모리:
+{{ operations_memory_md }}
+
 AST 요약:
 {{ ast_summary }}
 
