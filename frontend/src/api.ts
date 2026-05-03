@@ -47,7 +47,7 @@ export type ChatResponse = {
 export type LocalLlmStatus = {
   enabled: boolean;
   mode: string;
-  state: 'disabled' | 'offline' | 'loading' | 'running' | 'error' | 'http' | string;
+  state: 'disabled' | 'offline' | 'loading' | 'running' | 'error' | 'unavailable' | string;
   model: string;
   loaded: boolean;
   message: string;

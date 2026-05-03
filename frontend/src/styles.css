@@ -543,6 +543,11 @@ textarea {
   background: var(--danger-soft);
 }
 
+.local-llm-status-unavailable {
+  border-left-color: var(--danger);
+  background: var(--danger-soft);
+}
+
 .status-pill {
   border: 1px solid var(--line);
   border-radius: 999px;

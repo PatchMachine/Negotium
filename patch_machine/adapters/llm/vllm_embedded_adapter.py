@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import os
 import threading
 import time
 from collections.abc import Sequence
@@ -57,12 +58,28 @@ class _EngineBundle:
 
 VllmEngineState = Literal["offline", "loading", "running", "error"]
 
+
+class VllmEmbeddedError(RuntimeError):
+    """Raised when the embedded vLLM engine cannot be started or used."""
+
+
 _ENGINE: _EngineBundle | None = None
 _ENGINE_LOCK = threading.Lock()
 _ENGINE_STATE: VllmEngineState = "offline"
 _ENGINE_ERROR = ""
 _ENGINE_STARTED_AT: datetime | None = None
 _ENGINE_READY_AT: datetime | None = None
+
+
+def _friendly_engine_error(exc: BaseException) -> str:
+    raw = str(exc)
+    if "Cannot re-initialize CUDA in forked subprocess" in raw:
+        return (
+            "vLLM EngineCore가 fork 방식으로 CUDA를 다시 초기화하려다 실패했습니다. "
+            "PM_VLLM_WORKER_MULTIPROC_METHOD=spawn 으로 실행해야 합니다. "
+            "프로세스를 완전히 종료한 뒤 다시 시작하세요."
+        )
+    return raw
 
 
 def _default_engine_factory(
@@ -73,18 +90,24 @@ def _default_engine_factory(
     gpu_memory_utilization: float,
     enforce_eager: bool,
     trust_remote_code: bool,
+    worker_multiproc_method: str,
 ) -> _EngineBundle:
     """Build the real :class:`vllm.LLM` engine plus its chat tokenizer.
 
     Imports are local so importing this module never triggers a CUDA load.
     """
 
-    from transformers import AutoTokenizer  # type: ignore[import-not-found]
-    from vllm import LLM, SamplingParams  # type: ignore[import-not-found]
+    # vLLM starts an EngineCore subprocess. With uvicorn/FastAPI, CUDA can be
+    # touched before that subprocess exists; fork then fails with
+    # "Cannot re-initialize CUDA in forked subprocess". Force spawn before vLLM import.
+    os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = worker_multiproc_method
+
+    from transformers import AutoTokenizer
+    from vllm import LLM, SamplingParams
 
     engine = LLM(
         model=model,
-        dtype=dtype,
+        dtype=cast(Any, dtype),
         max_model_len=max_model_len,
         gpu_memory_utilization=gpu_memory_utilization,
         enforce_eager=enforce_eager,
@@ -111,6 +134,7 @@ class VllmEmbeddedProvider(LlmProvider):
         gpu_memory_utilization: float = 0.9,
         enforce_eager: bool = False,
         trust_remote_code: bool = True,
+        worker_multiproc_method: str = "spawn",
         top_p: float = 0.95,
         engine_factory: Any = None,
     ) -> None:
@@ -120,6 +144,7 @@ class VllmEmbeddedProvider(LlmProvider):
         self._gpu_memory_utilization = gpu_memory_utilization
         self._enforce_eager = enforce_eager
         self._trust_remote_code = trust_remote_code
+        self._worker_multiproc_method = worker_multiproc_method
         self._top_p = top_p
         self._engine_factory = engine_factory or _default_engine_factory
         self._log = get_logger(component="llm.vllm.embedded", model=model)
@@ -219,11 +244,12 @@ class VllmEmbeddedProvider(LlmProvider):
                     gpu_memory_utilization=self._gpu_memory_utilization,
                     enforce_eager=self._enforce_eager,
                     trust_remote_code=self._trust_remote_code,
+                    worker_multiproc_method=self._worker_multiproc_method,
                 )
             except Exception as exc:
                 _ENGINE_STATE = "error"
-                _ENGINE_ERROR = str(exc)
-                raise
+                _ENGINE_ERROR = _friendly_engine_error(exc)
+                raise VllmEmbeddedError(_ENGINE_ERROR) from exc
             else:
                 _ENGINE = bundle
                 _ENGINE_STATE = "running"
@@ -244,7 +270,7 @@ def reset_engine_for_tests(*, clear_cuda: bool = False) -> None:
     gc.collect()
     if clear_cuda:
         try:
-            import torch  # type: ignore[import-not-found]
+            import torch
 
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()

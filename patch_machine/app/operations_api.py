@@ -17,6 +17,7 @@ from patch_machine.adapters.llm.gateway import LlmGateway
 from patch_machine.adapters.llm.gemini_adapter import GeminiProvider
 from patch_machine.adapters.llm.openai_adapter import OpenAiProvider
 from patch_machine.adapters.llm.vllm_adapter import VllmConnectionError, VllmProvider
+from patch_machine.adapters.llm.vllm_embedded_adapter import VllmEmbeddedError
 from patch_machine.app.container import Container
 from patch_machine.archive.access_control import ALL_PERMISSIONS, RoleRecord, UserRecord
 from patch_machine.archive.llm_runtime import LlmProviderName, LlmRuntimeConfig
@@ -255,6 +256,15 @@ def create_operations_api_router(container: Container) -> APIRouter:
         x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
     ) -> LocalLlmStatusPayload:
         _require(container, x_pm_user, "llm:chat")
+        if container.embedded_vllm() is None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "현재 백엔드는 vLLM 임베드 모드가 아닙니다. Docker 백엔드는 로컬 GPU 모델을 "
+                    "직접 올릴 수 없으니 호스트에서 PM_VLLM_MODE=embedded 로 patch-machine serve를 "
+                    "실행하세요."
+                ),
+            )
         runtime = container.llm_runtime.read()
         if not runtime.local_enabled:
             container.llm_runtime.write(
@@ -298,6 +308,16 @@ def create_operations_api_router(container: Container) -> APIRouter:
         provider = payload.provider or runtime.default_provider
         if route == "local" and not runtime.local_enabled:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="local LLM route is disabled")
+        if route == "local" and provider == "vllm" and container.embedded_vllm() is None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "현재 백엔드는 vLLM 임베드 모드가 아니라 HTTP 모드입니다. "
+                    "Docker 컨테이너 안의 localhost:8000은 GPU 모델이 아닙니다. "
+                    "호스트에서 PM_VLLM_MODE=embedded 로 백엔드를 실행하거나, "
+                    "PM_VLLM_BASE_URL에 실제 vLLM 서버 주소를 넣으세요."
+                ),
+            )
         if route == "api" and not runtime.api_enabled:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="API LLM route is disabled")
         llm_route: LlmRoute = "local" if route == "local" else "cloud"
@@ -639,10 +659,13 @@ def _local_llm_status(container: Container) -> LocalLlmStatusPayload:
         return LocalLlmStatusPayload(
             enabled=True,
             mode=container.settings.llm.vllm_mode,
-            state="http",
+            state="unavailable",
             model=model,
             loaded=False,
-            message="외부 vLLM HTTP 서버 모드입니다. PM_VLLM_BASE_URL 상태를 확인하세요.",
+            message=(
+                "현재 백엔드는 로컬 GPU 임베드 모드가 아닙니다. Docker 백엔드에서는 모델을 직접 "
+                "올릴 수 없으니 호스트에서 PM_VLLM_MODE=embedded 로 실행하세요."
+            ),
         )
     raw = provider.status()
     state = str(raw["state"])
@@ -769,6 +792,11 @@ async def _complete_with_provider(
             max_tokens=max_tokens,
         )
     except VllmConnectionError as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except VllmEmbeddedError as exc:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),

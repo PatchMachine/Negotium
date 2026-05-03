@@ -45,6 +45,7 @@ class LlmSettings(BaseSettings):
     vllm_enforce_eager: bool = False
     vllm_trust_remote_code: bool = True
     vllm_preload_on_startup: bool = True
+    vllm_worker_multiproc_method: Literal["spawn", "fork"] = "spawn"
     local_base_url: str = "http://localhost:8000/v1"
 
     model_config = SettingsConfigDict(env_prefix="PM_")

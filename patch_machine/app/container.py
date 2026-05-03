@@ -155,6 +155,7 @@ class Container:
                 gpu_memory_utilization=settings.llm.vllm_gpu_memory_utilization,
                 enforce_eager=settings.llm.vllm_enforce_eager,
                 trust_remote_code=settings.llm.vllm_trust_remote_code,
+                worker_multiproc_method=settings.llm.vllm_worker_multiproc_method,
             )
         else:
             vllm_provider = VllmProvider(

@@ -28,7 +28,7 @@ class VllmProvider(LlmProvider):
         model: str = "Qwen/Qwen3-4B",
         api_key: str = "EMPTY",
         client: httpx.AsyncClient | None = None,
-        startup_wait_seconds: float = 300.0,
+        startup_wait_seconds: float = 5.0,
         retry_interval_seconds: float = 2.0,
     ) -> None:
         self._base_url = base_url.rstrip("/")
@@ -75,8 +75,9 @@ class VllmProvider(LlmProvider):
                         error=str(exc),
                     )
                     raise VllmConnectionError(
-                        "vLLM 서버에 연결할 수 없습니다. "
-                        "컨테이너가 모델을 내려받거나 로딩 중이면 수 분 후 다시 시도하세요."
+                        f"vLLM HTTP 서버({self._base_url})에 연결할 수 없습니다. "
+                        "로컬 GPU 임베드 모드는 Docker 백엔드가 아니라 호스트에서 "
+                        "`PM_VLLM_MODE=embedded uv run patch-machine serve`로 실행해야 합니다."
                     ) from exc
                 self._log.info(
                     "llm.vllm.waiting_for_server",

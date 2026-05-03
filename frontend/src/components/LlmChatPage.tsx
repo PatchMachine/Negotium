@@ -70,6 +70,10 @@ export default function LlmChatPage() {
   }
 
   async function toggleLocalRuntime() {
+    if (localStatus?.state === 'unavailable') {
+      setNotice(localStatus.message);
+      return;
+    }
     setBusy(true);
     setNotice(null);
     try {
