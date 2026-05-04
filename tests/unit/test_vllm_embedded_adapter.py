@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -36,7 +37,7 @@ class _FakeEngine:
     def __init__(self) -> None:
         self.calls: list[tuple[list[str], _FakeSamplingParams]] = []
 
-    def generate(self, prompts: list[str], params: _FakeSamplingParams) -> list[_FakeRequestOutput]:
+    def generate(self, prompts: Sequence[str], params: Any) -> Sequence[_FakeRequestOutput]:
         self.calls.append((list(prompts), params))
         return [
             _FakeRequestOutput(
@@ -52,7 +53,7 @@ class _FakeTokenizer:
 
     def apply_chat_template(
         self,
-        messages: list[dict[str, str]],
+        messages: Sequence[dict[str, str]],
         *,
         tokenize: bool,
         add_generation_prompt: bool,

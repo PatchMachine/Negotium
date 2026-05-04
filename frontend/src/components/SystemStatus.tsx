@@ -14,7 +14,7 @@ export default function SystemStatus({ loading, status, onRefresh }: Props) {
       <div className="panel-heading">
         <p className="eyebrow">System Status</p>
         <h2>백엔드 상태</h2>
-        <p>FastAPI 큐, 메트릭, 운영 메모리 설정 여부를 로컬 프론트엔드에서 확인합니다.</p>
+        <p>FastAPI 큐, 메트릭, 패치머신 영구메모리(운영) 설정 여부를 로컬 프론트엔드에서 확인합니다.</p>
       </div>
 
       <div className="status-list">
@@ -24,7 +24,7 @@ export default function SystemStatus({ loading, status, onRefresh }: Props) {
           value={status ? `${status.queue_size} / ${status.queue_capacity}` : '-'}
         />
         <StatusItem
-          label="운영 메모리"
+          label="패치머신 영구메모리"
           value={status?.operations_memory_configured ? '설정됨' : '초기화 상태'}
         />
       </div>

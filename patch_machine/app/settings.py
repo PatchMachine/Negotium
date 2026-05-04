@@ -47,6 +47,7 @@ class LlmSettings(BaseSettings):
     vllm_preload_on_startup: bool = True
     vllm_worker_multiproc_method: Literal["spawn", "fork"] = "spawn"
     local_base_url: str = "http://localhost:8000/v1"
+    gateway_url: str = ""
 
     model_config = SettingsConfigDict(env_prefix="PM_")
 
@@ -65,6 +66,8 @@ class Settings(BaseSettings):
     archive_dir: Path = Path("./archive")
     http_host: str = "0.0.0.0"
     http_port: int = 8080
+    llm_gateway_host: str = "0.0.0.0"
+    llm_gateway_port: int = 8090
     event_queue_size: int = 100
     max_self_correction: int = 2
     secret_key: str = ""

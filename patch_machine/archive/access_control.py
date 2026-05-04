@@ -12,6 +12,9 @@ import portalocker
 ALL_PERMISSIONS = [
     "admin:api_keys",
     "admin:users",
+    "admin:local_llm",
+    "admin:hr_evaluation",
+    "admin:mcp",
     "memory:write",
     "llm:chat",
     "documents:write",
@@ -125,7 +128,7 @@ class AccessControlStore:
             return _default_payload()
         raw = json.loads(self._path.read_text(encoding="utf-8"))
         roles = [RoleRecord.from_mapping(item) for item in raw.get("roles", [])]
-        users = [UserRecord.from_mapping(item) for item in raw.get("users", [])]
+        users = [_normalize_user(UserRecord.from_mapping(item)) for item in raw.get("users", [])]
         if not roles:
             return _default_payload()
         default_payload = _default_payload()
@@ -134,7 +137,8 @@ class AccessControlStore:
         for default_role in default_roles:
             if all(role.id != default_role.id for role in roles):
                 roles.append(default_role)
-        if all(user.id != "owner" for user in users):
+        has_owner_role_user = any(user.role_id == "owner" for user in users)
+        if not has_owner_role_user and all(user.id != "owner" for user in users):
             default_users = default_payload["users"]
             assert all(isinstance(user, UserRecord) for user in default_users)
             owner = next(user for user in default_users if user.id == "owner")
@@ -160,7 +164,7 @@ class AccessControlStore:
         assert all(isinstance(user, UserRecord) for user in users)
         if user_id:
             return next((user for user in users if user.id == user_id), None)
-        return next((user for user in users if user.role_id == "owner"), None)
+        return None
 
 
 def _default_payload() -> dict[str, list[RoleRecord] | list[UserRecord]]:
@@ -182,6 +186,18 @@ def _default_payload() -> dict[str, list[RoleRecord] | list[UserRecord]]:
             RoleRecord(id="viewer", name="조회자", level=10, permissions=["work:read"]),
         ],
         "users": [
-            UserRecord(id="owner", display_name="Local Owner", title="대표", role_id="owner"),
+            UserRecord(id="owner", display_name="시스템 관리자", title="대표", role_id="owner"),
         ],
     }
+
+
+def _normalize_user(user: UserRecord) -> UserRecord:
+    if user.id == "owner" and user.display_name == "Local Owner":
+        return UserRecord(
+            id=user.id,
+            display_name="시스템 관리자",
+            title="시스템 관리자",
+            role_id=user.role_id,
+            active=user.active,
+        )
+    return user

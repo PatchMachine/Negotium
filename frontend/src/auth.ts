@@ -1,18 +1,24 @@
-const STORAGE_KEY = 'patch-machine-user-id';
-const SAFE_USER_ID = /^[A-Za-z0-9._-]+$/;
+const TOKEN_KEY = 'patch-machine-session-token';
 
-function normalizeUserId(userId: string | null): string {
-  const trimmed = (userId || '').trim();
-  if (!trimmed || !SAFE_USER_ID.test(trimmed)) {
-    return 'owner';
+export function getSessionToken(): string {
+  return localStorage.getItem(TOKEN_KEY) || '';
+}
+
+export function setSessionToken(token: string) {
+  if (token) {
+    localStorage.setItem(TOKEN_KEY, token);
+  } else {
+    localStorage.removeItem(TOKEN_KEY);
   }
-  return trimmed;
 }
 
-export function getCurrentUserId(): string {
-  return normalizeUserId(localStorage.getItem(STORAGE_KEY));
-}
-
-export function setCurrentUserId(userId: string) {
-  localStorage.setItem(STORAGE_KEY, normalizeUserId(userId));
+export function getAuthHeaders(): Record<string, string> {
+  const token = getSessionToken();
+  if (!token) {
+    return {};
+  }
+  return {
+    Authorization: `Bearer ${token}`,
+    'X-PM-User': `Bearer ${token}`,
+  };
 }

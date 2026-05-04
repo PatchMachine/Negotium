@@ -29,6 +29,7 @@ dependencies = [
     "pyyaml>=6.0",
     "detect-secrets>=1.4",
     "python-multipart>=0.0.9",
+    "openpyxl>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -101,6 +102,7 @@ module = [
     "langgraph.*",
     "openai",
     "openai.*",
+    "openpyxl",
 ]
 ignore_missing_imports = true
 

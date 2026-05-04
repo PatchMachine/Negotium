@@ -10,6 +10,7 @@ from patch_machine.adapters.llm.fake_adapter import FakeLlmProvider, ScriptedRes
 from patch_machine.app.container import Container
 from patch_machine.app.main import create_app
 from patch_machine.app.settings import Settings
+from patch_machine.archive.access_control import UserRecord
 from patch_machine.archive.llm_runtime import LlmRuntimeConfig
 from patch_machine.archive.operations_memory import OperationsMemory
 
@@ -28,7 +29,9 @@ def test_health_endpoint_reports_queue_state() -> None:
 
 def test_contributor_site_routes_are_served(tmp_path: Path) -> None:
     container = Container.build(
-        Settings(env="test", archive_dir=tmp_path / "archive", workspace_dir=tmp_path / "workspaces")
+        Settings(
+            env="test", archive_dir=tmp_path / "archive", workspace_dir=tmp_path / "workspaces"
+        )
     )
     app = create_app(container)
     with TestClient(app) as client:
@@ -77,12 +80,14 @@ def test_operations_memory_api_round_trips(tmp_path: Path) -> None:
     container = Container.build(
         Settings(env="test", archive_dir=archive_dir, workspace_dir=tmp_path / "workspaces")
     )
+    headers = _auth_headers(container)
     app = create_app(container)
 
     with TestClient(app) as client:
         empty = client.get("/api/operations-memory")
         saved = client.put(
             "/api/operations-memory",
+            headers=headers,
             json={
                 "company_name": "Acme Retail",
                 "office_project": "오피스 운영",
@@ -107,6 +112,7 @@ def test_llm_chat_uses_operations_memory_context(tmp_path: Path) -> None:
     )
     fake = FakeLlmProvider(responses=[ScriptedResponse(text="청우식품 문서 자동화 상태입니다.")])
     container.llm = fake
+    headers = _auth_headers(container)
     container.operations_memory.write(
         OperationsMemory(
             company_name="청우식품",
@@ -120,6 +126,7 @@ def test_llm_chat_uses_operations_memory_context(tmp_path: Path) -> None:
         runtime = client.get("/api/llm/runtime")
         response = client.post(
             "/api/llm/chat",
+            headers=headers,
             json={"message": "현재 업무 요약해줘", "route": "api", "provider": "fake"},
         )
 
@@ -131,7 +138,9 @@ def test_llm_chat_uses_operations_memory_context(tmp_path: Path) -> None:
 
 def test_progress_and_integrations_degrade_without_external_config(tmp_path: Path) -> None:
     container = Container.build(
-        Settings(env="test", archive_dir=tmp_path / "archive", workspace_dir=tmp_path / "workspaces")
+        Settings(
+            env="test", archive_dir=tmp_path / "archive", workspace_dir=tmp_path / "workspaces"
+        )
     )
     app = create_app(container)
 
@@ -163,8 +172,11 @@ def test_ai_office_generation_endpoints_write_archive_docs(tmp_path: Path) -> No
         ]
     )
     container.llm_runtime.write(
-        LlmRuntimeConfig(default_route="api", default_provider="fake", local_enabled=True, api_enabled=True)
+        LlmRuntimeConfig(
+            default_route="api", default_provider="fake", local_enabled=True, api_enabled=True
+        )
     )
+    headers = _auth_headers(container)
     container.operations_memory.write(
         OperationsMemory(
             company_name="청우식품",
@@ -179,6 +191,7 @@ def test_ai_office_generation_endpoints_write_archive_docs(tmp_path: Path) -> No
     with TestClient(app) as client:
         hiring = client.post(
             "/api/hr/role-requirements",
+            headers=headers,
             json={
                 "role_title": "문서 자동화 담당자",
                 "business_need": "Discord 문서 자동화",
@@ -187,6 +200,7 @@ def test_ai_office_generation_endpoints_write_archive_docs(tmp_path: Path) -> No
         )
         handover = client.post(
             "/api/handover/brief",
+            headers=headers,
             json={
                 "work_title": "Discord 문서 접수 자동화",
                 "outgoing_owner": "A",
@@ -196,6 +210,7 @@ def test_ai_office_generation_endpoints_write_archive_docs(tmp_path: Path) -> No
         )
         document = client.post(
             "/api/documents/generate",
+            headers=headers,
             json={
                 "document_type": "meeting_minutes",
                 "title": "자동화 회의",
@@ -213,6 +228,159 @@ def test_ai_office_generation_endpoints_write_archive_docs(tmp_path: Path) -> No
     assert (archive_dir / hiring.json()["path"]).exists()
 
 
+def test_work_memory_architecture_and_schedule_endpoints(tmp_path: Path) -> None:
+    archive_dir = tmp_path / "archive"
+    container = Container.build(
+        Settings(env="test", archive_dir=archive_dir, workspace_dir=tmp_path / "workspaces")
+    )
+    container.llm = FakeLlmProvider(
+        responses=[
+            ScriptedResponse(text="## 업무 아키텍처\n- 접수\n- 분류"),
+            ScriptedResponse(text="| 담당자 | 업무 |\n| 관리팀 | 검토 |"),
+        ]
+    )
+    container.llm_runtime.write(
+        LlmRuntimeConfig(
+            default_route="api", default_provider="fake", local_enabled=True, api_enabled=True
+        )
+    )
+    headers = _auth_headers(container)
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        memory = client.put(
+            "/api/work-memory",
+            headers=headers,
+            json={"goals": "문서 자동화", "current_focus": "계약서 분류"},
+        )
+        architecture = client.post(
+            "/api/work-architecture/generate",
+            headers=headers,
+            json={"objective": "계약서 접수 자동화", "scope": "관리팀", "participants": "관리팀"},
+        )
+        created = client.post(
+            "/api/work-schedule/items",
+            headers=headers,
+            json={"title": "계약서 샘플 수집", "owner_name": "관리팀", "priority": "high"},
+        )
+        item_id = created.json()["item"]["id"]
+        updated = client.put(
+            f"/api/work-schedule/items/{item_id}",
+            headers=headers,
+            json={"title": "계약서 샘플 수집", "owner_name": "관리팀", "status": "in_progress"},
+        )
+        generated = client.post(
+            "/api/work-schedule/generate",
+            headers=headers,
+            json={"objective": "계약서 접수 자동화", "participants": "관리팀"},
+        )
+        deleted = client.delete(f"/api/work-schedule/items/{item_id}", headers=headers)
+
+    assert memory.status_code == 200
+    assert memory.json()["goals"] == "문서 자동화"
+    assert architecture.status_code == 200
+    assert architecture.json()["path"].startswith("work_architecture/")
+    assert (archive_dir / architecture.json()["path"]).exists()
+    assert updated.json()["item"]["status"] == "in_progress"
+    assert generated.status_code == 200
+    assert deleted.json()["ok"] is True
+
+
+def test_memory_redesign_endpoints_record_refresh_and_approve(tmp_path: Path) -> None:
+    archive_dir = tmp_path / "archive"
+    container = Container.build(
+        Settings(env="test", archive_dir=archive_dir, workspace_dir=tmp_path / "workspaces")
+    )
+    container.llm = FakeLlmProvider(
+        responses=[
+            ScriptedResponse(text="채팅 응답"),
+            ScriptedResponse(text="- fact\n- decision"),
+            ScriptedResponse(text="- compressed fact"),
+        ]
+    )
+    container.llm_runtime.write(
+        LlmRuntimeConfig(
+            default_route="api", default_provider="fake", local_enabled=True, api_enabled=True
+        )
+    )
+    headers = _auth_headers(container)
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        chat = client.post(
+            "/api/llm/chat",
+            headers=headers,
+            json={"message": "대화 기록 테스트", "route": "api", "provider": "fake"},
+        )
+        conversations = client.get("/api/memory/conversations", headers=headers)
+        permanent = client.get("/api/memory/permanent/search?q=대화", headers=headers)
+        volatile = client.post(
+            "/api/memory/volatile/refresh",
+            headers=headers,
+            json={"scope": "user", "key": "owner", "query": "대화", "source_limit": 5},
+        )
+        compressed = client.post(
+            "/api/memory/context/compress",
+            headers=headers,
+            json={
+                "scope": "user",
+                "key": "owner",
+                "query": "대화",
+                "token_budget": 1000,
+                "source_limit": 5,
+            },
+        )
+        proposal = client.post(
+            "/api/memory/schema/propose",
+            headers=headers,
+            json={
+                "proposal": {
+                    "type_id": "decision",
+                    "display_name": "결정 이력",
+                    "fields": [{"name": "summary", "type": "text"}],
+                }
+            },
+        )
+        approved_schema = client.post(
+            f"/api/memory/schema/proposals/{proposal.json()['proposal']['id']}/approve",
+            headers=headers,
+        )
+        deletion = client.post(
+            "/api/memory/deletion-requests",
+            headers=headers,
+            json={
+                "target_type": "conversation",
+                "target_id": conversations.json()["records"][0]["id"],
+                "summary": "테스트 대화",
+                "source_path": "conversations/test.jsonl",
+                "reason": "테스트",
+            },
+        )
+        approved_delete = client.post(
+            f"/api/memory/deletion-requests/{deletion.json()['request']['id']}/approve",
+            headers=headers,
+        )
+        plan = client.post(
+            "/api/agent/plans/generate",
+            headers=headers,
+            json={"objective": "메모리 기반 작업 분할", "mode": "approved_tasks_only"},
+        )
+        approved_plan = client.post(
+            f"/api/agent/plans/{plan.json()['plan']['id']}/approve", headers=headers
+        )
+
+    assert chat.status_code == 200
+    assert conversations.status_code == 200
+    assert conversations.json()["records"][0]["role"] == "assistant"
+    assert permanent.status_code == 200
+    assert volatile.json()["summary"] == "- fact\n- decision"
+    assert compressed.json()["context"]["source_refs"]
+    assert approved_schema.json()["schemas"][0]["type_id"] == "decision"
+    assert approved_delete.json()["request"]["status"] == "approved"
+    assert (archive_dir / "memory" / "tombstones.jsonl").exists()
+    assert approved_plan.json()["plan"]["status"] == "approved"
+
+
 def test_secure_admin_and_upload_endpoints(tmp_path: Path) -> None:
     archive_dir = tmp_path / "archive"
     container = Container.build(
@@ -223,6 +391,7 @@ def test_secure_admin_and_upload_endpoints(tmp_path: Path) -> None:
             secret_key="test-master-key",
         )
     )
+    headers = _auth_headers(container)
     app = create_app(container)
 
     with TestClient(app) as client:
@@ -233,20 +402,94 @@ def test_secure_admin_and_upload_endpoints(tmp_path: Path) -> None:
         )
         saved_key = client.put(
             "/api/admin/api-keys/openai",
+            headers=headers,
             json={"provider": "openai", "api_key": "sk-test-1234567890", "model": "gpt-test"},
         )
-        acl = client.get("/api/admin/access-control")
+        acl = client.get("/api/admin/access-control", headers=headers)
         uploaded = client.post(
             "/api/uploads",
+            headers=headers,
             files={"file": ("hello.txt", b"hello", "text/plain")},
             data={"description": "demo", "tags": "office", "work_title": "test"},
         )
         uploads = client.get("/api/uploads")
+        audit = client.get("/api/admin/audit-log", headers=headers)
 
-    assert denied.status_code == 403
+    assert denied.status_code == 401
     assert saved_key.status_code == 200
     assert saved_key.json()["providers"][0]["masked_value"] == "sk-t...7890"
     assert acl.status_code == 200
     assert "owner" in {user["id"] for user in acl.json()["users"]}
     assert uploaded.status_code == 200
     assert uploads.json()["uploads"][0]["filename"] == "hello.txt"
+    assert audit.status_code == 200
+    assert {"api_key.upsert", "upload.create"}.issubset(
+        {record["action"] for record in audit.json()["records"]}
+    )
+
+
+def test_initial_office_setup_analyze_and_apply(tmp_path: Path) -> None:
+    archive_dir = tmp_path / "archive"
+    container = Container.build(
+        Settings(env="test", archive_dir=archive_dir, workspace_dir=tmp_path / "workspaces")
+    )
+    container.llm = FakeLlmProvider(
+        responses=[
+            ScriptedResponse(
+                text="""{
+  "operations_memory": {"company_name": "Acme", "organization": "Ops", "roles": "대표, 매니저"},
+  "work_memory": {"goals": "초기 세팅"},
+  "roles": [{"id": "ops_manager", "name": "운영 매니저", "level": 70, "permissions": ["work:read"]}],
+  "users": [{"id": "alice", "display_name": "Alice", "title": "운영 매니저", "role_id": "ops_manager", "active": true}],
+  "notes": ["parsed"],
+  "warnings": [],
+  "questions": [],
+  "sensitive_hint": true
+}""",
+            ),
+        ],
+    )
+    headers = _auth_headers(container)
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        uploaded = client.post(
+            "/api/uploads",
+            headers=headers,
+            files={
+                "file": (
+                    "employees.csv",
+                    b"name,title\nAlice,\xec\x9a\xb4\xec\x98\x81 \xeb\xa7\xa4\xeb\x8b\x88\xec\xa0\x80\n",
+                    "text/csv",
+                )
+            },
+            data={"work_title": "초기 세팅", "tags": "인사"},
+        )
+        upload_id = uploaded.json()["upload"]["id"]
+        analyzed = client.post(
+            "/api/setup/office/analyze",
+            headers=headers,
+            json={"message": "직원 명단을 기반으로 초기 세팅", "upload_ids": [upload_id]},
+        )
+        applied = client.post("/api/setup/office/apply", headers=headers, json=analyzed.json())
+
+    assert uploaded.status_code == 200
+    assert analyzed.status_code == 200
+    assert analyzed.json()["sensitive_hint"] is True
+    assert "로컬 에이전트 서버" in "\n".join(analyzed.json()["warnings"])
+    assert applied.status_code == 200
+    assert container.operations_memory.read().company_name == "Acme"
+    users = {user["id"]: user for user in container.access_control.read()["users"]}
+    assert users["alice"]["role_id"] == "ops_manager"
+
+
+def _auth_headers(
+    container: Container, *, user_id: str = "owner", password: str = "password-1234"
+) -> dict[str, str]:
+    container.auth_store.create_user(user_id=user_id, display_name="Local Owner", password=password)
+    container.access_control.upsert_user(
+        UserRecord(id=user_id, display_name="Local Owner", title="대표", role_id="owner")
+    )
+    token = container.auth_store.authenticate(user_id, password)
+    assert token is not None
+    return {"X-PM-User": f"Bearer {token}"}

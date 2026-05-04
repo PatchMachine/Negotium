@@ -21,6 +21,7 @@ services:
       PM_LLM_PROVIDER: openai
       PM_LLM_DEFAULT_ROUTE: cloud
       PM_VLLM_MODE: http
+      PM_LLM_GATEWAY_URL: http://llm-gateway:8090
     volumes:
       - ../archive:/app/archive
       - ../config:/app/config:ro
@@ -29,6 +30,32 @@ services:
       - "8080:8080"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health').read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  llm-gateway:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: patch-machine:0.1.0
+    container_name: patch-machine-llm-gateway
+    restart: unless-stopped
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      PM_ARCHIVE_DIR: /app/archive
+      PM_LLM_GATEWAY_HOST: 0.0.0.0
+      PM_LLM_GATEWAY_PORT: 8090
+      PM_VLLM_MODE: http
+    volumes:
+      - ../archive:/app/archive
+    ports:
+      - "8090:8090"
+    command: patch-machine llm-gateway
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health').read()"]
       interval: 30s
       timeout: 5s
       retries: 3

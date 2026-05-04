@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import httpx
 import pytest
 
+from patch_machine.adapters.llm import catalog
 from patch_machine.adapters.llm.fake_adapter import FakeLlmProvider, ScriptedResponse
 from patch_machine.adapters.llm.gateway import LlmGateway
 from patch_machine.domain.ports import LlmMessage
@@ -33,3 +35,38 @@ async def test_secret_pattern_routes_to_local_when_available() -> None:
     response = await gateway.complete([msg])
     assert response.text == "local"
     assert response.route == "local"
+
+
+async def test_anthropic_model_catalog_parses_live_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        async def __aenter__(self) -> FakeClient:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        async def get(self, *args: object, **kwargs: object) -> httpx.Response:
+            request = httpx.Request("GET", "https://api.anthropic.com/v1/models")
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "data": [
+                        {"id": "claude-sonnet-4-6"},
+                        {"id": "claude-opus-4-7"},
+                    ]
+                },
+            )
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+
+    payload = await catalog.list_models("anthropic", api_key="test-key")
+
+    assert payload["source"] == "live"
+    assert payload["models"] == ["claude-opus-4-7", "claude-sonnet-4-6"]
+    assert payload["configured"] is True

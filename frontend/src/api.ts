@@ -1,4 +1,4 @@
-import { getCurrentUserId } from './auth';
+import { getAuthHeaders } from './auth';
 
 export type OperationsMemory = {
   company_name: string;
@@ -23,6 +23,12 @@ export type ApiStatus = {
 export type LlmProviderName = 'vllm' | 'openai' | 'anthropic' | 'gemini' | 'fake';
 export type LlmRuntimeRoute = 'local' | 'api';
 
+export type LlmTaskRoute = {
+  route: LlmRuntimeRoute;
+  provider: LlmProviderName;
+  model: string;
+};
+
 export type LlmRuntime = {
   local_enabled: boolean;
   api_enabled: boolean;
@@ -33,6 +39,7 @@ export type LlmRuntime = {
   openai_model: string;
   anthropic_model: string;
   gemini_model: string;
+  task_routes: Record<string, LlmTaskRoute>;
 };
 
 export type ChatResponse = {
@@ -81,6 +88,97 @@ export type WorkItemsPayload = {
   bottleneck_summary: string;
 };
 
+export type WorkMemory = {
+  goals: string;
+  active_projects: string;
+  current_focus: string;
+  blockers: string;
+  decisions: string;
+  risks: string;
+  next_actions: string;
+  updated_at: string;
+};
+
+export type WorkScheduleItem = {
+  id: string;
+  title: string;
+  owner_id: string;
+  owner_name: string;
+  status: string;
+  priority: string;
+  start_date: string;
+  due_date: string;
+  dependencies: string[];
+  notes: string;
+  source_architecture_id: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type WorkArchitecture = {
+  title: string;
+  markdown: string;
+  path: string;
+  architecture: Record<string, unknown>;
+};
+
+export type PermanentMemorySource = {
+  id: string;
+  kind: string;
+  path: string;
+  title: string;
+  excerpt: string;
+  updated_at: string;
+};
+
+export type VolatileMemory = {
+  scope: 'global' | 'user' | 'session';
+  key: string;
+  summary: string;
+  current_intent: string;
+  active_context: string;
+  preferences: string;
+  open_questions: string[];
+  next_actions: string[];
+  relevant_sources: string[];
+  expires_at: string;
+  updated_at: string;
+};
+
+export type ConversationRecord = {
+  id: string;
+  user_id: string;
+  role: string;
+  content: string;
+  provider: string;
+  model: string;
+  route: string;
+  created_at: string;
+};
+
+export type DeletionRequest = {
+  id: string;
+  requester: string;
+  target_type: string;
+  target_id: string;
+  summary: string;
+  source_path: string;
+  sensitivity: string;
+  reason: string;
+  status: string;
+};
+
+export type AgentPlan = {
+  id: string;
+  title: string;
+  objective: string;
+  mode: string;
+  status: string;
+  steps: Array<Record<string, unknown>>;
+  memory_refs: string[];
+  schedule_refs: string[];
+};
+
 export type IntegrationStatus = {
   ok: boolean;
   configured: boolean;
@@ -116,10 +214,51 @@ export type OfficeDocumentRequest = {
 
 export type ApiKeyInfo = {
   provider: string;
+  label?: string;
   configured: boolean;
   masked_value: string;
   model: string;
   base_url: string;
+  base_url_source?: string;
+};
+
+export type ProviderModelPayload = {
+  provider: string;
+  models: string[];
+  source: string;
+  refreshed_at: string;
+  reason: string;
+  configured: boolean;
+  requires_api_key: boolean;
+};
+
+export type AuthUser = {
+  id: string;
+  display_name: string;
+  title?: string;
+  role_id?: string;
+  permissions?: string[];
+};
+
+export type AuthSession = {
+  token: string;
+  user: AuthUser;
+};
+
+export type CurrentUser = {
+  authenticated: boolean;
+  user: AuthUser | null;
+};
+
+export type AccountRequest = {
+  id: string;
+  user_id: string;
+  display_name: string;
+  title: string;
+  status: 'pending' | 'approved' | 'rejected';
+  created_at: string;
+  decided_at: string;
+  decided_by: string;
 };
 
 export type RoleRecord = {
@@ -137,10 +276,49 @@ export type UserRecord = {
   active: boolean;
 };
 
+export type CompanyProfile = {
+  organization_size: string;
+  industries: string[];
+  departments: string[];
+  primary_goals: string[];
+  data_sensitivity: string[];
+  deployment_preference: string;
+};
+
+export type PatchNoteRecommendationItem = {
+  id?: string;
+  name?: string;
+  description?: string;
+  reason?: string;
+  priority?: string;
+  enabled?: boolean;
+};
+
 export type AccessControlPayload = {
   roles: RoleRecord[];
   users: UserRecord[];
   permissions: string[];
+};
+
+export type InitialOfficeSetupResult = {
+  operations_memory: Record<string, unknown>;
+  work_memory: Record<string, unknown>;
+  workspace_profile: Record<string, unknown>;
+  recommended_package: string;
+  agent_packs: PatchNoteRecommendationItem[];
+  templates: PatchNoteRecommendationItem[];
+  workflows: PatchNoteRecommendationItem[];
+  security_defaults: PatchNoteRecommendationItem[];
+  integration_priorities: PatchNoteRecommendationItem[];
+  llm_task_routes: Record<string, LlmTaskRoute>;
+  first_14_days: string[];
+  human_review_required: string[];
+  roles: RoleRecord[];
+  users: UserRecord[];
+  notes: string[];
+  warnings: string[];
+  questions: string[];
+  sensitive_hint: boolean;
 };
 
 export type UploadRecord = {
@@ -157,7 +335,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     headers: {
       'Content-Type': 'application/json',
-      'X-PM-User': getCurrentUserId(),
+      ...getAuthHeaders(),
       ...(init?.headers ?? {}),
     },
     ...init,
@@ -171,6 +349,68 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+export function fetchSetupStatus(): Promise<{ setup_required: boolean }> {
+  return requestJson<{ setup_required: boolean }>('/api/auth/setup-status');
+}
+
+export function setupAdmin(payload: {
+  user_id: string;
+  display_name: string;
+  password: string;
+  title: string;
+}): Promise<AuthSession> {
+  return requestJson<AuthSession>('/api/auth/setup-admin', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function analyzeInitialOfficeSetup(payload: {
+  message: string;
+  upload_ids: string[];
+  intent?: string;
+  company_profile?: CompanyProfile;
+}): Promise<InitialOfficeSetupResult> {
+  return requestJson<InitialOfficeSetupResult>('/api/setup/office/analyze', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function applyInitialOfficeSetup(payload: InitialOfficeSetupResult): Promise<{ ok: boolean; access_control: AccessControlPayload }> {
+  return requestJson<{ ok: boolean; access_control: AccessControlPayload }>('/api/setup/office/apply', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function login(payload: { user_id: string; password: string }): Promise<AuthSession> {
+  return requestJson<AuthSession>('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function logout(): Promise<{ ok: boolean }> {
+  return requestJson<{ ok: boolean }>('/api/auth/logout', { method: 'POST' });
+}
+
+export function fetchCurrentUser(): Promise<CurrentUser> {
+  return requestJson<CurrentUser>('/api/auth/me');
+}
+
+export function requestAccount(payload: {
+  user_id: string;
+  display_name: string;
+  title: string;
+  password: string;
+}): Promise<{ ok: boolean; request: AccountRequest }> {
+  return requestJson<{ ok: boolean; request: AccountRequest }>('/api/account-requests', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
 export function fetchOperationsMemory(): Promise<OperationsMemory> {
   return requestJson<OperationsMemory>('/api/operations-memory');
 }
@@ -180,6 +420,128 @@ export function saveOperationsMemory(memory: OperationsMemory): Promise<Operatio
     method: 'PUT',
     body: JSON.stringify(memory),
   });
+}
+
+export function fetchWorkMemory(): Promise<WorkMemory> {
+  return requestJson<WorkMemory>('/api/work-memory');
+}
+
+export function saveWorkMemory(memory: WorkMemory): Promise<WorkMemory> {
+  return requestJson<WorkMemory>('/api/work-memory', {
+    method: 'PUT',
+    body: JSON.stringify(memory),
+  });
+}
+
+export function fetchPermanentMemory(query = ''): Promise<{ sources: PermanentMemorySource[] }> {
+  const path = query ? `/api/memory/permanent/search?q=${encodeURIComponent(query)}` : '/api/memory/permanent/recent';
+  return requestJson<{ sources: PermanentMemorySource[] }>(path);
+}
+
+export function fetchVolatileMemories(): Promise<{ memories: VolatileMemory[] }> {
+  return requestJson<{ memories: VolatileMemory[] }>('/api/memory/volatile');
+}
+
+export function refreshVolatileMemory(payload: {
+  scope: string;
+  key: string;
+  query: string;
+  source_limit: number;
+  source_ids?: string[];
+}): Promise<VolatileMemory> {
+  return requestJson<VolatileMemory>('/api/memory/volatile/refresh', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteVolatileMemory(scope: string, key: string): Promise<{ ok: boolean }> {
+  return requestJson<{ ok: boolean }>(`/api/memory/volatile/${scope}/${key}`, { method: 'DELETE' });
+}
+
+export function compressContext(payload: {
+  scope: string;
+  key: string;
+  query: string;
+  token_budget: number;
+  source_limit: number;
+  source_ids?: string[];
+  include_volatile?: boolean;
+}): Promise<{ context: Record<string, unknown> }> {
+  return requestJson<{ context: Record<string, unknown> }>('/api/memory/context/compress', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fetchConversations(): Promise<{ records: ConversationRecord[] }> {
+  return requestJson<{ records: ConversationRecord[] }>('/api/memory/conversations');
+}
+
+export function fetchMemorySchema(): Promise<{ schemas: Array<Record<string, unknown>>; proposals: Array<Record<string, unknown>> }> {
+  return requestJson<{ schemas: Array<Record<string, unknown>>; proposals: Array<Record<string, unknown>> }>('/api/memory/schema');
+}
+
+export function proposeMemorySchema(proposal: Record<string, unknown>): Promise<{ ok: boolean; proposal: Record<string, unknown> }> {
+  return requestJson<{ ok: boolean; proposal: Record<string, unknown> }>('/api/memory/schema/propose', {
+    method: 'POST',
+    body: JSON.stringify({ mode: 'llm_propose_human_approve', proposal }),
+  });
+}
+
+export function approveMemorySchemaProposal(id: string): Promise<{ ok: boolean }> {
+  return requestJson<{ ok: boolean }>(`/api/memory/schema/proposals/${id}/approve`, { method: 'POST' });
+}
+
+export function fetchDeletionRequests(): Promise<{ requests: DeletionRequest[] }> {
+  return requestJson<{ requests: DeletionRequest[] }>('/api/memory/deletion-requests');
+}
+
+export function requestMemoryDeletion(payload: {
+  target_type: string;
+  target_id: string;
+  summary: string;
+  source_path: string;
+  sensitivity: string;
+  reason: string;
+}): Promise<{ ok: boolean; request: DeletionRequest }> {
+  return requestJson<{ ok: boolean; request: DeletionRequest }>('/api/memory/deletion-requests', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function approveDeletionRequest(id: string): Promise<{ ok: boolean; request: DeletionRequest }> {
+  return requestJson<{ ok: boolean; request: DeletionRequest }>(`/api/memory/deletion-requests/${id}/approve`, { method: 'POST' });
+}
+
+export function rejectDeletionRequest(id: string): Promise<{ ok: boolean; request: DeletionRequest }> {
+  return requestJson<{ ok: boolean; request: DeletionRequest }>(`/api/memory/deletion-requests/${id}/reject`, { method: 'POST' });
+}
+
+export function generateAgentPlan(payload: {
+  objective: string;
+  title: string;
+  mode: string;
+  schedule_refs: string[];
+  memory_refs: string[];
+}): Promise<{ ok: boolean; plan: AgentPlan }> {
+  return requestJson<{ ok: boolean; plan: AgentPlan }>('/api/agent/plans/generate', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fetchAgentPlans(): Promise<{ plans: AgentPlan[] }> {
+  return requestJson<{ plans: AgentPlan[] }>('/api/agent/plans');
+}
+
+export function approveAgentPlan(id: string): Promise<{ ok: boolean; plan: AgentPlan }> {
+  return requestJson<{ ok: boolean; plan: AgentPlan }>(`/api/agent/plans/${id}/approve`, { method: 'POST' });
+}
+
+export function runAgentPlan(id: string): Promise<{ ok: boolean; run: Record<string, unknown> }> {
+  return requestJson<{ ok: boolean; run: Record<string, unknown> }>(`/api/agent/plans/${id}/run`, { method: 'POST' });
 }
 
 export function fetchApiStatus(): Promise<ApiStatus> {
@@ -213,10 +575,11 @@ export function sendChatMessage(
   message: string,
   route: LlmRuntimeRoute,
   provider: LlmProviderName,
+  task = 'chat',
 ): Promise<ChatResponse> {
   return requestJson<ChatResponse>('/api/llm/chat', {
     method: 'POST',
-    body: JSON.stringify({ message, route, provider }),
+    body: JSON.stringify({ message, route, provider, task }),
   });
 }
 
@@ -226,6 +589,56 @@ export function fetchProgress(): Promise<ProgressPayload> {
 
 export function fetchWorkItems(): Promise<WorkItemsPayload> {
   return requestJson<WorkItemsPayload>('/api/work-items');
+}
+
+export function generateWorkArchitecture(payload: {
+  objective: string;
+  scope: string;
+  horizon: string;
+  participants: string;
+  constraints: string;
+  use_memory: boolean;
+}): Promise<WorkArchitecture> {
+  return requestJson<WorkArchitecture>('/api/work-architecture/generate', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fetchWorkSchedule(): Promise<{ items: WorkScheduleItem[] }> {
+  return requestJson<{ items: WorkScheduleItem[] }>('/api/work-schedule');
+}
+
+export function createWorkScheduleItem(payload: WorkScheduleItem): Promise<{ ok: boolean; item: WorkScheduleItem; items: WorkScheduleItem[] }> {
+  return requestJson<{ ok: boolean; item: WorkScheduleItem; items: WorkScheduleItem[] }>('/api/work-schedule/items', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateWorkScheduleItem(payload: WorkScheduleItem): Promise<{ ok: boolean; item: WorkScheduleItem; items: WorkScheduleItem[] }> {
+  return requestJson<{ ok: boolean; item: WorkScheduleItem; items: WorkScheduleItem[] }>(`/api/work-schedule/items/${payload.id}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteWorkScheduleItem(itemId: string): Promise<{ ok: boolean; items: WorkScheduleItem[] }> {
+  return requestJson<{ ok: boolean; items: WorkScheduleItem[] }>(`/api/work-schedule/items/${itemId}`, {
+    method: 'DELETE',
+  });
+}
+
+export function generateWorkSchedule(payload: {
+  objective: string;
+  participants: string;
+  horizon: string;
+  constraints: string;
+}): Promise<GeneratedDocument> {
+  return requestJson<GeneratedDocument>('/api/work-schedule/generate', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
 }
 
 export function fetchGithubIntegration(): Promise<IntegrationStatus> {
@@ -275,11 +688,21 @@ export function fetchApiKeys(): Promise<{ providers: ApiKeyInfo[] }> {
   return requestJson<{ providers: ApiKeyInfo[] }>('/api/admin/api-keys');
 }
 
+export function fetchProviderModels(provider: string): Promise<ProviderModelPayload> {
+  return requestJson<ProviderModelPayload>(`/api/llm/providers/${provider}/models`);
+}
+
+export function previewProviderModels(provider: string, apiKey: string): Promise<ProviderModelPayload> {
+  return requestJson<ProviderModelPayload>(`/api/llm/providers/${provider}/models/preview`, {
+    method: 'POST',
+    body: JSON.stringify({ api_key: apiKey }),
+  });
+}
+
 export function saveApiKey(payload: {
   provider: string;
   api_key: string;
   model: string;
-  base_url: string;
 }): Promise<{ ok: boolean; providers: ApiKeyInfo[] }> {
   return requestJson<{ ok: boolean; providers: ApiKeyInfo[] }>(`/api/admin/api-keys/${payload.provider}`, {
     method: 'PUT',
@@ -319,6 +742,24 @@ export function deleteUser(userId: string): Promise<AccessControlPayload> {
   return requestJson<AccessControlPayload>(`/api/admin/users/${userId}`, { method: 'DELETE' });
 }
 
+export function fetchAccountRequests(): Promise<{ requests: AccountRequest[] }> {
+  return requestJson<{ requests: AccountRequest[] }>('/api/admin/account-requests');
+}
+
+export function approveAccountRequest(requestId: string): Promise<{ ok: boolean; request: AccountRequest }> {
+  return requestJson<{ ok: boolean; request: AccountRequest }>(
+    `/api/admin/account-requests/${requestId}/approve`,
+    { method: 'POST' },
+  );
+}
+
+export function rejectAccountRequest(requestId: string): Promise<{ ok: boolean; request: AccountRequest }> {
+  return requestJson<{ ok: boolean; request: AccountRequest }>(
+    `/api/admin/account-requests/${requestId}/reject`,
+    { method: 'POST' },
+  );
+}
+
 export function fetchUploads(): Promise<{ uploads: UploadRecord[] }> {
   return requestJson<{ uploads: UploadRecord[] }>('/api/uploads');
 }
@@ -326,7 +767,7 @@ export function fetchUploads(): Promise<{ uploads: UploadRecord[] }> {
 export async function uploadDocument(formData: FormData): Promise<{ ok: boolean; upload: UploadRecord }> {
   const response = await fetch('/api/uploads', {
     method: 'POST',
-    headers: { 'X-PM-User': getCurrentUserId() },
+    headers: getAuthHeaders(),
     body: formData,
   });
   if (!response.ok) {

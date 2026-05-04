@@ -112,9 +112,9 @@ export default function LlmChatPage() {
     <section className="page-grid">
       <div className="panel">
         <p className="eyebrow">LLM Chat</p>
-        <h2>운영 메모리 기반 채팅</h2>
+        <h2>패치머신 영구메모리 기반 채팅</h2>
         <p className="muted">
-          `operations_memory.json`, 현재 상태, 최근 archive 로그를 컨텍스트로 넣어 답변합니다.
+          패치머신 영구메모리(`operations_memory.json`), 현재 상태, 최근 archive 로그를 컨텍스트로 넣어 답변합니다.
         </p>
 
         <div className="switch-row">

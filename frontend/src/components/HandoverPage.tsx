@@ -30,7 +30,7 @@ export default function HandoverPage() {
         <p className="eyebrow">Handover</p>
         <h2>인수인계 문서 생성</h2>
         <p className="muted">
-          담당자가 바뀌거나 퇴사할 때 회사 메모리와 archive 로그를 바탕으로 직무 적응 문서를 만듭니다.
+          담당자가 바뀌거나 퇴사할 때 패치머신 영구메모리와 archive 로그를 바탕으로 직무 적응 문서를 만듭니다.
         </p>
         <form className="memory-form" onSubmit={handleSubmit}>
           <label>

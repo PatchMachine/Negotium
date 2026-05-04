@@ -32,6 +32,25 @@ def serve(
     )
 
 
+@app.command("llm-gateway")
+def llm_gateway(
+    host: str | None = typer.Option(None, help="HTTP bind host (overrides settings)."),
+    port: int | None = typer.Option(None, help="HTTP bind port (overrides settings)."),
+) -> None:
+    """Run the standalone external LLM gateway."""
+    from patch_machine.app.settings import load_settings
+
+    settings = load_settings()
+    configure_logging(settings.log_level)
+    uvicorn.run(
+        "patch_machine.llm_gateway.app:create_app",
+        host=host or settings.llm_gateway_host,
+        port=port or settings.llm_gateway_port,
+        factory=True,
+        log_level=settings.log_level.lower(),
+    )
+
+
 @app.command()
 def reindex(archive_dir: Path = typer.Option(Path("./archive"))) -> None:
     """Rebuild index MD files from existing archive logs.
@@ -70,6 +89,31 @@ def reindex(archive_dir: Path = typer.Option(Path("./archive"))) -> None:
         count += 1
     writer.refresh_status()
     typer.echo(f"reindexed {count} log(s)")
+
+
+@app.command("reset-state")
+def reset_state(
+    yes: bool = typer.Option(False, "--yes", help="Confirm destructive local state reset."),
+    actor: str = typer.Option("cli", help="Actor name written to the audit log."),
+    include_workspaces: bool = typer.Option(
+        True,
+        help="Also clear the configured workspace directory.",
+    ),
+) -> None:
+    """Reset local memory, auth, secrets, documents, uploads, and workspaces."""
+    from patch_machine.app.reset_state import reset_system_state
+    from patch_machine.app.settings import load_settings
+
+    if not yes:
+        raise typer.BadParameter("reset-state is destructive; re-run with --yes to confirm")
+    settings = load_settings()
+    result = reset_system_state(
+        archive_dir=settings.archive_dir,
+        workspace_dir=settings.workspace_dir,
+        actor=actor,
+        include_workspaces=include_workspaces,
+    )
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 @app.command()

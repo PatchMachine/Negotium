@@ -25,10 +25,20 @@ from patch_machine.app.settings import Settings, load_settings
 from patch_machine.application.event_bus import EventBus
 from patch_machine.application.orchestrator import Orchestrator
 from patch_machine.archive.access_control import AccessControlStore
+from patch_machine.archive.agent_execution import AgentExecutionStore
+from patch_machine.archive.audit_log import AuditLogStore
+from patch_machine.archive.auth_store import AuthStore
+from patch_machine.archive.context_compressor import CompressedContextStore
+from patch_machine.archive.conversation_store import ConversationStore
+from patch_machine.archive.deletion_requests import DeletionRequestStore
 from patch_machine.archive.llm_runtime import LlmRuntimeStore
+from patch_machine.archive.memory_schema import MemorySchemaStore
 from patch_machine.archive.operations_memory import OperationsMemoryStore
+from patch_machine.archive.permanent_memory import PermanentMemoryStore
 from patch_machine.archive.secret_store import SecretStore
 from patch_machine.archive.uploads import UploadStore
+from patch_machine.archive.volatile_memory import VolatileMemoryStore
+from patch_machine.archive.work_memory import WorkMemoryStore, WorkScheduleStore
 from patch_machine.archive.writer import ArchiveWriter
 from patch_machine.context.md_retriever import MarkdownRetriever
 from patch_machine.context.repo_snapshot import RepoSnapshotService
@@ -46,8 +56,19 @@ class Container:
     operations_memory: OperationsMemoryStore
     llm_runtime: LlmRuntimeStore
     access_control: AccessControlStore
+    agent_execution: AgentExecutionStore
+    audit_log: AuditLogStore
+    auth_store: AuthStore
+    compressed_context: CompressedContextStore
+    conversations: ConversationStore
+    deletion_requests: DeletionRequestStore
+    memory_schema: MemorySchemaStore
+    permanent_memory: PermanentMemoryStore
     secret_store: SecretStore
     uploads: UploadStore
+    volatile_memory: VolatileMemoryStore
+    work_memory: WorkMemoryStore
+    work_schedule: WorkScheduleStore
     llm: LlmProvider
     graph: AgentGraph
     discord: DiscordBotAdapter
@@ -75,8 +96,19 @@ class Container:
         operations_memory = OperationsMemoryStore(settings.archive_dir)
         llm_runtime = LlmRuntimeStore(settings.archive_dir)
         access_control = AccessControlStore(settings.archive_dir)
+        agent_execution = AgentExecutionStore(settings.archive_dir)
+        audit_log = AuditLogStore(settings.archive_dir)
+        auth_store = AuthStore(settings.archive_dir)
+        compressed_context = CompressedContextStore(settings.archive_dir)
+        conversations = ConversationStore(settings.archive_dir)
+        deletion_requests = DeletionRequestStore(settings.archive_dir)
+        memory_schema = MemorySchemaStore(settings.archive_dir)
+        permanent_memory = PermanentMemoryStore(settings.archive_dir)
         secret_store = SecretStore(settings.archive_dir, master_key=settings.secret_key)
         uploads = UploadStore(settings.archive_dir)
+        volatile_memory = VolatileMemoryStore(settings.archive_dir)
+        work_memory = WorkMemoryStore(settings.archive_dir)
+        work_schedule = WorkScheduleStore(settings.archive_dir)
         repo_snapshot = RepoSnapshotService(settings.workspace_dir)
         retriever = MarkdownRetriever(
             archive_root=settings.archive_dir,
@@ -132,8 +164,19 @@ class Container:
             operations_memory=operations_memory,
             llm_runtime=llm_runtime,
             access_control=access_control,
+            agent_execution=agent_execution,
+            audit_log=audit_log,
+            auth_store=auth_store,
+            compressed_context=compressed_context,
+            conversations=conversations,
+            deletion_requests=deletion_requests,
+            memory_schema=memory_schema,
+            permanent_memory=permanent_memory,
             secret_store=secret_store,
             uploads=uploads,
+            volatile_memory=volatile_memory,
+            work_memory=work_memory,
+            work_schedule=work_schedule,
             llm=llm,
             graph=graph,
             discord=discord,
