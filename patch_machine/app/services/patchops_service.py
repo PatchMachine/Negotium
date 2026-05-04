@@ -8,6 +8,11 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from patch_machine.app.services.context_firewall_service import (
+    load_context_firewall_policy,
+    record_firewall_audit,
+    sanitize_context,
+)
 from patch_machine.app.services.issue_memory_service import (
     capture_manual_issue,
     ensure_patch_candidate,
@@ -70,6 +75,7 @@ async def analyze_patch_run(
     )
     context = build_codebase_context(container, run)
     context = await enrich_context_with_issue_memory(container, run, context, complete)
+    context = sanitize_patchops_context(container, run, context)
     container.patch_runs.append_event(
         run.id,
         event_type="repo.scanned",
@@ -149,7 +155,12 @@ async def draft_patch_artifacts(
     )
     diff_raw = await complete(diff_prompt, "patch_diff_draft")
     diff_payload = parse_json_object(diff_raw) or fallback_diff_artifact(run)
-    diff_payload["diff_draft"] = redact_secrets(str(diff_payload.get("diff_draft") or ""))
+    diff_payload["diff_draft"] = _sanitize_patchops_text(
+        container,
+        str(diff_payload.get("diff_draft") or ""),
+        task_type="patch_diff_draft",
+        source_uri="patchops://diff",
+    )
     container.patch_runs.append_event(
         run.id,
         event_type="diff.proposed",
@@ -176,7 +187,12 @@ async def draft_patch_artifacts(
     )
     test_raw = await complete(test_prompt, "patch_test_writer")
     test_payload = parse_json_object(test_raw) or fallback_test_writer_artifact(run)
-    test_payload["test_diff_draft"] = redact_secrets(str(test_payload.get("test_diff_draft") or ""))
+    test_payload["test_diff_draft"] = _sanitize_patchops_text(
+        container,
+        str(test_payload.get("test_diff_draft") or ""),
+        task_type="patch_test_writer",
+        source_uri="patchops://test-diff",
+    )
     test_payload["test_run_preview"] = run_test_command(
         Path(str(run.context.get("repo_root") or container.settings.workspace_dir)),
         command="python -m pytest -q",
@@ -206,7 +222,12 @@ async def write_patch_memory(
         artifacts_md=artifacts_md,
     )
     raw = await complete(prompt, "patch_memory")
-    memory = redact_secrets(raw.strip() or fallback_memory(run))
+    memory = _sanitize_patchops_text(
+        container,
+        raw.strip() or fallback_memory(run),
+        task_type="patch_memory",
+        source_uri="patchops://memory",
+    )
     promoted = container.permanent_memory.promote(
         title=f"PatchOps Memory: {run.request[:60]}",
         content=memory,
@@ -358,6 +379,63 @@ def context_policy(privacy_mode: str) -> dict[str, object]:
     if privacy_mode == "frontier_assisted":
         return {"allow_frontier": True, "context_policy": "allowed_files_may_include_snippets"}
     return {"allow_frontier": True, "context_policy": "redacted_summaries_only"}
+
+
+def sanitize_patchops_context(
+    container: Container, run: PatchRun, context: dict[str, Any]
+) -> dict[str, Any]:
+    policy = load_context_firewall_policy(container.settings.workspace_dir)
+    sanitized_context = dict(context)
+    for key, task_type in {
+        "context_md": "patchops_context",
+        "memory_md": "patchops_memory_context",
+        "issue_memory_md": "issue_memory_context",
+    }.items():
+        if key not in sanitized_context:
+            continue
+        result = sanitize_context(
+            str(sanitized_context.get(key) or ""),
+            destination="frontier_llm" if run.privacy_mode != "local_only" else "local_llm",
+            task_type=task_type,
+            source_uri=f"patchops://{run.id}/{key}",
+            policy=policy,
+        )
+        result = record_firewall_audit(
+            container,
+            result,
+            agent_run_id=run.id,
+            destination="frontier_llm" if run.privacy_mode != "local_only" else "local_llm",
+            task_type=task_type,
+        )
+        sanitized_context[key] = str(result.sanitized)
+        sanitized_context.setdefault("context_firewall", {})[key] = {
+            "audit_id": result.audit_id,
+            "decision": result.decision,
+            "highest_sensitivity": result.highest_sensitivity,
+            "removed_counts": result.removed_counts,
+            "blocked_items": result.blocked_items,
+        }
+    return sanitized_context
+
+
+def _sanitize_patchops_text(
+    container: Container, text: str, *, task_type: str, source_uri: str
+) -> str:
+    policy = load_context_firewall_policy(container.settings.workspace_dir)
+    result = sanitize_context(
+        redact_secrets(text),
+        destination="local_storage",
+        task_type=task_type,
+        source_uri=source_uri,
+        policy=policy,
+    )
+    record_firewall_audit(
+        container,
+        result,
+        destination="local_storage",
+        task_type=task_type,
+    )
+    return str(result.sanitized)
 
 
 def parse_json_object(raw: str) -> dict[str, Any] | None:

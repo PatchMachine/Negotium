@@ -11,6 +11,7 @@ from typing import Annotated, Any, cast
 
 import httpx
 import portalocker
+import yaml
 from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
 
@@ -26,6 +27,7 @@ from patch_machine.adapters.llm.gemini_adapter import GeminiProvider
 from patch_machine.adapters.llm.openai_adapter import OpenAiProvider
 from patch_machine.adapters.llm.vllm_adapter import VllmConnectionError, VllmProvider
 from patch_machine.adapters.llm.vllm_embedded_adapter import VllmEmbeddedError
+from patch_machine.app.api.patchops_execution import create_patchops_execution_router
 from patch_machine.app.container import Container
 from patch_machine.app.initial_setup import ParsedSetupFile, parse_setup_uploads
 from patch_machine.app.schemas.core import (
@@ -76,6 +78,14 @@ from patch_machine.app.schemas.core import (
 from patch_machine.app.schemas.issue_memory import (
     McpToolCallPayload,
 )
+from patch_machine.app.services.context_firewall_service import (
+    default_policy_payload,
+    load_context_firewall_policy,
+    record_firewall_audit,
+    sanitize_context,
+    sanitize_llm_messages,
+    sanitize_llm_response,
+)
 from patch_machine.app.services.mcp_hub_service import (
     call_tool,
     handle_json_rpc,
@@ -117,6 +127,7 @@ _PRELOAD_TASKS: set[asyncio.Task[None]] = set()
 def create_operations_api_router(container: Container) -> APIRouter:
     """Create frontend-facing API routes bound to the app container."""
     router = APIRouter(prefix="/api", tags=["frontend-api"])
+    router.include_router(create_patchops_execution_router(container))
 
     @router.get("/auth/setup-status")
     async def setup_status() -> SetupStatusPayload:
@@ -973,6 +984,68 @@ def create_operations_api_router(container: Container) -> APIRouter:
         records = container.mcp_audit.list(limit=limit)
         return {"records": records, "count": len(records)}
 
+    @router.post("/security/context-firewall/sanitize")
+    async def sanitize_context_firewall(
+        payload: dict[str, Any],
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        actor = _require(container, x_pm_user, "admin:users")
+        destination = str(payload.get("destination") or "frontier_llm")
+        task_type = str(payload.get("task_type") or "manual_security_test")
+        source_uri = str(payload.get("source_uri") or "")
+        content = payload.get("content", payload.get("sources", payload))
+        result = sanitize_context(
+            content,
+            destination=destination,
+            task_type=task_type,
+            source_uri=source_uri,
+            policy=load_context_firewall_policy(container.settings.workspace_dir),
+        )
+        result = record_firewall_audit(
+            container,
+            result,
+            actor=actor,
+            agent_run_id=str(payload.get("agent_run_id") or ""),
+            destination=destination,
+            task_type=task_type,
+        )
+        return {"ok": True, "result": result.to_dict()}
+
+    @router.get("/security/context-firewall/audit")
+    async def list_context_firewall_audit(
+        limit: int = 100,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        _require(container, x_pm_user, "admin:users")
+        records = container.context_firewall.list(limit=limit)
+        return {"records": records, "count": len(records)}
+
+    @router.get("/security/context-firewall/policy")
+    async def read_context_firewall_policy(
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        _require(container, x_pm_user, "admin:users")
+        return {"policy": default_policy_payload(container.settings.workspace_dir)}
+
+    @router.put("/security/context-firewall/policy")
+    async def save_context_firewall_policy(
+        payload: dict[str, Any],
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        actor = _require(container, x_pm_user, "admin:users")
+        policy_path = container.settings.workspace_dir / ".patchnote-security.yml"
+        body = {"context_firewall": payload.get("context_firewall") or payload}
+        with portalocker.Lock(policy_path, "w", encoding="utf-8", timeout=5) as fh:
+            fh.write(yaml.safe_dump(body, sort_keys=False, allow_unicode=True))
+        _audit(
+            container,
+            actor=actor,
+            action="context_firewall.policy_updated",
+            target="security_policy",
+            target_id=".patchnote-security.yml",
+        )
+        return {"ok": True, "policy": default_policy_payload(container.settings.workspace_dir)}
+
     @router.post("/mcp-hub/prompts/{prompt_name}")
     async def render_mcp_hub_prompt(
         prompt_name: str,
@@ -981,7 +1054,7 @@ def create_operations_api_router(container: Container) -> APIRouter:
     ) -> dict[str, object]:
         _require(container, x_pm_user, "work:read")
         try:
-            prompt = render_mcp_prompt(prompt_name, payload.arguments)
+            prompt = render_mcp_prompt(prompt_name, payload.arguments, container)
         except ValueError as exc:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         return {"ok": True, "prompt": prompt}
@@ -2431,9 +2504,32 @@ async def _complete_with_provider(
     temperature: float,
     max_tokens: int,
 ) -> LlmResponse:
+    destination = _firewall_destination(provider=provider, route=route)
+    policy = load_context_firewall_policy(container.settings.workspace_dir)
+    messages, firewall_result = sanitize_llm_messages(
+        messages,
+        destination=destination,
+        task_type=str(provider),
+        policy=policy,
+    )
+    firewall_result = record_firewall_audit(
+        container,
+        firewall_result,
+        destination=destination,
+        task_type=str(provider),
+    )
+    if destination in {"frontier_llm", "cloud_llm", "api_llm", "openai", "anthropic", "gemini"}:
+        if firewall_result.decision == "block":
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                detail="Context Firewall blocked outbound frontier LLM context.",
+            )
+        if firewall_result.decision == "local_only":
+            route = "local"
     try:
+        response: LlmResponse
         if container.settings.llm.gateway_url:
-            return await _complete_via_gateway(
+            response = await _complete_via_gateway(
                 container,
                 messages,
                 provider=provider,
@@ -2441,45 +2537,52 @@ async def _complete_with_provider(
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
+            return sanitize_llm_response(response, destination=destination, task_type=str(provider))
         saved = container.secret_store.read(provider)
-        if saved and saved.api_key and provider == "openai":
-            return await OpenAiProvider(
+        if saved and saved.api_key and provider == "openai" and route != "local":
+            response = await OpenAiProvider(
                 api_key=saved.api_key,
                 model=saved.model or container.settings.llm.openai_model,
                 base_url=default_base_url("openai"),
             ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
-        if saved and saved.api_key and provider == "anthropic":
-            return await AnthropicProvider(
+            return sanitize_llm_response(response, destination=destination, task_type=str(provider))
+        if saved and saved.api_key and provider == "anthropic" and route != "local":
+            response = await AnthropicProvider(
                 api_key=saved.api_key,
                 model=saved.model or container.settings.llm.anthropic_model,
                 base_url=default_base_url("anthropic"),
             ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
-        if saved and saved.api_key and provider == "gemini":
-            return await GeminiProvider(
+            return sanitize_llm_response(response, destination=destination, task_type=str(provider))
+        if saved and saved.api_key and provider == "gemini" and route != "local":
+            response = await GeminiProvider(
                 api_key=saved.api_key,
                 model=saved.model or container.settings.llm.gemini_model,
                 base_url=default_base_url("gemini"),
             ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
+            return sanitize_llm_response(response, destination=destination, task_type=str(provider))
         if saved and provider == "vllm" and container.settings.llm.vllm_mode != "embedded":
-            return await VllmProvider(
+            response = await VllmProvider(
                 base_url=saved.base_url or container.settings.llm.vllm_base_url,
                 model=saved.model or container.settings.llm.vllm_model,
                 api_key=saved.api_key or "EMPTY",
             ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
+            return sanitize_llm_response(response, destination="local_llm", task_type=str(provider))
         if isinstance(container.llm, LlmGateway):
-            return await container.llm.complete_with_provider(
+            response = await container.llm.complete_with_provider(
                 messages,
                 provider_name=provider,
                 route=route,
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
-        return await container.llm.complete(
+            return sanitize_llm_response(response, destination=destination, task_type=str(provider))
+        response = await container.llm.complete(
             messages,
             route=route,
             temperature=temperature,
             max_tokens=max_tokens,
         )
+        return sanitize_llm_response(response, destination=destination, task_type=str(provider))
     except VllmConnectionError as exc:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -2490,6 +2593,14 @@ async def _complete_with_provider(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         ) from exc
+
+
+def _firewall_destination(*, provider: LlmProviderName, route: LlmRoute) -> str:
+    if route == "local" or provider in {"vllm", "fake"}:
+        return "local_llm"
+    if provider in {"openai", "anthropic", "gemini"}:
+        return "frontier_llm"
+    return "cloud_llm"
 
 
 async def _complete_via_gateway(

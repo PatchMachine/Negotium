@@ -2,11 +2,16 @@ import { useEffect, useState } from 'react';
 
 import {
   deleteApiKey,
+  fetchContextFirewallAudit,
+  fetchContextFirewallPolicy,
   fetchApiKeys,
   fetchProviderModels,
   previewProviderModels,
   saveApiKey,
+  sanitizeContextFirewall,
   type ApiKeyInfo,
+  type ContextFirewallAuditRecord,
+  type ContextFirewallDecision,
   type ProviderModelPayload,
 } from '../api';
 import LocalAgentAdminPanel from './admin/LocalAgentAdminPanel';
@@ -123,6 +128,90 @@ export default function AdminSettingsPage() {
         </div>
       </div>
       <LocalAgentAdminPanel />
+      <ContextFirewallPanel />
     </section>
+  );
+}
+
+function ContextFirewallPanel() {
+  const [sample, setSample] = useState(
+    'A고객 김민준 팀장 token abc.def.ghi postgres://admin:pass@10.0.3.2:5432/payments',
+  );
+  const [result, setResult] = useState<ContextFirewallDecision | null>(null);
+  const [audit, setAudit] = useState<ContextFirewallAuditRecord[]>([]);
+  const [policy, setPolicy] = useState<Record<string, unknown> | null>(null);
+  const [message, setMessage] = useState('');
+
+  async function refresh() {
+    try {
+      const [nextPolicy, nextAudit] = await Promise.all([
+        fetchContextFirewallPolicy(),
+        fetchContextFirewallAudit().catch(() => ({ records: [], count: 0 })),
+      ]);
+      setPolicy(nextPolicy.policy);
+      setAudit(nextAudit.records);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Context Firewall 로드 실패');
+    }
+  }
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  async function runRedactionTest() {
+    try {
+      const payload = await sanitizeContextFirewall({
+        destination: 'frontier_llm',
+        task_type: 'admin_redaction_test',
+        content: sample,
+      });
+      setResult(payload.result);
+      await refresh();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Context Firewall 테스트 실패');
+    }
+  }
+
+  return (
+    <div className="panel">
+      <p className="eyebrow">Context Firewall</p>
+      <h2>로컬 검열 / 외부 LLM 반출 제어</h2>
+      <p className="muted">
+        외부 프론티어 LLM으로 나가기 전 secret, PII, 사내 경로 정책, prompt injection을 검사하고 감사 로그를 남깁니다.
+      </p>
+      <div className="memory-form">
+        <label>
+          Redaction 테스트 입력
+          <textarea value={sample} onChange={(event) => setSample(event.target.value)} />
+        </label>
+        <button type="button" onClick={() => void runRedactionTest()}>Context Firewall 테스트</button>
+        {message ? <p className="muted">{message}</p> : null}
+      </div>
+      {result ? (
+        <div className="log-card">
+          <strong>{result.decision} · {result.highest_sensitivity}</strong>
+          <p>removed: {JSON.stringify(result.removed_counts)}</p>
+          <pre>{JSON.stringify(result.sanitized, null, 2)}</pre>
+        </div>
+      ) : null}
+      <details>
+        <summary>Effective Policy</summary>
+        <pre>{JSON.stringify(policy, null, 2)}</pre>
+      </details>
+      <details open>
+        <summary>Recent Context Firewall Audit</summary>
+        <div className="log-list">
+          {audit.slice(0, 8).map((record) => (
+            <article className="log-card" key={record.id}>
+              <strong>{record.decision} · {record.highest_sensitivity}</strong>
+              <p>{record.destination} · {record.task_type}</p>
+              <small>{record.detectors_triggered.join(', ') || 'detectors -'} · {record.redacted_context_hash}</small>
+            </article>
+          ))}
+          {!audit.length ? <p className="muted small">아직 Context Firewall audit 기록이 없습니다.</p> : null}
+        </div>
+      </details>
+    </div>
   );
 }

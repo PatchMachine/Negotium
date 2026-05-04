@@ -2,11 +2,15 @@ import { FormEvent, useEffect, useState } from 'react';
 
 import {
   analyzePatchRun,
+  analyzePatchRunTestFailure,
   approvePatchRunPlan,
+  applyPatchRunDiff,
   createPatchRun,
+  draftPatchRunPr,
   draftPatchRunDiff,
   fetchPatchRun,
   fetchPatchRuns,
+  runPatchRunTests,
   writePatchRunMemory,
   type IssueCluster,
   type PatchEvent,
@@ -76,7 +80,7 @@ export default function PatchOpsCockpit({ onMessage }: Props) {
     }
   }
 
-  async function runStep(action: 'analyze' | 'approve' | 'draft' | 'memory') {
+  async function runStep(action: 'analyze' | 'approve' | 'draft' | 'apply' | 'test' | 'failure' | 'pr' | 'memory') {
     if (!selected) return;
     setBusy(true);
     try {
@@ -92,6 +96,23 @@ export default function PatchOpsCockpit({ onMessage }: Props) {
         const payload = await draftPatchRunDiff(selected.id);
         setSelected(payload.patch_run);
         setEvents(payload.events);
+      } else if (action === 'apply') {
+        const payload = await applyPatchRunDiff(selected.id, { apply: false });
+        setSelected(payload.patch_run);
+        await loadRun(selected.id);
+      } else if (action === 'test') {
+        const payload = await runPatchRunTests(selected.id, { command: 'python -m pytest -q', dry_run: true });
+        setSelected(payload.patch_run);
+        await loadRun(selected.id);
+      } else if (action === 'failure') {
+        const output = String((selected.artifacts.test_run_result as Record<string, unknown> | undefined)?.output_excerpt || '');
+        const payload = await analyzePatchRunTestFailure(selected.id, output);
+        setSelected(payload.patch_run);
+        await loadRun(selected.id);
+      } else if (action === 'pr') {
+        const payload = await draftPatchRunPr(selected.id);
+        setSelected(payload.patch_run);
+        await loadRun(selected.id);
       } else {
         const payload = await writePatchRunMemory(selected.id);
         setSelected(payload.patch_run);
@@ -161,6 +182,10 @@ export default function PatchOpsCockpit({ onMessage }: Props) {
               <button type="button" disabled={busy} onClick={() => void runStep('analyze')}>분석</button>
               <button type="button" disabled={busy} onClick={() => void runStep('approve')}>계획 승인</button>
               <button type="button" disabled={busy} onClick={() => void runStep('draft')}>Diff/문서 초안</button>
+              <button type="button" disabled={busy} onClick={() => void runStep('apply')}>Diff 정책검사</button>
+              <button type="button" disabled={busy} onClick={() => void runStep('test')}>테스트 Dry-run</button>
+              <button type="button" disabled={busy} onClick={() => void runStep('failure')}>실패 분석</button>
+              <button type="button" disabled={busy} onClick={() => void runStep('pr')}>PR Draft</button>
               <button type="button" disabled={busy} onClick={() => void runStep('memory')}>영구 메모리 저장</button>
             </div>
             <PatchLiveBriefingPanel events={events} />
@@ -176,6 +201,7 @@ export default function PatchOpsCockpit({ onMessage }: Props) {
               testRunPreview={selected.artifacts.test_run_preview}
               notes={selected.artifacts.test_writer_notes}
             />
+            <PatchExecutionPanel artifacts={selected.artifacts} />
             <PatchArtifactsPanel artifacts={selected.artifacts} />
           </div>
         ) : (
@@ -236,6 +262,72 @@ function PatchPlanPanel({ plan }: { plan: Record<string, unknown> }) {
       <pre>{JSON.stringify(plan, null, 2)}</pre>
     </section>
   );
+}
+
+function PatchExecutionPanel({ artifacts }: { artifacts: Record<string, unknown> }) {
+  const hasExecution =
+    artifacts.execution || artifacts.test_run_result || artifacts.test_failure_analysis || artifacts.pr_draft;
+  if (!hasExecution) return null;
+  const execution = objectValue(artifacts.execution);
+  const policy = objectValue(execution.policy);
+  const blockedReasons = arrayValue<string>(policy.blocked_reasons);
+  const highRiskFiles = arrayValue<string>(policy.high_risk_files);
+  const dependencyFiles = arrayValue<string>(policy.dependency_files);
+  return (
+    <section>
+      <h3>Execution / Test / PR Draft</h3>
+      {artifacts.execution ? (
+        <div className="form-actions">
+          <span className="status-pill">{execution.ok ? 'policy ok' : 'blocked'}</span>
+          {blockedReasons.length ? <span className="status-pill">blocked {blockedReasons.length}</span> : null}
+          {highRiskFiles.length ? <span className="status-pill">high-risk {highRiskFiles.length}</span> : null}
+          {dependencyFiles.length ? <span className="status-pill">dependency approval</span> : null}
+        </div>
+      ) : null}
+      {artifacts.execution ? (
+        <details open>
+          <summary>Execution Policy</summary>
+          {blockedReasons.length ? (
+            <ul className="log-list">
+              {blockedReasons.map((reason) => (
+                <li className="log-card" key={reason}>{reason}</li>
+              ))}
+            </ul>
+          ) : null}
+          <pre>{JSON.stringify(artifacts.execution, null, 2)}</pre>
+        </details>
+      ) : null}
+      {artifacts.test_run_result ? (
+        <details>
+          <summary>Test Result</summary>
+          <pre>{JSON.stringify(artifacts.test_run_result, null, 2)}</pre>
+        </details>
+      ) : null}
+      {artifacts.test_failure_analysis ? (
+        <details>
+          <summary>Failure Analysis</summary>
+          <pre>{JSON.stringify(artifacts.test_failure_analysis, null, 2)}</pre>
+        </details>
+      ) : null}
+      {artifacts.pr_draft ? (
+        <details>
+          <summary>PR Draft</summary>
+          {objectValue(artifacts.pr_draft).requires_human_approval ? (
+            <p className="muted small">Remote PR creation is approval-gated. This panel shows the draft payload only.</p>
+          ) : null}
+          <pre>{JSON.stringify(artifacts.pr_draft, null, 2)}</pre>
+        </details>
+      ) : null}
+    </section>
+  );
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function arrayValue<T>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : [];
 }
 
 function PatchArtifactsPanel({ artifacts }: { artifacts: Record<string, unknown> }) {

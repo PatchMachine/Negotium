@@ -17,9 +17,12 @@ from patch_machine.app.services.test_writer_service import (
     find_existing_test_patterns,
     run_test_command,
 )
+from patch_machine.archive.context_firewall import ContextFirewallStore
 from patch_machine.archive.issue_memory import IssueMemoryStore
 from patch_machine.archive.mcp_audit import McpAuditStore
 from patch_machine.archive.mcp_sessions import McpSessionStore
+from patch_machine.archive.patch_execution import PatchExecutionStore
+from patch_machine.archive.patch_runs import PatchRun, PatchRunStore
 
 
 def test_mcp_registry_calls_memory_and_reads_resource(tmp_path: Path) -> None:
@@ -135,11 +138,45 @@ def test_test_writer_tools_detect_patterns_and_allowlist(tmp_path: Path) -> None
     assert allowed["ok"] is True
 
 
+def test_mcp_execution_tools_policy_check_patch_run_diff(tmp_path: Path) -> None:
+    container = _container(tmp_path)
+    run = container.patch_runs.create(
+        PatchRun.create(
+            repo_id="local",
+            request="Fix UI typo",
+            approved_by="owner",
+            artifacts={
+                "diff_draft": """diff --git a/frontend/src/App.tsx b/frontend/src/App.tsx
+--- a/frontend/src/App.tsx
++++ b/frontend/src/App.tsx
+@@ -1 +1 @@
+-old
++new
+"""
+            },
+        )
+    )
+
+    tools = {tool["name"] for tool in list_tool_descriptors()}
+    result = call_tool(
+        container,
+        "repo.apply_patch",
+        {"patch_run_id": run.id, "branch_name": "patchops/test", "apply": False},
+    )
+
+    assert {"repo.apply_patch", "git.create_branch", "git.diff", "github.create_pr_draft"} <= tools
+    assert result.result["ok"] is True
+    assert result.risk_level == "high"
+
+
 def _container(tmp_path: Path) -> SimpleNamespace:
     return SimpleNamespace(
         issue_memory=IssueMemoryStore(tmp_path),
+        context_firewall=ContextFirewallStore(tmp_path),
         mcp_audit=McpAuditStore(tmp_path),
         mcp_sessions=McpSessionStore(tmp_path),
+        patch_execution=PatchExecutionStore(tmp_path),
+        patch_runs=PatchRunStore(tmp_path),
         settings=SimpleNamespace(
             workspace_dir=tmp_path,
             github=SimpleNamespace(app_token="", allowed_repos=[]),

@@ -29,6 +29,7 @@ from patch_machine.archive.agent_execution import AgentExecutionStore
 from patch_machine.archive.audit_log import AuditLogStore
 from patch_machine.archive.auth_store import AuthStore
 from patch_machine.archive.context_compressor import CompressedContextStore
+from patch_machine.archive.context_firewall import ContextFirewallStore
 from patch_machine.archive.conversation_store import ConversationStore
 from patch_machine.archive.deletion_requests import DeletionRequestStore
 from patch_machine.archive.issue_memory import IssueMemoryStore
@@ -37,6 +38,7 @@ from patch_machine.archive.mcp_audit import McpAuditStore
 from patch_machine.archive.mcp_sessions import McpSessionStore
 from patch_machine.archive.memory_schema import MemorySchemaStore
 from patch_machine.archive.operations_memory import OperationsMemoryStore
+from patch_machine.archive.patch_execution import PatchExecutionStore
 from patch_machine.archive.patch_runs import PatchRunStore
 from patch_machine.archive.permanent_memory import PermanentMemoryStore
 from patch_machine.archive.secret_store import SecretStore
@@ -64,6 +66,7 @@ class Container:
     audit_log: AuditLogStore
     auth_store: AuthStore
     compressed_context: CompressedContextStore
+    context_firewall: ContextFirewallStore
     conversations: ConversationStore
     deletion_requests: DeletionRequestStore
     memory_schema: MemorySchemaStore
@@ -71,6 +74,7 @@ class Container:
     mcp_audit: McpAuditStore
     mcp_sessions: McpSessionStore
     permanent_memory: PermanentMemoryStore
+    patch_execution: PatchExecutionStore
     patch_runs: PatchRunStore
     secret_store: SecretStore
     uploads: UploadStore
@@ -108,6 +112,7 @@ class Container:
         audit_log = AuditLogStore(settings.archive_dir)
         auth_store = AuthStore(settings.archive_dir)
         compressed_context = CompressedContextStore(settings.archive_dir)
+        context_firewall = ContextFirewallStore(settings.archive_dir)
         conversations = ConversationStore(settings.archive_dir)
         deletion_requests = DeletionRequestStore(settings.archive_dir)
         issue_memory = IssueMemoryStore(settings.archive_dir)
@@ -115,6 +120,7 @@ class Container:
         mcp_sessions = McpSessionStore(settings.archive_dir)
         memory_schema = MemorySchemaStore(settings.archive_dir)
         permanent_memory = PermanentMemoryStore(settings.archive_dir)
+        patch_execution = PatchExecutionStore(settings.archive_dir)
         patch_runs = PatchRunStore(settings.archive_dir)
         secret_store = SecretStore(settings.archive_dir, master_key=settings.secret_key)
         uploads = UploadStore(settings.archive_dir)
@@ -181,6 +187,7 @@ class Container:
             audit_log=audit_log,
             auth_store=auth_store,
             compressed_context=compressed_context,
+            context_firewall=context_firewall,
             conversations=conversations,
             deletion_requests=deletion_requests,
             issue_memory=issue_memory,
@@ -188,6 +195,7 @@ class Container:
             mcp_sessions=mcp_sessions,
             memory_schema=memory_schema,
             permanent_memory=permanent_memory,
+            patch_execution=patch_execution,
             patch_runs=patch_runs,
             secret_store=secret_store,
             uploads=uploads,

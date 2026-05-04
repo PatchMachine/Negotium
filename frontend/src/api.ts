@@ -282,6 +282,34 @@ export type McpAuditRecord = {
   created_at: string;
 };
 
+export type ContextFirewallDecision = {
+  decision: string;
+  highest_sensitivity: string;
+  sanitized: unknown;
+  removed_counts: Record<string, number>;
+  blocked_items: string[];
+  detectors_triggered: string[];
+  audit_id: string;
+  redacted_context_hash: string;
+  raw_content_stored: boolean;
+};
+
+export type ContextFirewallAuditRecord = {
+  id: string;
+  actor: string;
+  agent_run_id: string;
+  destination: string;
+  task_type: string;
+  decision: string;
+  highest_sensitivity: string;
+  detectors_triggered: string[];
+  removed_counts: Record<string, number>;
+  blocked_items: string[];
+  raw_content_stored: boolean;
+  redacted_context_hash: string;
+  created_at: string;
+};
+
 export type IntegrationStatus = {
   ok: boolean;
   configured: boolean;
@@ -682,6 +710,46 @@ export function writePatchRunMemory(id: string): Promise<{ ok: boolean; patch_ru
   });
 }
 
+export function applyPatchRunDiff(
+  id: string,
+  payload: { branch_name?: string; apply?: boolean } = {},
+): Promise<{ ok: boolean; patch_run: PatchRun; execution: Record<string, unknown> }> {
+  return requestJson<{ ok: boolean; patch_run: PatchRun; execution: Record<string, unknown> }>(`/api/patch-runs/${id}/apply-diff`, {
+    method: 'POST',
+    body: JSON.stringify({ arguments: payload }),
+  });
+}
+
+export function runPatchRunTests(
+  id: string,
+  payload: { command?: string; dry_run?: boolean } = {},
+): Promise<{ ok: boolean; patch_run: PatchRun; test_result: Record<string, unknown> }> {
+  return requestJson<{ ok: boolean; patch_run: PatchRun; test_result: Record<string, unknown> }>(`/api/patch-runs/${id}/run-tests`, {
+    method: 'POST',
+    body: JSON.stringify({ arguments: payload }),
+  });
+}
+
+export function analyzePatchRunTestFailure(
+  id: string,
+  output = '',
+): Promise<{ ok: boolean; patch_run: PatchRun; analysis: Record<string, unknown> }> {
+  return requestJson<{ ok: boolean; patch_run: PatchRun; analysis: Record<string, unknown> }>(`/api/patch-runs/${id}/analyze-test-failure`, {
+    method: 'POST',
+    body: JSON.stringify({ arguments: { output } }),
+  });
+}
+
+export function draftPatchRunPr(
+  id: string,
+  payload: { branch_name?: string } = {},
+): Promise<{ ok: boolean; patch_run: PatchRun; pr_draft: Record<string, unknown>; memory: Record<string, unknown> }> {
+  return requestJson<{ ok: boolean; patch_run: PatchRun; pr_draft: Record<string, unknown>; memory: Record<string, unknown> }>(`/api/patch-runs/${id}/draft-pr`, {
+    method: 'POST',
+    body: JSON.stringify({ arguments: payload }),
+  });
+}
+
 export function fetchMcpHubTools(): Promise<{ tools: McpToolDescriptor[]; transport: string; count: number }> {
   return requestJson<{ tools: McpToolDescriptor[]; transport: string; count: number }>('/api/mcp-hub/tools');
 }
@@ -696,6 +764,26 @@ export function fetchMcpHubPrompts(): Promise<{ prompts: McpPromptDescriptor[]; 
 
 export function fetchMcpHubAudit(limit = 50): Promise<{ records: McpAuditRecord[]; count: number }> {
   return requestJson<{ records: McpAuditRecord[]; count: number }>(`/api/mcp-hub/audit?limit=${limit}`);
+}
+
+export function sanitizeContextFirewall(payload: {
+  destination?: string;
+  task_type?: string;
+  source_uri?: string;
+  content: unknown;
+}): Promise<{ ok: boolean; result: ContextFirewallDecision }> {
+  return requestJson<{ ok: boolean; result: ContextFirewallDecision }>('/api/security/context-firewall/sanitize', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fetchContextFirewallAudit(limit = 50): Promise<{ records: ContextFirewallAuditRecord[]; count: number }> {
+  return requestJson<{ records: ContextFirewallAuditRecord[]; count: number }>(`/api/security/context-firewall/audit?limit=${limit}`);
+}
+
+export function fetchContextFirewallPolicy(): Promise<{ policy: Record<string, unknown> }> {
+  return requestJson<{ policy: Record<string, unknown> }>('/api/security/context-firewall/policy');
 }
 
 export function callMcpMemoryTool<T = Record<string, unknown>>(

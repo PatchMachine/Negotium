@@ -6,12 +6,23 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from patch_machine.app.services.context_firewall_service import (
+    load_context_firewall_policy,
+    record_firewall_audit,
+    sanitize_context,
+)
 from patch_machine.app.services.issue_memory_service import (
     capture_manual_issue,
     ensure_test_requirement,
     issue_memory_tool_descriptors,
     redact_issue_payload,
     search_issue_memory,
+)
+from patch_machine.app.services.patch_execution_service import (
+    apply_patch_run_diff,
+    create_branch,
+    create_pr_draft,
+    git_diff,
 )
 from patch_machine.app.services.test_writer_service import (
     analyze_test_failure,
@@ -36,16 +47,45 @@ READ_TOOLS = {
     "test.find_existing_patterns",
     "test.generate_plan",
     "test.analyze_failure",
+    "git.diff",
 }
 
 TOOL_POLICIES: dict[str, dict[str, Any]] = {
     "memory.search_issues": {"permission": "work:read", "scopes": ["memory:read"], "risk": "low"},
-    "memory.get_issue_cluster": {"permission": "work:read", "scopes": ["memory:read"], "risk": "low"},
-    "memory.create_patch_candidate": {"permission": "memory:write", "scopes": ["memory:write"], "risk": "medium"},
-    "memory.create_test_requirement": {"permission": "memory:write", "scopes": ["memory:write"], "risk": "medium"},
-    "memory.link_source": {"permission": "memory:write", "scopes": ["memory:write"], "risk": "medium"},
-    "memory.record_resolution": {"permission": "memory:write", "scopes": ["memory:write"], "risk": "medium"},
+    "memory.get_issue_cluster": {
+        "permission": "work:read",
+        "scopes": ["memory:read"],
+        "risk": "low",
+    },
+    "memory.create_patch_candidate": {
+        "permission": "memory:write",
+        "scopes": ["memory:write"],
+        "risk": "medium",
+    },
+    "memory.create_test_requirement": {
+        "permission": "memory:write",
+        "scopes": ["memory:write"],
+        "risk": "medium",
+    },
+    "memory.link_source": {
+        "permission": "memory:write",
+        "scopes": ["memory:write"],
+        "risk": "medium",
+    },
+    "memory.record_resolution": {
+        "permission": "memory:write",
+        "scopes": ["memory:write"],
+        "risk": "medium",
+    },
     "test.run": {"permission": "memory:write", "scopes": ["test:run"], "risk": "medium"},
+    "repo.apply_patch": {"permission": "memory:write", "scopes": ["repo:write"], "risk": "high"},
+    "git.create_branch": {"permission": "memory:write", "scopes": ["git:write"], "risk": "medium"},
+    "git.diff": {"permission": "work:read", "scopes": ["git:read"], "risk": "low"},
+    "github.create_pr_draft": {
+        "permission": "memory:write",
+        "scopes": ["github:write"],
+        "risk": "medium",
+    },
 }
 
 PROMPT_INJECTION_PATTERNS = [
@@ -78,17 +118,105 @@ def list_tool_descriptors() -> list[dict[str, Any]]:
     tools = [_normalize_descriptor(item, "memory") for item in issue_memory_tool_descriptors()]
     tools.extend(
         [
-            _tool("github.list_issues", "List configured GitHub issue metadata.", {"repo": "string", "state": "string", "limit": "number"}, "work:read", "github"),
-            _tool("github.get_issue", "Get one GitHub issue by repo and number.", {"repo": "string", "number": "number"}, "work:read", "github"),
-            _tool("discord.get_thread", "Get configured Discord thread metadata.", {"thread_uri": "string"}, "work:read", "discord"),
-            _tool("discord.create_issue_digest", "Create a digest from Discord issue text.", {"thread_uri": "string", "messages": "array"}, "work:read", "discord"),
-            _tool("notion.get_page", "Get configured Notion page metadata.", {"page_uri": "string"}, "work:read", "notion"),
-            _tool("notion.query_database", "Query configured Notion database metadata.", {"database_uri": "string", "query": "string"}, "work:read", "notion"),
-            _tool("test.detect_framework", "Detect repository test frameworks.", {"repo_id": "string"}, "work:read", "test"),
-            _tool("test.find_existing_patterns", "Find existing test style and fixture patterns.", {"repo_id": "string", "query": "string"}, "work:read", "test"),
-            _tool("test.generate_plan", "Generate a test plan from a TestRequirement.", {"title": "string", "requirement_type": "string", "then": "string"}, "work:read", "test"),
-            _tool("test.run", "Run an allowlisted test command or dry-run it.", {"command": "string", "dry_run": "boolean"}, "memory:write", "test"),
-            _tool("test.analyze_failure", "Analyze test failure output.", {"output": "string"}, "work:read", "test"),
+            _tool(
+                "github.list_issues",
+                "List configured GitHub issue metadata.",
+                {"repo": "string", "state": "string", "limit": "number"},
+                "work:read",
+                "github",
+            ),
+            _tool(
+                "github.get_issue",
+                "Get one GitHub issue by repo and number.",
+                {"repo": "string", "number": "number"},
+                "work:read",
+                "github",
+            ),
+            _tool(
+                "discord.get_thread",
+                "Get configured Discord thread metadata.",
+                {"thread_uri": "string"},
+                "work:read",
+                "discord",
+            ),
+            _tool(
+                "discord.create_issue_digest",
+                "Create a digest from Discord issue text.",
+                {"thread_uri": "string", "messages": "array"},
+                "work:read",
+                "discord",
+            ),
+            _tool(
+                "notion.get_page",
+                "Get configured Notion page metadata.",
+                {"page_uri": "string"},
+                "work:read",
+                "notion",
+            ),
+            _tool(
+                "notion.query_database",
+                "Query configured Notion database metadata.",
+                {"database_uri": "string", "query": "string"},
+                "work:read",
+                "notion",
+            ),
+            _tool(
+                "test.detect_framework",
+                "Detect repository test frameworks.",
+                {"repo_id": "string"},
+                "work:read",
+                "test",
+            ),
+            _tool(
+                "test.find_existing_patterns",
+                "Find existing test style and fixture patterns.",
+                {"repo_id": "string", "query": "string"},
+                "work:read",
+                "test",
+            ),
+            _tool(
+                "test.generate_plan",
+                "Generate a test plan from a TestRequirement.",
+                {"title": "string", "requirement_type": "string", "then": "string"},
+                "work:read",
+                "test",
+            ),
+            _tool(
+                "test.run",
+                "Run an allowlisted test command or dry-run it.",
+                {"command": "string", "dry_run": "boolean"},
+                "memory:write",
+                "test",
+            ),
+            _tool(
+                "test.analyze_failure",
+                "Analyze test failure output.",
+                {"output": "string"},
+                "work:read",
+                "test",
+            ),
+            _tool(
+                "repo.apply_patch",
+                "Policy-check and optionally apply a PatchRun diff.",
+                {"patch_run_id": "string", "branch_name": "string", "apply": "boolean"},
+                "memory:write",
+                "repo",
+            ),
+            _tool(
+                "git.create_branch",
+                "Create a policy-validated local branch.",
+                {"branch_name": "string", "dry_run": "boolean"},
+                "memory:write",
+                "git",
+            ),
+            _tool("git.diff", "Read local git diff.", {"cached": "boolean"}, "work:read", "git"),
+            _tool(
+                "github.create_pr_draft",
+                "Create or preview a GitHub PR draft payload.",
+                {"patch_run_id": "string", "branch_name": "string"},
+                "memory:write",
+                "github",
+            ),
         ]
     )
     return tools
@@ -102,31 +230,89 @@ def guard_tool_arguments(arguments: dict[str, Any]) -> list[str]:
 
 def required_permission(tool_name: str) -> str:
     policy = tool_policy(tool_name)
-    return str(policy.get("permission") or ("work:read" if tool_name in READ_TOOLS else "memory:write"))
+    return str(
+        policy.get("permission") or ("work:read" if tool_name in READ_TOOLS else "memory:write")
+    )
 
 
 def tool_policy(tool_name: str) -> dict[str, Any]:
     if tool_name in TOOL_POLICIES:
         return TOOL_POLICIES[tool_name]
     if tool_name in READ_TOOLS:
-        return {"permission": "work:read", "scopes": [f"{tool_name.split('.', 1)[0]}:read"], "risk": "low"}
-    return {"permission": "memory:write", "scopes": [f"{tool_name.split('.', 1)[0]}:write"], "risk": "medium"}
+        return {
+            "permission": "work:read",
+            "scopes": [f"{tool_name.split('.', 1)[0]}:read"],
+            "risk": "low",
+        }
+    return {
+        "permission": "memory:write",
+        "scopes": [f"{tool_name.split('.', 1)[0]}:write"],
+        "risk": "medium",
+    }
 
 
 def call_tool(container: Any, tool_name: str, arguments: dict[str, Any]) -> McpCallResult:
-    args = redact_issue_payload(arguments)
-    guard_findings = guard_tool_arguments(args)
-    result = _dispatch_tool(container, tool_name, args)
+    firewall_policy = load_context_firewall_policy(container.settings.workspace_dir)
+    original_guard_findings = guard_tool_arguments(arguments)
+    arg_firewall = sanitize_context(
+        arguments,
+        destination="mcp_tool",
+        task_type=tool_name,
+        policy=firewall_policy,
+    )
+    arg_firewall = record_firewall_audit(
+        container,
+        arg_firewall,
+        destination="mcp_tool",
+        task_type=tool_name,
+    )
+    args = redact_issue_payload(arg_firewall.sanitized)
+    guard_findings = list(dict.fromkeys([*original_guard_findings, *guard_tool_arguments(args)]))
+    raw_result = _dispatch_tool(container, tool_name, args)
+    result_firewall = sanitize_context(
+        raw_result,
+        destination="mcp_result",
+        task_type=tool_name,
+        policy=firewall_policy,
+    )
+    result_firewall = record_firewall_audit(
+        container,
+        result_firewall,
+        destination="mcp_result",
+        task_type=tool_name,
+    )
+    result = (
+        result_firewall.sanitized if isinstance(result_firewall.sanitized, dict) else raw_result
+    )
     summary = summarize_result(result)
+    summary["context_firewall"] = {
+        "argument_audit_id": arg_firewall.audit_id,
+        "result_audit_id": result_firewall.audit_id,
+        "decision": result_firewall.decision,
+        "highest_sensitivity": result_firewall.highest_sensitivity,
+        "removed_counts": result_firewall.removed_counts,
+    }
     policy = tool_policy(tool_name)
-    risk = _risk_level(tool_name, args, guard_findings)
+    risk = (
+        "high"
+        if result_firewall.decision in {"block", "approval_required"}
+        or arg_firewall.decision == "block"
+        else _risk_level(tool_name, args, guard_findings)
+    )
     return McpCallResult(
         result=result,
         required_permission=required_permission(tool_name),
         risk_level=risk,
         result_summary=summary,
         policy=policy,
-        guard_findings=guard_findings,
+        guard_findings=list(
+            dict.fromkeys(
+                [
+                    *guard_findings,
+                    *[f"context_firewall:{item}" for item in result_firewall.detectors_triggered],
+                ]
+            )
+        ),
     )
 
 
@@ -185,13 +371,37 @@ def list_resources(container: Any) -> list[dict[str, Any]]:
 def read_resource(container: Any, uri: str) -> dict[str, Any]:
     if uri.startswith("memory://issue-clusters/"):
         cluster_id = uri.rsplit("/", 1)[-1]
-        return {"uri": uri, "mimeType": "application/json", "contents": container.issue_memory.read_cluster(cluster_id).to_dict()}
+        return _sanitize_mcp_payload(
+            container,
+            {
+                "uri": uri,
+                "mimeType": "application/json",
+                "contents": container.issue_memory.read_cluster(cluster_id).to_dict(),
+            },
+            task_type="resources/read",
+        )
     if uri.startswith("memory://patch-candidates/"):
         candidate_id = uri.rsplit("/", 1)[-1]
-        return {"uri": uri, "mimeType": "application/json", "contents": container.issue_memory.read_patch_candidate(candidate_id).to_dict()}
+        return _sanitize_mcp_payload(
+            container,
+            {
+                "uri": uri,
+                "mimeType": "application/json",
+                "contents": container.issue_memory.read_patch_candidate(candidate_id).to_dict(),
+            },
+            task_type="resources/read",
+        )
     if uri.startswith("memory://test-requirements/"):
         requirement_id = uri.rsplit("/", 1)[-1]
-        return {"uri": uri, "mimeType": "application/json", "contents": container.issue_memory.read_test_requirement(requirement_id).to_dict()}
+        return _sanitize_mcp_payload(
+            container,
+            {
+                "uri": uri,
+                "mimeType": "application/json",
+                "contents": container.issue_memory.read_test_requirement(requirement_id).to_dict(),
+            },
+            task_type="resources/read",
+        )
     raise ValueError(f"unknown MCP resource: {uri}")
 
 
@@ -206,7 +416,9 @@ def list_prompts() -> list[dict[str, Any]]:
     ]
 
 
-def render_mcp_prompt(prompt_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+def render_mcp_prompt(
+    prompt_name: str, arguments: dict[str, Any], container: Any | None = None
+) -> dict[str, Any]:
     template = PROMPT_TEMPLATES.get(prompt_name)
     if template is None:
         raise ValueError(f"unknown MCP prompt: {prompt_name}")
@@ -220,6 +432,28 @@ def render_mcp_prompt(prompt_name: str, arguments: dict[str, Any]) -> dict[str, 
         else ""
     )
     text = render_prompt(template, **context) + guard_md
+    if container is not None:
+        result = sanitize_context(
+            text,
+            destination="mcp_prompt",
+            task_type=prompt_name,
+            policy=load_context_firewall_policy(container.settings.workspace_dir),
+        )
+        result = record_firewall_audit(
+            container,
+            result,
+            destination="mcp_prompt",
+            task_type=prompt_name,
+        )
+        text = str(result.sanitized)
+        guard_findings = list(
+            dict.fromkeys(
+                [
+                    *guard_findings,
+                    *[f"context_firewall:{item}" for item in result.detectors_triggered],
+                ]
+            )
+        )
     return {
         "name": prompt_name,
         "guard_findings": guard_findings,
@@ -256,24 +490,36 @@ def summarize_result(result: dict[str, Any]) -> dict[str, Any]:
         candidate = result["patch_candidate"] if isinstance(result["patch_candidate"], dict) else {}
         return {"patch_candidate_id": candidate.get("id")}
     if "test_requirement" in result:
-        requirement = result["test_requirement"] if isinstance(result["test_requirement"], dict) else {}
+        requirement = (
+            result["test_requirement"] if isinstance(result["test_requirement"], dict) else {}
+        )
         return {"test_requirement_id": requirement.get("id")}
     return {"keys": sorted(result.keys())}
 
 
 def _dispatch_tool(container: Any, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     if tool_name == "memory.search_issues":
-        return search_issue_memory(container.issue_memory, str(arguments.get("query") or ""), limit=int(arguments.get("limit") or 10))
+        return search_issue_memory(
+            container.issue_memory,
+            str(arguments.get("query") or ""),
+            limit=int(arguments.get("limit") or 10),
+        )
     if tool_name == "memory.get_issue_cluster":
         cluster = container.issue_memory.read_cluster(str(arguments.get("cluster_id") or ""))
-        candidates = [item for item in container.issue_memory.list_patch_candidates() if item.get("cluster_id") == cluster.id]
+        candidates = [
+            item
+            for item in container.issue_memory.list_patch_candidates()
+            if item.get("cluster_id") == cluster.id
+        ]
         return {
             "cluster": cluster.to_dict(),
             "patch_candidates": candidates,
             "test_requirements": [
                 requirement
                 for candidate in candidates
-                for requirement in container.issue_memory.list_test_requirements(patch_candidate_id=str(candidate.get("id") or ""))
+                for requirement in container.issue_memory.list_test_requirements(
+                    patch_candidate_id=str(candidate.get("id") or "")
+                )
             ],
         }
     if tool_name == "memory.create_patch_candidate":
@@ -281,18 +527,36 @@ def _dispatch_tool(container: Any, tool_name: str, arguments: dict[str, Any]) ->
         return {"patch_candidate": container.issue_memory.save_patch_candidate(candidate).to_dict()}
     if tool_name == "memory.create_test_requirement":
         requirement = TestRequirement.create(**arguments)
-        return {"test_requirement": container.issue_memory.save_test_requirement(requirement).to_dict()}
+        return {
+            "test_requirement": container.issue_memory.save_test_requirement(requirement).to_dict()
+        }
     if tool_name == "memory.link_source":
         return capture_manual_issue(container.issue_memory, arguments)
     if tool_name == "memory.record_resolution":
         cluster = container.issue_memory.read_cluster(str(arguments.get("cluster_id") or ""))
-        saved_cluster = container.issue_memory.save_cluster(cluster.__class__.create(**{**cluster.to_dict(), "status": "resolved", "summary": str(arguments.get("summary") or cluster.summary)}))
+        saved_cluster = container.issue_memory.save_cluster(
+            cluster.__class__.create(
+                **{
+                    **cluster.to_dict(),
+                    "status": "resolved",
+                    "summary": str(arguments.get("summary") or cluster.summary),
+                }
+            )
+        )
         for candidate_payload in container.issue_memory.list_patch_candidates():
             if candidate_payload.get("cluster_id") == saved_cluster.id:
-                ensure_test_requirement(container.issue_memory, PatchCandidate.create(**candidate_payload), saved_cluster)
+                ensure_test_requirement(
+                    container.issue_memory,
+                    PatchCandidate.create(**candidate_payload),
+                    saved_cluster,
+                )
         return {"cluster": saved_cluster.to_dict()}
     if tool_name.startswith("github."):
         return _github_tool(container, tool_name, arguments)
+    if tool_name.startswith("repo."):
+        return _repo_tool(container, tool_name, arguments)
+    if tool_name.startswith("git."):
+        return _git_tool(container, tool_name, arguments)
     if tool_name.startswith("discord."):
         return _discord_tool(container, tool_name, arguments)
     if tool_name.startswith("notion."):
@@ -300,7 +564,9 @@ def _dispatch_tool(container: Any, tool_name: str, arguments: dict[str, Any]) ->
     if tool_name == "test.detect_framework":
         return detect_test_frameworks(container.settings.workspace_dir)
     if tool_name == "test.find_existing_patterns":
-        return find_existing_test_patterns(container.settings.workspace_dir, query=str(arguments.get("query") or ""))
+        return find_existing_test_patterns(
+            container.settings.workspace_dir, query=str(arguments.get("query") or "")
+        )
     if tool_name == "test.generate_plan":
         return generate_test_plan(arguments)
     if tool_name == "test.run":
@@ -340,7 +606,9 @@ def _handle_json_rpc_result(container: Any, method: str, params: dict[str, Any])
     if method == "tools/list":
         return {"tools": list_tool_descriptors()}
     if method == "tools/call":
-        tool_result = call_tool(container, str(params.get("name") or ""), dict(params.get("arguments") or {}))
+        tool_result = call_tool(
+            container, str(params.get("name") or ""), dict(params.get("arguments") or {})
+        )
         return {"content": [{"type": "json", "json": tool_result.result}], "isError": False}
     if method == "resources/list":
         return {"resources": list_resources(container)}
@@ -349,29 +617,86 @@ def _handle_json_rpc_result(container: Any, method: str, params: dict[str, Any])
     if method == "prompts/list":
         return {"prompts": list_prompts()}
     if method == "prompts/get":
-        return render_mcp_prompt(str(params.get("name") or ""), dict(params.get("arguments") or {}))
+        return render_mcp_prompt(
+            str(params.get("name") or ""), dict(params.get("arguments") or {}), container
+        )
     raise ValueError(f"unknown JSON-RPC method: {method}")
 
 
 def _github_tool(container: Any, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    if tool_name == "github.create_pr_draft":
+        run = container.patch_runs.read(str(arguments.get("patch_run_id") or ""))
+        return create_pr_draft(
+            container,
+            run,
+            branch_name=str(arguments.get("branch_name") or ""),
+        )
     configured = bool(container.settings.github.app_token)
     base = {"configured": configured, "provider": "github", "tool": tool_name}
     if not configured:
         return {**base, "ok": False, "reason": "PM_GITHUB_APP_TOKEN is not configured", "items": []}
     if tool_name == "github.list_issues":
-        return {**base, "ok": True, "items": [{"repo": repo, "state": arguments.get("state") or "open"} for repo in container.settings.github.allowed_repos]}
+        return {
+            **base,
+            "ok": True,
+            "items": [
+                {"repo": repo, "state": arguments.get("state") or "open"}
+                for repo in container.settings.github.allowed_repos
+            ],
+        }
     if tool_name == "github.get_issue":
-        return {**base, "ok": True, "issue": {"repo": arguments.get("repo"), "number": arguments.get("number"), "fetch_mode": "rest_api_placeholder"}}
+        return {
+            **base,
+            "ok": True,
+            "issue": {
+                "repo": arguments.get("repo"),
+                "number": arguments.get("number"),
+                "fetch_mode": "rest_api_placeholder",
+            },
+        }
     raise ValueError(f"unknown GitHub MCP tool: {tool_name}")
+
+
+def _repo_tool(container: Any, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    if tool_name == "repo.apply_patch":
+        run = container.patch_runs.read(str(arguments.get("patch_run_id") or ""))
+        return apply_patch_run_diff(
+            container,
+            run,
+            branch_name=str(arguments.get("branch_name") or ""),
+            apply=bool(arguments.get("apply", False)),
+        )
+    raise ValueError(f"unknown repo MCP tool: {tool_name}")
+
+
+def _git_tool(container: Any, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    if tool_name == "git.create_branch":
+        return create_branch(
+            container,
+            branch_name=str(arguments.get("branch_name") or ""),
+            dry_run=bool(arguments.get("dry_run", True)),
+        )
+    if tool_name == "git.diff":
+        return git_diff(container, cached=bool(arguments.get("cached", False)))
+    raise ValueError(f"unknown git MCP tool: {tool_name}")
 
 
 def _discord_tool(container: Any, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     configured = bool(container.settings.discord.bot_token)
     base = {"configured": configured, "provider": "discord", "tool": tool_name}
     if not configured:
-        return {**base, "ok": False, "reason": "PM_DISCORD_BOT_TOKEN is not configured", "items": []}
+        return {
+            **base,
+            "ok": False,
+            "reason": "PM_DISCORD_BOT_TOKEN is not configured",
+            "items": [],
+        }
     if tool_name == "discord.get_thread":
-        return {**base, "ok": True, "thread": {"uri": arguments.get("thread_uri"), "fetch_mode": "gateway_placeholder"}}
+        return {
+            **base,
+            "ok": True,
+            "thread": {"uri": arguments.get("thread_uri"), "fetch_mode": "gateway_placeholder"},
+        }
     if tool_name == "discord.create_issue_digest":
         raw_messages = arguments.get("messages")
         messages = raw_messages if isinstance(raw_messages, list) else []
@@ -382,14 +707,29 @@ def _discord_tool(container: Any, tool_name: str, arguments: dict[str, Any]) -> 
 def _notion_tool(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     base = {"configured": False, "provider": "notion", "tool": tool_name}
     if tool_name == "notion.get_page":
-        return {**base, "ok": False, "reason": "Notion API credential is not configured; manual source URI linking is available.", "page_uri": arguments.get("page_uri")}
+        return {
+            **base,
+            "ok": False,
+            "reason": "Notion API credential is not configured; manual source URI linking is available.",
+            "page_uri": arguments.get("page_uri"),
+        }
     if tool_name == "notion.query_database":
-        return {**base, "ok": False, "reason": "Notion API credential is not configured; manual source URI linking is available.", "items": []}
+        return {
+            **base,
+            "ok": False,
+            "reason": "Notion API credential is not configured; manual source URI linking is available.",
+            "items": [],
+        }
     raise ValueError(f"unknown Notion MCP tool: {tool_name}")
 
 
-def _tool(name: str, description: str, properties: dict[str, str], permission: str, server: str) -> dict[str, Any]:
-    schema = {"type": "object", "properties": {key: {"type": value} for key, value in properties.items()}}
+def _tool(
+    name: str, description: str, properties: dict[str, str], permission: str, server: str
+) -> dict[str, Any]:
+    schema = {
+        "type": "object",
+        "properties": {key: {"type": value} for key, value in properties.items()},
+    }
     policy = tool_policy(name)
     return {
         "name": name,
@@ -404,7 +744,9 @@ def _tool(name: str, description: str, properties: dict[str, str], permission: s
 
 
 def _normalize_descriptor(descriptor: dict[str, Any], server: str) -> dict[str, Any]:
-    schema = descriptor.get("input_schema") if isinstance(descriptor.get("input_schema"), dict) else {}
+    schema = (
+        descriptor.get("input_schema") if isinstance(descriptor.get("input_schema"), dict) else {}
+    )
     policy = tool_policy(str(descriptor.get("name") or ""))
     return {
         **descriptor,
@@ -419,16 +761,66 @@ def _resource(uri: str, name: str, description: str) -> dict[str, str]:
     return {"uri": uri, "name": name, "description": description, "mimeType": "application/json"}
 
 
+def _sanitize_mcp_payload(
+    container: Any, payload: dict[str, Any], *, task_type: str
+) -> dict[str, Any]:
+    result = sanitize_context(
+        payload,
+        destination="mcp_resource",
+        task_type=task_type,
+        policy=load_context_firewall_policy(container.settings.workspace_dir),
+    )
+    result = record_firewall_audit(
+        container,
+        result,
+        destination="mcp_resource",
+        task_type=task_type,
+    )
+    sanitized = result.sanitized if isinstance(result.sanitized, dict) else payload
+    sanitized["context_firewall"] = {
+        "audit_id": result.audit_id,
+        "decision": result.decision,
+        "highest_sensitivity": result.highest_sensitivity,
+        "removed_counts": result.removed_counts,
+    }
+    return sanitized
+
+
 def _prompt_context(prompt_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     if prompt_name == "patch_interview":
-        return {"request": str(arguments.get("request") or ""), "context_md": str(arguments.get("context_md") or ""), "memory_md": str(arguments.get("memory_md") or "")}
+        return {
+            "request": str(arguments.get("request") or ""),
+            "context_md": str(arguments.get("context_md") or ""),
+            "memory_md": str(arguments.get("memory_md") or ""),
+        }
     if prompt_name == "patch_plan":
-        return {"request": str(arguments.get("request") or ""), "privacy_mode": str(arguments.get("privacy_mode") or "hybrid_redacted"), "autonomy_level": str(arguments.get("autonomy_level") or "L1"), "context_md": str(arguments.get("context_md") or ""), "questions_md": str(arguments.get("questions_md") or "[]"), "memory_md": str(arguments.get("memory_md") or "")}
+        return {
+            "request": str(arguments.get("request") or ""),
+            "privacy_mode": str(arguments.get("privacy_mode") or "hybrid_redacted"),
+            "autonomy_level": str(arguments.get("autonomy_level") or "L1"),
+            "context_md": str(arguments.get("context_md") or ""),
+            "questions_md": str(arguments.get("questions_md") or "[]"),
+            "memory_md": str(arguments.get("memory_md") or ""),
+        }
     if prompt_name == "test_requirement_generation":
-        return {"request": str(arguments.get("request") or ""), "issue_memory_md": str(arguments.get("issue_memory_md") or ""), "test_files_md": str(arguments.get("test_files_md") or "")}
+        return {
+            "request": str(arguments.get("request") or ""),
+            "issue_memory_md": str(arguments.get("issue_memory_md") or ""),
+            "test_files_md": str(arguments.get("test_files_md") or ""),
+        }
     if prompt_name == "test_code_generation":
-        return {"request": str(arguments.get("request") or ""), "plan_md": str(arguments.get("plan_md") or "{}"), "test_requirements_md": str(arguments.get("test_requirements_md") or "[]"), "context_md": str(arguments.get("context_md") or "")}
-    return {"request": str(arguments.get("request") or ""), "plan_md": str(arguments.get("plan_md") or "{}"), "questions_md": str(arguments.get("questions_md") or "[]"), "artifacts_md": str(arguments.get("artifacts_md") or "{}")}
+        return {
+            "request": str(arguments.get("request") or ""),
+            "plan_md": str(arguments.get("plan_md") or "{}"),
+            "test_requirements_md": str(arguments.get("test_requirements_md") or "[]"),
+            "context_md": str(arguments.get("context_md") or ""),
+        }
+    return {
+        "request": str(arguments.get("request") or ""),
+        "plan_md": str(arguments.get("plan_md") or "{}"),
+        "questions_md": str(arguments.get("questions_md") or "[]"),
+        "artifacts_md": str(arguments.get("artifacts_md") or "{}"),
+    }
 
 
 def _risk_level(tool_name: str, arguments: dict[str, Any], guard_findings: list[str]) -> str:

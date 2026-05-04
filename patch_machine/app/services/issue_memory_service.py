@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from patch_machine.app.services.context_firewall_service import sanitize_context
 from patch_machine.archive.issue_memory import (
     CanonicalIssue,
     IssueCluster,
@@ -38,6 +39,26 @@ FEATURE_KEYWORDS = {
 
 
 def redact_issue_payload(value: Any) -> Any:
+    return _normalize_secret_placeholder(
+        sanitize_context(value, destination="local_storage", task_type="issue_memory").sanitized
+    )
+
+
+def _normalize_secret_placeholder(value: Any) -> Any:
+    if isinstance(value, str):
+        return re.sub(
+            r"\[REDACTED_[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|URL|ASSIGNMENT)[A-Z0-9_]*\]",
+            "[REDACTED_SECRET]",
+            value,
+        )
+    if isinstance(value, list):
+        return [_normalize_secret_placeholder(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _normalize_secret_placeholder(item) for key, item in value.items()}
+    return value
+
+
+def _legacy_redact_issue_payload(value: Any) -> Any:
     if isinstance(value, str):
         text = value
         for pattern in SECRET_PATTERNS:

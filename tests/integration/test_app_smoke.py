@@ -13,6 +13,7 @@ from patch_machine.app.settings import Settings
 from patch_machine.archive.access_control import UserRecord
 from patch_machine.archive.llm_runtime import LlmRuntimeConfig
 from patch_machine.archive.operations_memory import OperationsMemory
+from patch_machine.archive.patch_runs import PatchRun
 
 
 def test_health_endpoint_reports_queue_state() -> None:
@@ -157,6 +158,86 @@ def test_progress_and_integrations_degrade_without_external_config(tmp_path: Pat
     assert github.json()["configured"] is False
     assert discord.status_code == 200
     assert discord.json()["configured"] is False
+
+
+def test_patchops_execution_router_endpoints_shape(tmp_path: Path) -> None:
+    container = Container.build(
+        Settings(env="test", archive_dir=tmp_path / "archive", workspace_dir=tmp_path)
+    )
+    headers = _auth_headers(container)
+    run = container.patch_runs.create(
+        PatchRun.create(
+            repo_id="local",
+            request="Fix UI copy",
+            approved_by="owner",
+            artifacts={
+                "diff_draft": """diff --git a/frontend/src/App.tsx b/frontend/src/App.tsx
+--- a/frontend/src/App.tsx
++++ b/frontend/src/App.tsx
+@@ -1 +1 @@
+-old
++new
+""",
+                "pr_description": "## Summary\n- Fix copy",
+            },
+        )
+    )
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        applied = client.post(
+            f"/api/patch-runs/{run.id}/apply-diff",
+            headers=headers,
+            json={"arguments": {"apply": False}},
+        )
+        tested = client.post(
+            f"/api/patch-runs/{run.id}/run-tests",
+            headers=headers,
+            json={"arguments": {"command": "python -m pytest -q", "dry_run": True}},
+        )
+        drafted = client.post(
+            f"/api/patch-runs/{run.id}/draft-pr",
+            headers=headers,
+            json={"arguments": {}},
+        )
+
+    assert applied.status_code == 200
+    assert applied.json()["execution"]["policy"]["files"] == ["frontend/src/App.tsx"]
+    assert tested.status_code == 200
+    assert tested.json()["test_result"]["dry_run"] is True
+    assert drafted.status_code == 200
+    assert drafted.json()["pr_draft"]["requires_human_approval"] is True
+    assert container.mcp_audit.list(limit=10)
+
+
+def test_context_firewall_security_api_redacts_and_audits(tmp_path: Path) -> None:
+    container = Container.build(
+        Settings(env="test", archive_dir=tmp_path / "archive", workspace_dir=tmp_path)
+    )
+    headers = _auth_headers(container)
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        sanitized = client.post(
+            "/api/security/context-firewall/sanitize",
+            headers=headers,
+            json={
+                "destination": "frontier_llm",
+                "task_type": "manual_security_test",
+                "content": "token=secret owner@example.com postgres://admin:pass@10.0.0.2:5432/prod",
+            },
+        )
+        audit = client.get("/api/security/context-firewall/audit", headers=headers)
+        policy = client.get("/api/security/context-firewall/policy", headers=headers)
+
+    assert sanitized.status_code == 200
+    result = sanitized.json()["result"]
+    assert result["decision"] == "block"
+    assert "owner@example.com" not in str(result["sanitized"])
+    assert audit.status_code == 200
+    assert audit.json()["count"] >= 1
+    assert policy.status_code == 200
+    assert ".env*" in policy.json()["policy"]["blocked_paths"]
 
 
 def test_ai_office_generation_endpoints_write_archive_docs(tmp_path: Path) -> None:
