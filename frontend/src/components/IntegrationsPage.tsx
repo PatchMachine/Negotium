@@ -1,18 +1,42 @@
 import { useEffect, useState } from 'react';
 
-import { fetchDiscordIntegration, fetchGithubIntegration, type IntegrationStatus } from '../api';
+import {
+  fetchDiscordIntegration,
+  fetchGithubIntegration,
+  fetchMcpHubAudit,
+  fetchMcpHubPrompts,
+  fetchMcpHubResources,
+  fetchMcpHubTools,
+  type IntegrationStatus,
+  type McpAuditRecord,
+  type McpPromptDescriptor,
+  type McpResourceDescriptor,
+  type McpToolDescriptor,
+} from '../api';
 
 export default function IntegrationsPage() {
   const [github, setGithub] = useState<IntegrationStatus | null>(null);
   const [discord, setDiscord] = useState<IntegrationStatus | null>(null);
+  const [tools, setTools] = useState<McpToolDescriptor[]>([]);
+  const [resources, setResources] = useState<McpResourceDescriptor[]>([]);
+  const [prompts, setPrompts] = useState<McpPromptDescriptor[]>([]);
+  const [auditRecords, setAuditRecords] = useState<McpAuditRecord[]>([]);
 
   async function refresh() {
-    const [nextGithub, nextDiscord] = await Promise.all([
+    const [nextGithub, nextDiscord, nextTools, nextResources, nextPrompts, nextAudit] = await Promise.all([
       fetchGithubIntegration(),
       fetchDiscordIntegration(),
+      fetchMcpHubTools(),
+      fetchMcpHubResources(),
+      fetchMcpHubPrompts(),
+      fetchMcpHubAudit().catch(() => ({ records: [], count: 0 })),
     ]);
     setGithub(nextGithub);
     setDiscord(nextDiscord);
+    setTools(nextTools.tools);
+    setResources(nextResources.resources);
+    setPrompts(nextPrompts.prompts);
+    setAuditRecords(nextAudit.records);
   }
 
   useEffect(() => {
@@ -31,12 +55,18 @@ export default function IntegrationsPage() {
         <div className="connector-grid">
           <ConnectorCard name="GitHub" description="Issue, PR, Repository 이벤트 양식" status={github} />
           <ConnectorCard name="Discord" description="버그 문의 채널, 스레드, 명령어 양식" status={discord} />
+          <ConnectorCard
+            name="MCP Tool Hub"
+            description={`Tools ${tools.length}개 · Resources ${resources.length}개 · Prompts ${prompts.length}개`}
+            status={{ ok: true, configured: tools.length > 0, reason: '', items: [] }}
+          />
           <ConnectorCard name="Notion" description="문서/태스크 DB MCP 서버 (준비 중)" status={null} comingSoon />
           <ConnectorCard name="Slack/Jira/Drive" description="추가 업무 플랫폼 MCP 서버 (준비 중)" status={null} comingSoon />
         </div>
       </div>
       <IntegrationPanel title="GitHub Issues" status={github} />
       <IntegrationPanel title="Discord Channels" status={discord} />
+      <McpHubPanel tools={tools} resources={resources} prompts={prompts} auditRecords={auditRecords} />
     </section>
   );
 }
@@ -59,6 +89,66 @@ function ConnectorCard({
       <p>{description}</p>
       <span className="status-pill">{label}</span>
     </article>
+  );
+}
+
+function McpHubPanel({
+  tools,
+  resources,
+  prompts,
+  auditRecords,
+}: {
+  tools: McpToolDescriptor[];
+  resources: McpResourceDescriptor[];
+  prompts: McpPromptDescriptor[];
+  auditRecords: McpAuditRecord[];
+}) {
+  return (
+    <div className="panel">
+      <p className="eyebrow">MCP-compatible hub</p>
+      <h2>PatchOps MCP Hub</h2>
+      <p className="muted">
+        HTTP-compatible API와 JSON-RPC/SSE skeleton을 함께 제공해 PatchOps Agent가 tools, resources, prompts를 표준 형태로 조회합니다.
+      </p>
+      <div className="switch-row">
+        <span className="status-pill">tools {tools.length}</span>
+        <span className="status-pill">resources {resources.length}</span>
+        <span className="status-pill">prompts {prompts.length}</span>
+      </div>
+      <div className="log-list">
+        {tools.map((tool) => (
+          <article className="log-card" key={tool.name}>
+            <strong>{tool.name}</strong>
+            <p>{tool.description}</p>
+            <small>{tool.server || 'mcp'} · permission: {tool.required_permission}</small>
+          </article>
+        ))}
+      </div>
+      <details>
+        <summary>Resources</summary>
+        <pre>{JSON.stringify(resources.slice(0, 10), null, 2)}</pre>
+      </details>
+      <details>
+        <summary>Prompts</summary>
+        <pre>{JSON.stringify(prompts, null, 2)}</pre>
+      </details>
+      <details>
+        <summary>Recent Tool Audit</summary>
+        <div className="log-list">
+          {auditRecords.map((record) => (
+            <article className="log-card" key={record.id}>
+              <strong>{record.tool_name}</strong>
+              <p>{record.mcp_server} · actor {record.actor || 'unknown'}</p>
+              <small>
+                risk {record.risk_level}
+                {record.guard_findings?.length ? ` · guard ${record.guard_findings.join(', ')}` : ''}
+              </small>
+            </article>
+          ))}
+          {!auditRecords.length ? <p className="muted small">아직 MCP tool audit 기록이 없습니다.</p> : null}
+        </div>
+      </details>
+    </div>
   );
 }
 

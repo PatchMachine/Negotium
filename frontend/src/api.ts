@@ -179,6 +179,109 @@ export type AgentPlan = {
   schedule_refs: string[];
 };
 
+export type PatchRun = {
+  id: string;
+  repo_id: string;
+  request: string;
+  autonomy_level: string;
+  privacy_mode: string;
+  target_branch: string;
+  status: string;
+  risk_level: string;
+  created_by: string;
+  approved_by: string;
+  plan: Record<string, unknown>;
+  questions: Array<Record<string, unknown>>;
+  artifacts: Record<string, unknown>;
+  context: Record<string, unknown>;
+  constraints: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PatchEvent = {
+  id: string;
+  patch_run_id: string;
+  type: string;
+  summary: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+};
+
+export type IssueCluster = {
+  id: string;
+  title: string;
+  summary: string;
+  status: string;
+  severity: string;
+  canonical_issue_ids: string[];
+  source_refs: Array<Record<string, unknown>>;
+  affected_repos: string[];
+  affected_features: string[];
+  confidence: number;
+  patch_candidates?: PatchCandidate[];
+  test_requirements?: TestRequirement[];
+};
+
+export type PatchCandidate = {
+  id: string;
+  cluster_id: string;
+  target_repo: string;
+  title: string;
+  summary: string;
+  risk_level: string;
+  status: string;
+};
+
+export type TestRequirement = {
+  id: string;
+  patch_candidate_id: string;
+  title: string;
+  requirement_type: string;
+  given: string;
+  when: string;
+  then: string;
+  priority: string;
+  status: string;
+  source_refs: string[];
+};
+
+export type McpToolDescriptor = {
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+  inputSchema?: Record<string, unknown>;
+  required_permission: string;
+  server?: string;
+};
+
+export type McpResourceDescriptor = {
+  uri: string;
+  name: string;
+  description: string;
+  mimeType: string;
+};
+
+export type McpPromptDescriptor = {
+  name: string;
+  description: string;
+  arguments: Array<Record<string, unknown>>;
+};
+
+export type McpAuditRecord = {
+  id: string;
+  actor: string;
+  mcp_server: string;
+  tool_name: string;
+  arguments_redacted: Record<string, unknown>;
+  result_summary: Record<string, unknown>;
+  risk_level: string;
+  policy?: Record<string, unknown>;
+  guard_findings?: string[];
+  approved_by: string;
+  created_at: string;
+};
+
 export type IntegrationStatus = {
   ok: boolean;
   configured: boolean;
@@ -530,6 +633,99 @@ export function generateAgentPlan(payload: {
     method: 'POST',
     body: JSON.stringify(payload),
   });
+}
+
+export function createPatchRun(payload: {
+  repo_id: string;
+  request: string;
+  autonomy_level: string;
+  privacy_mode: string;
+  target_branch: string;
+  constraints?: Record<string, unknown>;
+}): Promise<{ ok: boolean; patch_run: PatchRun }> {
+  return requestJson<{ ok: boolean; patch_run: PatchRun }>('/api/patch-runs', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fetchPatchRuns(): Promise<{ patch_runs: PatchRun[] }> {
+  return requestJson<{ patch_runs: PatchRun[] }>('/api/patch-runs');
+}
+
+export function fetchPatchRun(id: string): Promise<{ patch_run: PatchRun; events: PatchEvent[] }> {
+  return requestJson<{ patch_run: PatchRun; events: PatchEvent[] }>(`/api/patch-runs/${id}`);
+}
+
+export function analyzePatchRun(id: string): Promise<{ ok: boolean; patch_run: PatchRun; events: PatchEvent[] }> {
+  return requestJson<{ ok: boolean; patch_run: PatchRun; events: PatchEvent[] }>(`/api/patch-runs/${id}/analyze`, {
+    method: 'POST',
+  });
+}
+
+export function approvePatchRunPlan(id: string, decision = 'approve', comment = ''): Promise<{ ok: boolean; patch_run: PatchRun }> {
+  return requestJson<{ ok: boolean; patch_run: PatchRun }>(`/api/patch-runs/${id}/approve-plan`, {
+    method: 'POST',
+    body: JSON.stringify({ decision, comment }),
+  });
+}
+
+export function draftPatchRunDiff(id: string): Promise<{ ok: boolean; patch_run: PatchRun; events: PatchEvent[] }> {
+  return requestJson<{ ok: boolean; patch_run: PatchRun; events: PatchEvent[] }>(`/api/patch-runs/${id}/draft-diff`, {
+    method: 'POST',
+  });
+}
+
+export function writePatchRunMemory(id: string): Promise<{ ok: boolean; patch_run: PatchRun; memory: Record<string, unknown> }> {
+  return requestJson<{ ok: boolean; patch_run: PatchRun; memory: Record<string, unknown> }>(`/api/patch-runs/${id}/write-memory`, {
+    method: 'POST',
+  });
+}
+
+export function fetchMcpHubTools(): Promise<{ tools: McpToolDescriptor[]; transport: string; count: number }> {
+  return requestJson<{ tools: McpToolDescriptor[]; transport: string; count: number }>('/api/mcp-hub/tools');
+}
+
+export function fetchMcpHubResources(): Promise<{ resources: McpResourceDescriptor[]; count: number }> {
+  return requestJson<{ resources: McpResourceDescriptor[]; count: number }>('/api/mcp-hub/resources');
+}
+
+export function fetchMcpHubPrompts(): Promise<{ prompts: McpPromptDescriptor[]; count: number }> {
+  return requestJson<{ prompts: McpPromptDescriptor[]; count: number }>('/api/mcp-hub/prompts');
+}
+
+export function fetchMcpHubAudit(limit = 50): Promise<{ records: McpAuditRecord[]; count: number }> {
+  return requestJson<{ records: McpAuditRecord[]; count: number }>(`/api/mcp-hub/audit?limit=${limit}`);
+}
+
+export function callMcpMemoryTool<T = Record<string, unknown>>(
+  tool: string,
+  argumentsPayload: Record<string, unknown>,
+): Promise<{ ok: boolean; tool: string; result: T }> {
+  return requestJson<{ ok: boolean; tool: string; result: T }>(`/api/mcp-hub/tools/${tool}`, {
+    method: 'POST',
+    body: JSON.stringify({ arguments: argumentsPayload }),
+  });
+}
+
+export function searchIssueMemory(query: string, limit = 8): Promise<{ clusters: IssueCluster[]; total: number }> {
+  return callMcpMemoryTool<{ clusters: IssueCluster[]; total: number }>('memory.search_issues', { query, limit }).then(
+    (response) => response.result,
+  );
+}
+
+export function createIssueMemoryTestRequirement(payload: {
+  patch_candidate_id: string;
+  title: string;
+  requirement_type: string;
+  given: string;
+  when: string;
+  then: string;
+  priority: string;
+}): Promise<{ test_requirement: TestRequirement }> {
+  return callMcpMemoryTool<{ test_requirement: TestRequirement }>('memory.create_test_requirement', payload).then(
+    (response) => response.result,
+  );
 }
 
 export function fetchAgentPlans(): Promise<{ plans: AgentPlan[] }> {

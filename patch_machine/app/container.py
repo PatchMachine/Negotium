@@ -31,9 +31,13 @@ from patch_machine.archive.auth_store import AuthStore
 from patch_machine.archive.context_compressor import CompressedContextStore
 from patch_machine.archive.conversation_store import ConversationStore
 from patch_machine.archive.deletion_requests import DeletionRequestStore
+from patch_machine.archive.issue_memory import IssueMemoryStore
 from patch_machine.archive.llm_runtime import LlmRuntimeStore
+from patch_machine.archive.mcp_audit import McpAuditStore
+from patch_machine.archive.mcp_sessions import McpSessionStore
 from patch_machine.archive.memory_schema import MemorySchemaStore
 from patch_machine.archive.operations_memory import OperationsMemoryStore
+from patch_machine.archive.patch_runs import PatchRunStore
 from patch_machine.archive.permanent_memory import PermanentMemoryStore
 from patch_machine.archive.secret_store import SecretStore
 from patch_machine.archive.uploads import UploadStore
@@ -63,7 +67,11 @@ class Container:
     conversations: ConversationStore
     deletion_requests: DeletionRequestStore
     memory_schema: MemorySchemaStore
+    issue_memory: IssueMemoryStore
+    mcp_audit: McpAuditStore
+    mcp_sessions: McpSessionStore
     permanent_memory: PermanentMemoryStore
+    patch_runs: PatchRunStore
     secret_store: SecretStore
     uploads: UploadStore
     volatile_memory: VolatileMemoryStore
@@ -102,8 +110,12 @@ class Container:
         compressed_context = CompressedContextStore(settings.archive_dir)
         conversations = ConversationStore(settings.archive_dir)
         deletion_requests = DeletionRequestStore(settings.archive_dir)
+        issue_memory = IssueMemoryStore(settings.archive_dir)
+        mcp_audit = McpAuditStore(settings.archive_dir)
+        mcp_sessions = McpSessionStore(settings.archive_dir)
         memory_schema = MemorySchemaStore(settings.archive_dir)
         permanent_memory = PermanentMemoryStore(settings.archive_dir)
+        patch_runs = PatchRunStore(settings.archive_dir)
         secret_store = SecretStore(settings.archive_dir, master_key=settings.secret_key)
         uploads = UploadStore(settings.archive_dir)
         volatile_memory = VolatileMemoryStore(settings.archive_dir)
@@ -147,6 +159,7 @@ class Container:
             retriever=retriever,
             operations_memory=operations_memory,
             archive=archive,
+            issue_memory=issue_memory,
             notifiers=notifiers,
         )
 
@@ -170,8 +183,12 @@ class Container:
             compressed_context=compressed_context,
             conversations=conversations,
             deletion_requests=deletion_requests,
+            issue_memory=issue_memory,
+            mcp_audit=mcp_audit,
+            mcp_sessions=mcp_sessions,
             memory_schema=memory_schema,
             permanent_memory=permanent_memory,
+            patch_runs=patch_runs,
             secret_store=secret_store,
             uploads=uploads,
             volatile_memory=volatile_memory,

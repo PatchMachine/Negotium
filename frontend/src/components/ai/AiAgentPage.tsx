@@ -13,6 +13,7 @@ import {
   type LlmRuntimeRoute,
 } from '../../api';
 import AgentPlansPanel from '../memory/AgentPlansPanel';
+import PatchOpsCockpit from './PatchOpsCockpit';
 
 const providerOptions: LlmProviderName[] = ['vllm', 'openai', 'anthropic', 'gemini', 'fake'];
 
@@ -109,6 +110,8 @@ export default function AiAgentPage() {
         onMessage={setNotice}
         onRefresh={() => refreshPlans()}
       />
+
+      <PatchOpsCockpit onMessage={setNotice} />
 
       <details className="panel ai-test-chat-panel">
         <summary>테스트 채팅 (LLM 연결 확인용)</summary>

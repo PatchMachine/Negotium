@@ -9,7 +9,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from patch_machine.agents.graph import AgentGraph, GraphState
+from patch_machine.app.services.issue_memory_service import capture_issue_event
 from patch_machine.application.event_bus import EventBus
+from patch_machine.archive.issue_memory import IssueMemoryStore
 from patch_machine.archive.operations_memory import OperationsMemoryStore
 from patch_machine.archive.writer import ArchiveWriter
 from patch_machine.context.md_retriever import MarkdownRetriever
@@ -28,6 +30,7 @@ class Orchestrator:
     retriever: MarkdownRetriever
     operations_memory: OperationsMemoryStore
     archive: ArchiveWriter
+    issue_memory: IssueMemoryStore
     notifiers: dict[str, Notifier]
 
     def __post_init__(self) -> None:
@@ -36,6 +39,12 @@ class Orchestrator:
     async def handle(self, event: IssueEvent) -> None:
         log = self._log.bind(event_id=str(event.event_id), source=event.source)
         log.info("orchestrator.start")
+        capture = capture_issue_event(self.issue_memory, event)
+        log.info(
+            "orchestrator.issue_memory_captured",
+            cluster_id=capture["cluster"]["id"],
+            issue_id=capture["canonical_issue"]["id"],
+        )
 
         snapshot_path = self.repo_snapshot.ensure(event.repo)
         related = self.retriever.find_related(event, limit=5)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, cast
@@ -11,6 +12,7 @@ from typing import Annotated, Any, cast
 import httpx
 import portalocker
 from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile, status
+from fastapi.responses import StreamingResponse
 
 from patch_machine.adapters.llm.anthropic_adapter import AnthropicProvider
 from patch_machine.adapters.llm.catalog import (
@@ -52,6 +54,9 @@ from patch_machine.app.schemas.core import (
     MemorySchemaProposalPayload,
     OfficeDocumentRequest,
     OperationsMemoryPayload,
+    PatchRunApprovalPayload,
+    PatchRunCreatePayload,
+    PatchRunPayload,
     ProgressPayload,
     PromoteMemoryPayload,
     ProviderModelPayload,
@@ -68,6 +73,25 @@ from patch_machine.app.schemas.core import (
     WorkScheduleGenerationRequest,
     WorkScheduleItemPayload,
 )
+from patch_machine.app.schemas.issue_memory import (
+    McpToolCallPayload,
+)
+from patch_machine.app.services.mcp_hub_service import (
+    call_tool,
+    handle_json_rpc,
+    list_prompts,
+    list_resources,
+    list_tool_descriptors,
+    read_resource,
+    record_mcp_audit,
+    render_mcp_prompt,
+    required_permission,
+)
+from patch_machine.app.services.patchops_service import (
+    analyze_patch_run,
+    draft_patch_artifacts,
+    write_patch_memory,
+)
 from patch_machine.app.services.setup_catalog import (
     recommend_patchnote_setup,
     render_recommendation_markdown,
@@ -78,6 +102,7 @@ from patch_machine.archive.auth_store import RequestStatus
 from patch_machine.archive.context_compressor import CompressedContext
 from patch_machine.archive.deletion_requests import DeletionRequest
 from patch_machine.archive.llm_runtime import LlmProviderName, LlmRuntimeConfig, LlmTaskRoute
+from patch_machine.archive.patch_runs import PatchRun
 from patch_machine.archive.schema import parse_front_matter
 from patch_machine.archive.secret_store import ApiKeyRecord
 from patch_machine.archive.volatile_memory import MemoryScope, VolatileMemory
@@ -685,6 +710,335 @@ def create_operations_api_router(container: Container) -> APIRouter:
             target_id=run_id,
         )
         return {"ok": True, "run_id": run_id, "approved_by": actor}
+
+    @router.post("/patch-runs")
+    async def create_patch_run(
+        payload: PatchRunCreatePayload,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        actor = _require(container, x_pm_user, "memory:write")
+        run = container.patch_runs.create(
+            PatchRun.create(
+                repo_id=payload.repo_id,
+                request=payload.request,
+                autonomy_level=payload.autonomy_level,
+                privacy_mode=payload.privacy_mode,
+                target_branch=payload.target_branch,
+                constraints=payload.constraints,
+                created_by=actor,
+            )
+        )
+        container.patch_runs.append_event(
+            run.id,
+            event_type="patch.created",
+            summary="PatchOps run을 생성했습니다.",
+            payload={
+                "repo_id": run.repo_id,
+                "autonomy_level": run.autonomy_level,
+                "privacy_mode": run.privacy_mode,
+            },
+        )
+        _audit(
+            container, actor=actor, action="patchops.create", target="patch_run", target_id=run.id
+        )
+        return {"ok": True, "patch_run": PatchRunPayload(**run.to_dict())}
+
+    @router.get("/patch-runs")
+    async def list_patch_runs(
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        _require(container, x_pm_user, "work:read")
+        return {"patch_runs": container.patch_runs.list()}
+
+    @router.get("/patch-runs/{patch_id}")
+    async def read_patch_run(
+        patch_id: str,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        _require(container, x_pm_user, "work:read")
+        try:
+            run = container.patch_runs.read(patch_id)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        return {"patch_run": run.to_dict(), "events": container.patch_runs.list_events(patch_id)}
+
+    @router.get("/patch-runs/{patch_id}/events")
+    async def list_patch_run_events(
+        patch_id: str,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        _require(container, x_pm_user, "work:read")
+        return {"events": container.patch_runs.list_events(patch_id)}
+
+    @router.post("/patch-runs/{patch_id}/analyze")
+    async def analyze_patch_run_endpoint(
+        patch_id: str,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        actor = _require(container, x_pm_user, "memory:write")
+        try:
+            run = container.patch_runs.read(patch_id)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+        async def complete(prompt: str, task: str) -> str:
+            return await _complete_patchops_task(container, prompt, task=task)
+
+        analyzed = await analyze_patch_run(
+            container, run.with_updates(status="REPO_SCANNING"), complete
+        )
+        _audit(
+            container,
+            actor=actor,
+            action="patchops.analyze",
+            target="patch_run",
+            target_id=patch_id,
+        )
+        return {
+            "ok": True,
+            "patch_run": analyzed.to_dict(),
+            "events": container.patch_runs.list_events(patch_id),
+        }
+
+    @router.post("/patch-runs/{patch_id}/approve-plan")
+    async def approve_patch_plan(
+        patch_id: str,
+        payload: PatchRunApprovalPayload,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        actor = _require(container, x_pm_user, "admin:users")
+        status_value = "WAITING_APPROVAL" if payload.decision == "approve" else "CANCELLED"
+        try:
+            run = container.patch_runs.update(
+                patch_id,
+                status=status_value,
+                approved_by=actor if payload.decision == "approve" else "",
+            )
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        container.patch_runs.append_event(
+            patch_id,
+            event_type="approval.decided",
+            summary=f"패치 계획 {payload.decision}",
+            payload={"decision": payload.decision, "comment": payload.comment, "actor": actor},
+        )
+        _audit(
+            container,
+            actor=actor,
+            action="patchops.approval",
+            target="patch_run",
+            target_id=patch_id,
+        )
+        return {"ok": True, "patch_run": run.to_dict()}
+
+    @router.post("/patch-runs/{patch_id}/draft-diff")
+    async def draft_patch_diff(
+        patch_id: str,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        actor = _require(container, x_pm_user, "memory:write")
+        try:
+            run = container.patch_runs.read(patch_id)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+        async def complete(prompt: str, task: str) -> str:
+            return await _complete_patchops_task(container, prompt, task=task)
+
+        drafted = await draft_patch_artifacts(container, run, complete)
+        _audit(
+            container,
+            actor=actor,
+            action="patchops.draft_diff",
+            target="patch_run",
+            target_id=patch_id,
+        )
+        return {
+            "ok": True,
+            "patch_run": drafted.to_dict(),
+            "events": container.patch_runs.list_events(patch_id),
+        }
+
+    @router.post("/patch-runs/{patch_id}/write-memory")
+    async def write_patch_run_memory(
+        patch_id: str,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        actor = _require(container, x_pm_user, "memory:write")
+        try:
+            run = container.patch_runs.read(patch_id)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+        async def complete(prompt: str, task: str) -> str:
+            return await _complete_patchops_task(container, prompt, task=task)
+
+        memory = await write_patch_memory(container, run, complete, actor=actor)
+        _audit(
+            container,
+            actor=actor,
+            action="patchops.memory_write",
+            target="patch_run",
+            target_id=patch_id,
+        )
+        return {
+            "ok": True,
+            "memory": memory,
+            "patch_run": container.patch_runs.read(patch_id).to_dict(),
+        }
+
+    @router.get("/mcp-hub/tools")
+    async def list_mcp_hub_tools(
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        _require(container, x_pm_user, "work:read")
+        tools = list_tool_descriptors()
+        return {
+            "tools": tools,
+            "transport": "http-compatible+json-rpc+sse-skeleton",
+            "count": len(tools),
+        }
+
+    @router.post("/mcp-hub/tools/{tool_name:path}")
+    async def call_mcp_hub_tool(
+        tool_name: str,
+        payload: McpToolCallPayload,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        permission = required_permission(tool_name)
+        actor = _require(container, x_pm_user, permission)
+        try:
+            call_result = call_tool(container, tool_name, payload.arguments)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        record_mcp_audit(
+            container,
+            actor=actor,
+            tool_name=tool_name,
+            arguments=payload.arguments,
+            result_summary=call_result.result_summary,
+            risk_level=call_result.risk_level,
+            policy=call_result.policy,
+            guard_findings=call_result.guard_findings,
+        )
+        _audit(
+            container,
+            actor=actor,
+            action="mcp_hub.tool_call",
+            target="mcp_tool",
+            target_id=tool_name,
+            details={
+                "tool_name": tool_name,
+                "arguments": payload.arguments,
+                "result_summary": call_result.result_summary,
+                "risk_level": call_result.risk_level,
+                "guard_findings": call_result.guard_findings,
+            },
+        )
+        return {"ok": True, "tool": tool_name, "result": call_result.result}
+
+    @router.get("/mcp-hub/resources")
+    async def list_mcp_hub_resources(
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        _require(container, x_pm_user, "work:read")
+        resources = list_resources(container)
+        return {"resources": resources, "count": len(resources)}
+
+    @router.get("/mcp-hub/resources/{resource_uri:path}")
+    async def read_mcp_hub_resource(
+        resource_uri: str,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        _require(container, x_pm_user, "work:read")
+        try:
+            return read_resource(container, resource_uri)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    @router.get("/mcp-hub/prompts")
+    async def list_mcp_hub_prompts(
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        _require(container, x_pm_user, "work:read")
+        prompts = list_prompts()
+        return {"prompts": prompts, "count": len(prompts)}
+
+    @router.get("/mcp-hub/audit")
+    async def list_mcp_hub_audit(
+        limit: int = 100,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        _require(container, x_pm_user, "admin:users")
+        records = container.mcp_audit.list(limit=limit)
+        return {"records": records, "count": len(records)}
+
+    @router.post("/mcp-hub/prompts/{prompt_name}")
+    async def render_mcp_hub_prompt(
+        prompt_name: str,
+        payload: McpToolCallPayload,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        _require(container, x_pm_user, "work:read")
+        try:
+            prompt = render_mcp_prompt(prompt_name, payload.arguments)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        return {"ok": True, "prompt": prompt}
+
+    @router.post("/mcp")
+    async def call_mcp_json_rpc(
+        payload: dict[str, Any],
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        method = str(payload.get("method") or "")
+        raw_params = payload.get("params")
+        params: dict[str, Any] = raw_params if isinstance(raw_params, dict) else {}
+        if method == "tools/call":
+            tool_name = str(params.get("name") or "")
+            actor = _require(container, x_pm_user, required_permission(tool_name))
+            raw_arguments = params.get("arguments")
+            arguments: dict[str, Any] = raw_arguments if isinstance(raw_arguments, dict) else {}
+            try:
+                call_result = call_tool(container, tool_name, arguments)
+            except ValueError as exc:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": payload.get("id"),
+                    "error": {"code": -32602, "message": str(exc)},
+                }
+            record_mcp_audit(
+                container,
+                actor=actor,
+                tool_name=tool_name,
+                arguments=arguments,
+                result_summary=call_result.result_summary,
+                risk_level=call_result.risk_level,
+                policy=call_result.policy,
+                guard_findings=call_result.guard_findings,
+            )
+            return {
+                "jsonrpc": "2.0",
+                "id": payload.get("id"),
+                "result": {
+                    "content": [{"type": "json", "json": call_result.result}],
+                    "isError": False,
+                },
+            }
+        _require(container, x_pm_user, "work:read")
+        return handle_json_rpc(container, payload)
+
+    @router.get("/mcp/sse")
+    async def mcp_sse(
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> StreamingResponse:
+        _require(container, x_pm_user, "work:read")
+
+        async def events() -> AsyncIterator[str]:
+            yield 'event: metadata\ndata: {"name":"patchnote-mcp-hub","transport":"sse-skeleton"}\n\n'
+            yield 'event: heartbeat\ndata: {"ok":true}\n\n'
+
+        return StreamingResponse(events(), media_type="text/event-stream")
 
     @router.get("/llm/providers")
     async def list_llm_providers() -> dict[str, object]:
@@ -2040,6 +2394,32 @@ async def _complete_office_task(
         max_tokens=1600,
     )
     return response.text.strip() or "_(LLM 응답 없음)_"
+
+
+async def _complete_patchops_task(
+    container: Container, prompt: str, *, task: str = "patch_planning"
+) -> str:
+    provider, route = _resolve_runtime_task(container, task)
+    messages = [
+        LlmMessage(
+            "system",
+            (
+                "당신은 PatchOps Agent입니다. 코드를 수정하기 전에 저장소를 조사하고, "
+                "자가 질문, 증거 기반 계획, diff 초안, 검증 계획, 패치 메모리를 정형 출력합니다. "
+                "민감정보와 secret은 절대 노출하지 마세요."
+            ),
+        ),
+        LlmMessage("user", prompt),
+    ]
+    response = await _complete_with_provider(
+        container,
+        messages,
+        provider=provider,
+        route=route,
+        temperature=0.1,
+        max_tokens=2200,
+    )
+    return response.text.strip()
 
 
 async def _complete_with_provider(

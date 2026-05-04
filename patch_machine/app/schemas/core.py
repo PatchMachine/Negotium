@@ -311,6 +311,40 @@ class AgentPlanRequest(BaseModel):
     memory_refs: list[str] = []
 
 
+class PatchRunCreatePayload(BaseModel):
+    repo_id: str = "local"
+    request: str
+    autonomy_level: str = "L1"
+    privacy_mode: str = "hybrid_redacted"
+    target_branch: str = "main"
+    constraints: dict[str, Any] = Field(default_factory=dict)
+
+
+class PatchRunApprovalPayload(BaseModel):
+    decision: Literal["approve", "reject"] = "approve"
+    comment: str = ""
+
+
+class PatchRunPayload(BaseModel):
+    id: str
+    repo_id: str
+    request: str
+    autonomy_level: str
+    privacy_mode: str
+    target_branch: str
+    status: str
+    risk_level: str
+    created_by: str = ""
+    approved_by: str = ""
+    plan: dict[str, Any] = Field(default_factory=dict)
+    questions: list[dict[str, Any]] = Field(default_factory=list)
+    artifacts: dict[str, Any] = Field(default_factory=dict)
+    context: dict[str, Any] = Field(default_factory=dict)
+    constraints: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = ""
+    updated_at: str = ""
+
+
 class IntegrationStatusPayload(BaseModel):
     ok: bool
     configured: bool
