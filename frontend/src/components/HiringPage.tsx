@@ -4,9 +4,11 @@ import {
   createInterviewKit,
   createOnboardingPlan,
   createRoleRequirements,
+  type AiJobStatus,
   type GeneratedDocument,
   type HiringRequest,
 } from '../api';
+import AiJobStatusBar from './common/AiJobStatusBar';
 
 const emptyHiring: HiringRequest = {
   role_title: '',
@@ -18,10 +20,24 @@ export default function HiringPage() {
   const [draft, setDraft] = useState<HiringRequest>(emptyHiring);
   const [result, setResult] = useState<GeneratedDocument | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [job, setJob] = useState<AiJobStatus | null>(null);
 
   async function generate(action: 'requirements' | 'interview' | 'onboarding') {
     setBusy(action);
+    setJob({
+      job_id: `local-hiring-${action}`,
+      task: `hiring.${action}`,
+      status: 'queued',
+      actor: '',
+      input_summary: draft.role_title,
+      used_sources: [],
+      result_path: '',
+      error: '',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
     try {
+      setJob((current) => current ? { ...current, status: 'running', updated_at: new Date().toISOString() } : current);
       const next =
         action === 'requirements'
           ? await createRoleRequirements(draft)
@@ -29,6 +45,18 @@ export default function HiringPage() {
             ? await createInterviewKit(draft)
             : await createOnboardingPlan(draft);
       setResult(next);
+      setJob(next.ai_job ?? null);
+    } catch (err) {
+      setJob((current) =>
+        current
+          ? {
+              ...current,
+              status: 'failed',
+              error: err instanceof Error ? err.message : '채용 문서 생성 실패',
+              updated_at: new Date().toISOString(),
+            }
+          : current,
+      );
     } finally {
       setBusy(null);
     }
@@ -86,6 +114,7 @@ export default function HiringPage() {
             </button>
           </div>
         </form>
+        <AiJobStatusBar job={job} />
       </div>
       <GeneratedDocumentPanel result={result} />
     </section>

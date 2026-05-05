@@ -23,10 +23,7 @@
       (function () {
         try {
           var saved = localStorage.getItem("pm-theme");
-          var prefersDark =
-            window.matchMedia &&
-            window.matchMedia("(prefers-color-scheme: dark)").matches;
-          var theme = saved || (prefersDark ? "dark" : "light");
+          var theme = saved || "light";
           document.documentElement.dataset.theme = theme;
         } catch (e) {
           document.documentElement.dataset.theme = "light";

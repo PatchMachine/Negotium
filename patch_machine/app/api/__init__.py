@@ -7,7 +7,7 @@ import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 
 import httpx
 import portalocker
@@ -21,6 +21,7 @@ from patch_machine.adapters.llm.catalog import (
     list_models,
     provider_payload,
     require_provider,
+    search_huggingface_models,
 )
 from patch_machine.adapters.llm.gateway import LlmGateway
 from patch_machine.adapters.llm.gemini_adapter import GeminiProvider
@@ -33,6 +34,7 @@ from patch_machine.app.initial_setup import ParsedSetupFile, parse_setup_uploads
 from patch_machine.app.schemas.core import (
     AccountRequestPayload,
     AgentPlanRequest,
+    AiJobStatusPayload,
     ApiKeyPayload,
     ApiStatusPayload,
     AuthSessionPayload,
@@ -42,11 +44,19 @@ from patch_machine.app.schemas.core import (
     ContextCompressRequest,
     CurrentUserPayload,
     DeletionRequestPayload,
+    DiscordChannelBindingPayload,
+    DiscordConnectorPayload,
+    DocumentReadPayload,
     GeneratedDocumentPayload,
+    GitHubConnectorPayload,
     HandoverRequest,
     HiringRequest,
+    HuggingFaceModelItemPayload,
+    HuggingFaceModelSearchPayload,
+    HuggingFaceModelSearchResultPayload,
     InitialOfficeAnalyzeRequest,
     InitialOfficeSetupResult,
+    IntegrationConfigPayload,
     IntegrationStatusPayload,
     LlmRuntimePayload,
     LocalLlmStatusPayload,
@@ -56,6 +66,9 @@ from patch_machine.app.schemas.core import (
     MemorySchemaProposalPayload,
     OfficeDocumentRequest,
     OperationsMemoryPayload,
+    PatchRecordCreatePayload,
+    PatchRecordDetailPayload,
+    PatchRecordPayload,
     PatchRunApprovalPayload,
     PatchRunCreatePayload,
     PatchRunPayload,
@@ -63,9 +76,16 @@ from patch_machine.app.schemas.core import (
     PromoteMemoryPayload,
     ProviderModelPayload,
     ProviderModelPreviewPayload,
+    ReadableContextBundlePayload,
+    ReadableContextPreviewRequest,
+    ReadableContextSourcePayload,
     RolePayload,
     SetupAdminPayload,
     SetupStatusPayload,
+    TokenLimitPayload,
+    TokenLimitStatusPayload,
+    TokenUsageEntryPayload,
+    TokenUsageSummaryPayload,
     UserPayload,
     VolatileMemoryPayload,
     WorkArchitecturePayload,
@@ -108,13 +128,25 @@ from patch_machine.app.services.setup_catalog import (
 )
 from patch_machine.archive.access_control import ALL_PERMISSIONS, UserRecord
 from patch_machine.archive.agent_execution import AgentPlan
+from patch_machine.archive.ai_jobs import AiJobRecord
 from patch_machine.archive.auth_store import RequestStatus
 from patch_machine.archive.context_compressor import CompressedContext
 from patch_machine.archive.deletion_requests import DeletionRequest
+from patch_machine.archive.integration_config import (
+    DiscordChannelBindingConfig,
+    DiscordConnectorConfig,
+    GitHubConnectorConfig,
+    IntegrationConfig,
+)
 from patch_machine.archive.llm_runtime import LlmProviderName, LlmRuntimeConfig, LlmTaskRoute
+from patch_machine.archive.patch_records import PatchRecord
 from patch_machine.archive.patch_runs import PatchRun
 from patch_machine.archive.schema import parse_front_matter
 from patch_machine.archive.secret_store import ApiKeyRecord
+from patch_machine.archive.token_usage import (
+    TokenLimitConfig,
+    TokenLimitExceededError,
+)
 from patch_machine.archive.volatile_memory import MemoryScope, VolatileMemory
 from patch_machine.archive.work_memory import WorkMemory, WorkScheduleItem
 from patch_machine.domain.entities import LlmRoute
@@ -225,7 +257,7 @@ def create_operations_api_router(container: Container) -> APIRouter:
         payload: InitialOfficeAnalyzeRequest,
         x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
     ) -> InitialOfficeSetupResult:
-        _require(container, x_pm_user, "admin:users")
+        actor = _require(container, x_pm_user, "admin:users")
         uploads = _selected_upload_records(container.uploads.list(), payload.upload_ids)
         parsed_files = parse_setup_uploads(uploads, archive_root=container.settings.archive_dir)
         prompt = _initial_office_setup_prompt(
@@ -234,12 +266,31 @@ def create_operations_api_router(container: Container) -> APIRouter:
             parsed_files=parsed_files,
             company_profile=payload.company_profile,
         )
-        markdown = await _complete_office_task(container, prompt, task="memory_summary")
-        return _parse_initial_setup_result(
+        job = _start_ai_job(
+            container,
+            task="initial_office_setup.analyze",
+            actor=actor,
+            input_summary=payload.message or payload.company_profile.company_name,
+            used_sources=[str(item.path) for item in parsed_files],
+        )
+        try:
+            markdown = await _complete_office_task(container, prompt, task="memory_summary")
+            job = _finish_ai_job(
+                container,
+                job,
+                status="succeeded",
+                used_sources=[str(item.path) for item in parsed_files],
+            )
+        except Exception as exc:
+            _finish_ai_job(container, job, status="failed", error=str(exc))
+            raise
+        result = _parse_initial_setup_result(
             markdown,
             parsed_files=parsed_files,
             company_profile=payload.company_profile,
         )
+        result.ai_job = _ai_job_payload(job).model_dump()
+        return result
 
     @router.post("/setup/office/apply")
     async def apply_initial_office_setup(
@@ -310,6 +361,48 @@ def create_operations_api_router(container: Container) -> APIRouter:
     ) -> dict[str, object]:
         _require(container, x_pm_user, "work:read")
         return {"sources": container.permanent_memory.search(q, limit=max(1, min(limit, 200)))}
+
+    @router.get("/memory/readable-sources")
+    async def list_readable_sources(
+        q: str = "",
+        limit: int = 100,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        _require(container, x_pm_user, "work:read")
+        source_limit = max(1, min(limit, 300))
+        sources = (
+            container.permanent_memory.search(q, limit=source_limit)
+            if q.strip()
+            else container.permanent_memory.recent(limit=source_limit)
+        )
+        return {
+            "sources": [
+                _readable_source_payload(source, selected=False, order=index).model_dump()
+                for index, source in enumerate(sources)
+            ]
+        }
+
+    @router.get("/memory/readable-source")
+    async def read_readable_source(
+        source_id: str,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> ReadableContextSourcePayload:
+        _require(container, x_pm_user, "work:read")
+        try:
+            source = container.permanent_memory.read_source(source_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="source not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        return _readable_source_payload(source, selected=True, order=0)
+
+    @router.post("/memory/readable-context/preview")
+    async def preview_readable_context(
+        payload: ReadableContextPreviewRequest,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> ReadableContextBundlePayload:
+        _require(container, x_pm_user, "work:read")
+        return _readable_context_bundle(container, payload)
 
     @router.post("/memory/permanent/promote")
     async def promote_permanent_memory(
@@ -482,7 +575,12 @@ def create_operations_api_router(container: Container) -> APIRouter:
             target="compressed_context",
             target_id=f"{payload.scope}:{key}",
         )
-        return {"context": saved.to_dict()}
+        volatile_refs = [f"{item['scope']}:{item['key']}" for item in container.volatile_memory.list()] if payload.include_volatile else []
+        return {
+            "context": saved.to_dict(),
+            "used_sources": sources,
+            "volatile_memories": volatile_refs,
+        }
 
     @router.get("/memory/context/compressed")
     async def read_compressed_context(
@@ -492,6 +590,30 @@ def create_operations_api_router(container: Container) -> APIRouter:
     ) -> dict[str, object]:
         _require(container, x_pm_user, "work:read")
         return {"context": container.compressed_context.read(scope=scope, key=key).to_dict()}
+
+    @router.get("/ai-jobs/recent")
+    async def list_ai_jobs(
+        limit: int = 30,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        _require(container, x_pm_user, "work:read")
+        return {
+            "jobs": [
+                _ai_job_payload(record).model_dump()
+                for record in container.ai_jobs.recent(limit=max(1, min(limit, 200)))
+            ]
+        }
+
+    @router.get("/ai-jobs/{job_id}")
+    async def read_ai_job(
+        job_id: str,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> AiJobStatusPayload:
+        _require(container, x_pm_user, "work:read")
+        record = container.ai_jobs.get(job_id)
+        if record is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="AI job not found")
+        return _ai_job_payload(record)
 
     @router.get("/memory/schema")
     async def list_memory_schema(
@@ -1169,6 +1291,27 @@ def create_operations_api_router(container: Container) -> APIRouter:
             requires_api_key=bool(result.get("requires_api_key", True)),
         )
 
+    @router.post("/llm/local/huggingface/search")
+    async def search_local_huggingface_models(
+        payload: HuggingFaceModelSearchPayload,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> HuggingFaceModelSearchResultPayload:
+        _require(container, x_pm_user, "admin:api_keys")
+        try:
+            results = await search_huggingface_models(
+                payload.query,
+                limit=max(1, min(payload.limit, 50)),
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY,
+                detail=f"Hugging Face model search failed: {exc}",
+            ) from exc
+        return HuggingFaceModelSearchResultPayload(
+            query=payload.query,
+            models=[HuggingFaceModelItemPayload(**item) for item in results],
+        )
+
     @router.get("/operations-memory")
     async def read_operations_memory() -> OperationsMemoryPayload:
         memory = container.operations_memory.read()
@@ -1303,18 +1446,33 @@ def create_operations_api_router(container: Container) -> APIRouter:
         provider = payload.provider or task_route.provider
         if route == "local" and not runtime.local_enabled:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="local LLM route is disabled")
+        if route == "local":
+            _sync_local_llm_state(container, enabled=True)
         if route == "api" and not runtime.api_enabled:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="API LLM route is disabled")
         llm_route: LlmRoute = "local" if route == "local" else "cloud"
         messages = _build_chat_messages(container, payload.message, user_id=actor)
-        response = await _complete_with_provider(
+        job = _start_ai_job(
             container,
-            messages,
-            provider=provider,
-            route=llm_route,
-            temperature=0.2,
-            max_tokens=1024,
+            task=payload.task or "chat",
+            actor=actor,
+            input_summary=payload.message,
         )
+        try:
+            response = await _complete_with_provider(
+                container,
+                messages,
+                provider=provider,
+                route=llm_route,
+                temperature=0.2,
+                max_tokens=1024,
+                task=payload.task or "chat",
+                actor=actor,
+            )
+            job = _finish_ai_job(container, job, status="succeeded")
+        except Exception as exc:
+            _finish_ai_job(container, job, status="failed", error=str(exc))
+            raise
         container.metrics.record(
             agent="chat",
             route=response.route,
@@ -1341,6 +1499,7 @@ def create_operations_api_router(container: Container) -> APIRouter:
             model=response.model,
             prompt_tokens=response.prompt_tokens,
             completion_tokens=response.completion_tokens,
+            ai_job=_ai_job_payload(job).model_dump(),
         )
 
     @router.get("/progress")
@@ -1377,13 +1536,24 @@ def create_operations_api_router(container: Container) -> APIRouter:
             participants=payload.participants,
             constraints=payload.constraints,
         ).strip()
-        markdown = await _complete_office_task(container, prompt, task="document_generation")
-        path = _write_generated_doc(
-            container.settings.archive_dir,
-            folder="work_architecture",
-            slug=payload.objective or "work_architecture",
-            markdown=markdown,
+        job = _start_ai_job(
+            container,
+            task="work_architecture",
+            actor=actor,
+            input_summary=payload.objective,
         )
+        try:
+            markdown = await _complete_office_task(container, prompt, task="document_generation")
+            path = _write_generated_doc(
+                container.settings.archive_dir,
+                folder="work_architecture",
+                slug=payload.objective or "work_architecture",
+                markdown=markdown,
+            )
+            job = _finish_ai_job(container, job, status="succeeded", result_path=path)
+        except Exception as exc:
+            _finish_ai_job(container, job, status="failed", error=str(exc))
+            raise
         architecture = {
             "objective": payload.objective,
             "scope": payload.scope,
@@ -1416,6 +1586,7 @@ def create_operations_api_router(container: Container) -> APIRouter:
             markdown=markdown,
             path=path,
             architecture=architecture,
+            ai_job=_ai_job_payload(job).model_dump(),
         )
 
     @router.get("/work-schedule")
@@ -1488,13 +1659,24 @@ def create_operations_api_router(container: Container) -> APIRouter:
             horizon=payload.horizon,
             constraints=payload.constraints,
         ).strip()
-        markdown = await _complete_office_task(container, prompt, task="document_generation")
-        path = _write_generated_doc(
-            container.settings.archive_dir,
-            folder="work_architecture",
-            slug=f"schedule_{payload.objective}",
-            markdown=markdown,
+        job = _start_ai_job(
+            container,
+            task="work_schedule.generate",
+            actor=actor,
+            input_summary=payload.objective,
         )
+        try:
+            markdown = await _complete_office_task(container, prompt, task="document_generation")
+            path = _write_generated_doc(
+                container.settings.archive_dir,
+                folder="work_architecture",
+                slug=f"schedule_{payload.objective}",
+                markdown=markdown,
+            )
+            job = _finish_ai_job(container, job, status="succeeded", result_path=path)
+        except Exception as exc:
+            _finish_ai_job(container, job, status="failed", error=str(exc))
+            raise
         item = container.work_schedule.upsert(
             WorkScheduleItem.create(
                 title=f"AI 생성 스케줄 검토: {payload.objective}",
@@ -1511,7 +1693,12 @@ def create_operations_api_router(container: Container) -> APIRouter:
             target="work_schedule",
             target_id=item.id,
         )
-        return GeneratedDocumentPayload(title=payload.objective, markdown=markdown, path=path)
+        return GeneratedDocumentPayload(
+            title=payload.objective,
+            markdown=markdown,
+            path=path,
+            ai_job=_ai_job_payload(job).model_dump(),
+        )
 
     @router.get("/integrations/github")
     async def read_github_status() -> IntegrationStatusPayload:
@@ -1520,6 +1707,192 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.get("/integrations/discord")
     async def read_discord_status() -> IntegrationStatusPayload:
         return await _fetch_discord_status(container)
+
+    @router.get("/integrations/config")
+    async def read_integration_config(
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> IntegrationConfigPayload:
+        _require(container, x_pm_user, "admin:integrations")
+        return _integration_config_payload(container)
+
+    @router.put("/integrations/github")
+    async def upsert_github_connector(
+        payload: GitHubConnectorPayload,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> IntegrationConfigPayload:
+        actor = _require(container, x_pm_user, "admin:integrations")
+        _save_github_secrets(container, payload)
+        config = container.integration_config.update_github(
+            GitHubConnectorConfig(
+                enabled=payload.enabled,
+                allowed_repos=[
+                    repo.strip()
+                    for repo in payload.allowed_repos
+                    if repo.strip()
+                ],
+                trigger_label=payload.trigger_label.strip() or "patch-machine",
+                webhook_secret_present=container.secret_store.has_secret("github_webhook"),
+                app_token_present=container.secret_store.has_secret("github_app"),
+                event_forms=[
+                    item.strip()
+                    for item in payload.event_forms
+                    if item.strip()
+                ]
+                or ["issue", "pull_request", "repository", "push"],
+            )
+        )
+        _audit(
+            container,
+            actor=actor,
+            action="integration.github.update",
+            target="integration",
+            target_id="github",
+        )
+        return _integration_config_payload(container, config=config)
+
+    @router.put("/integrations/discord")
+    async def upsert_discord_connector(
+        payload: DiscordConnectorPayload,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> IntegrationConfigPayload:
+        actor = _require(container, x_pm_user, "admin:integrations")
+        _save_discord_secrets(container, payload)
+        bindings: list[DiscordChannelBindingConfig] = []
+        for binding in payload.channel_bindings:
+            channel_id = binding.channel_id.strip()
+            if not channel_id:
+                continue
+            bindings.append(
+                DiscordChannelBindingConfig(
+                    guild_id=binding.guild_id.strip(),
+                    channel_id=channel_id,
+                    channel_name=binding.channel_name.strip(),
+                    repo=binding.repo.strip(),
+                )
+            )
+        config = container.integration_config.update_discord(
+            DiscordConnectorConfig(
+                enabled=payload.enabled,
+                bot_token_present=container.secret_store.has_secret("discord_bot"),
+                guild_allowlist=[
+                    item.strip()
+                    for item in payload.guild_allowlist
+                    if item.strip()
+                ],
+                channel_bindings=bindings,
+                command_forms=[
+                    item.strip()
+                    for item in payload.command_forms
+                    if item.strip()
+                ]
+                or ["bug_report", "thread_digest", "slash_command"],
+            )
+        )
+        _audit(
+            container,
+            actor=actor,
+            action="integration.discord.update",
+            target="integration",
+            target_id="discord",
+        )
+        return _integration_config_payload(container, config=config)
+
+    @router.get("/archive/documents")
+    async def read_archive_document(
+        path: str,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> DocumentReadPayload:
+        _require(container, x_pm_user, "documents:read")
+        try:
+            return _read_archive_document(container, path)
+        except FileNotFoundError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @router.get("/llm/token-limits")
+    async def read_token_limits(
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> TokenLimitStatusPayload:
+        _require(container, x_pm_user, "admin:token_limits")
+        return _token_limit_status(container)
+
+    @router.put("/llm/token-limits")
+    async def update_token_limits(
+        payload: TokenLimitPayload,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> TokenLimitStatusPayload:
+        actor = _require(container, x_pm_user, "admin:token_limits")
+        container.token_usage.write_limits(
+            TokenLimitConfig(
+                enforcement_enabled=payload.enforcement_enabled,
+                per_request_max_tokens=max(0, int(payload.per_request_max_tokens or 0)),
+                daily_total_tokens=max(0, int(payload.daily_total_tokens or 0)),
+                monthly_total_tokens=max(0, int(payload.monthly_total_tokens or 0)),
+            )
+        )
+        _audit(
+            container,
+            actor=actor,
+            action="llm.token_limits.update",
+            target="token_limits",
+            details=payload.model_dump(),
+        )
+        return _token_limit_status(container)
+
+    @router.get("/patch-records")
+    async def list_patch_records(
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, list[PatchRecordPayload]]:
+        _require(container, x_pm_user, "patch_records:read")
+        return {
+            "items": [_patch_record_payload(record) for record in container.patch_records.list()],
+        }
+
+    @router.get("/patch-records/{record_id}")
+    async def read_patch_record(
+        record_id: str,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> PatchRecordDetailPayload:
+        _require(container, x_pm_user, "patch_records:read")
+        record = container.patch_records.get(record_id)
+        if record is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="패치 기록을 찾을 수 없습니다.")
+        markdown = container.patch_records.read_markdown(record_id) or ""
+        return _patch_record_detail_payload(record, markdown)
+
+    @router.post("/patch-records")
+    async def create_patch_record(
+        payload: PatchRecordCreatePayload,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> PatchRecordDetailPayload:
+        actor = _require(container, x_pm_user, "patch_records:write")
+        if not payload.title.strip():
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail="title 은 필수입니다.",
+            )
+        record = container.patch_records.append(
+            title=payload.title,
+            summary=payload.summary,
+            request=payload.request,
+            plan=payload.plan,
+            changed_files=payload.changed_files,
+            verification=payload.verification,
+            follow_ups=payload.follow_ups,
+            tags=payload.tags,
+            actor=actor,
+            agent=payload.agent,
+        )
+        markdown = container.patch_records.read_markdown(record.record_id) or ""
+        _audit(
+            container,
+            actor=actor,
+            action="patch_record.create",
+            target="patch_record",
+            target_id=record.record_id,
+        )
+        return _patch_record_detail_payload(record, markdown)
 
     @router.post("/hr/role-requirements")
     async def create_role_requirements(
@@ -1530,6 +1903,7 @@ def create_operations_api_router(container: Container) -> APIRouter:
         result = await _generate_hiring_document(
             container,
             payload,
+            actor=actor,
             kind="role_requirements",
             instruction="필요 역량, 경험, 성향, 필수/우대 조건을 정리하세요.",
         )
@@ -1551,6 +1925,7 @@ def create_operations_api_router(container: Container) -> APIRouter:
         result = await _generate_hiring_document(
             container,
             payload,
+            actor=actor,
             kind="interview_kit",
             instruction="면접 질문, 좋은 답변 기준, 평가 루브릭을 작성하세요.",
         )
@@ -1572,6 +1947,7 @@ def create_operations_api_router(container: Container) -> APIRouter:
         result = await _generate_hiring_document(
             container,
             payload,
+            actor=actor,
             kind="onboarding_plan",
             instruction="입사 후 1주/1개월/3개월 온보딩 계획과 산출물을 작성하세요.",
         )
@@ -1599,14 +1975,25 @@ def create_operations_api_router(container: Container) -> APIRouter:
             incoming_owner=payload.incoming_owner,
             notes=payload.notes,
         ).strip()
-        markdown = await _complete_office_task(container, prompt, task="handover")
-        path = _write_generated_doc(
-            container.settings.archive_dir,
-            folder="handover",
-            slug=payload.work_title or "handover",
-            markdown=markdown,
+        job = _start_ai_job(
+            container,
+            task="handover",
+            actor=actor,
+            input_summary=payload.work_title or payload.notes,
         )
-        result = GeneratedDocumentPayload(title=payload.work_title, markdown=markdown, path=path)
+        try:
+            markdown = await _complete_office_task(container, prompt, task="handover")
+            path = _write_generated_doc(
+                container.settings.archive_dir,
+                folder="handover",
+                slug=payload.work_title or "handover",
+                markdown=markdown,
+            )
+            job = _finish_ai_job(container, job, status="succeeded", result_path=path)
+        except Exception as exc:
+            _finish_ai_job(container, job, status="failed", error=str(exc))
+            raise
+        result = GeneratedDocumentPayload(title=payload.work_title, markdown=markdown, path=path, ai_job=_ai_job_payload(job).model_dump())
         _audit(container, actor=actor, action="document.create", target="document", target_id=path)
         return result
 
@@ -1630,14 +2017,25 @@ def create_operations_api_router(container: Container) -> APIRouter:
             audience=payload.audience,
             source_text=payload.source_text,
         ).strip()
-        markdown = await _complete_office_task(container, prompt, task="document_generation")
-        path = _write_generated_doc(
-            container.settings.archive_dir,
-            folder="documents",
-            slug=f"{payload.document_type}_{payload.title}",
-            markdown=markdown,
+        job = _start_ai_job(
+            container,
+            task="document_generation",
+            actor=actor,
+            input_summary=f"{payload.document_type}: {payload.title}",
         )
-        result = GeneratedDocumentPayload(title=payload.title, markdown=markdown, path=path)
+        try:
+            markdown = await _complete_office_task(container, prompt, task="document_generation")
+            path = _write_generated_doc(
+                container.settings.archive_dir,
+                folder="documents",
+                slug=f"{payload.document_type}_{payload.title}",
+                markdown=markdown,
+            )
+            job = _finish_ai_job(container, job, status="succeeded", result_path=path)
+        except Exception as exc:
+            _finish_ai_job(container, job, status="failed", error=str(exc))
+            raise
+        result = GeneratedDocumentPayload(title=payload.title, markdown=markdown, path=path, ai_job=_ai_job_payload(job).model_dump())
         _audit(container, actor=actor, action="document.create", target="document", target_id=path)
         return result
 
@@ -1926,6 +2324,8 @@ def _parse_initial_setup_result(
         profile,
         sensitive_hint=any(file.sensitive_hint for file in parsed_files),
     )
+    operations_seed = recommendation.pop("operations_memory_seed", {}) or {}
+    work_seed = recommendation.pop("work_memory_seed", {}) or {}
     data = _try_load_json_object(raw)
     if data is None:
         data = {
@@ -1943,6 +2343,16 @@ def _parse_initial_setup_result(
         }
     for key, value in recommendation.items():
         data.setdefault(key, value)
+    operations_memory = dict(data.get("operations_memory") or {})
+    for key, value in operations_seed.items():
+        if value and not str(operations_memory.get(key) or "").strip():
+            operations_memory[key] = value
+    data["operations_memory"] = operations_memory
+    work_memory = dict(data.get("work_memory") or {})
+    for key, value in work_seed.items():
+        if value and not str(work_memory.get(key) or "").strip():
+            work_memory[key] = value
+    data["work_memory"] = work_memory
     data.setdefault("sensitive_hint", any(file.sensitive_hint for file in parsed_files))
     if data.get("sensitive_hint"):
         warnings = list(data.get("warnings") or [])
@@ -2204,6 +2614,161 @@ def _user_payload(container: Container, user_id: str) -> dict[str, object]:
     return {**user, "permissions": permissions}
 
 
+def _readable_source_payload(
+    source: dict[str, object],
+    *,
+    selected: bool,
+    order: int,
+) -> ReadableContextSourcePayload:
+    return ReadableContextSourcePayload(
+        id=str(source.get("id") or source.get("path") or ""),
+        kind=str(source.get("kind") or "unknown"),
+        path=str(source.get("path") or source.get("id") or ""),
+        title=str(source.get("title") or source.get("path") or "Untitled source"),
+        excerpt=str(source.get("excerpt") or "")[:1200],
+        content=str(source.get("content") or ""),
+        selected=selected,
+        order=order,
+        sensitivity=str(source.get("sensitivity") or "internal"),
+        origin=str(source.get("origin") or "archive"),
+        updated_at=str(source.get("updated_at") or ""),
+    )
+
+
+def _readable_context_bundle(
+    container: Container,
+    payload: ReadableContextPreviewRequest,
+) -> ReadableContextBundlePayload:
+    limit = max(1, min(payload.source_limit, 50))
+    warnings: list[str] = []
+    sources = container.permanent_memory.resolve_sources(
+        query=payload.query,
+        limit=limit,
+        source_ids=payload.source_ids if payload.source_ids else None,
+    )
+    if not sources:
+        sources = container.permanent_memory.search(payload.query, limit=limit)
+    used_sources: list[ReadableContextSourcePayload] = []
+    for order, source in enumerate(sources):
+        source_id = str(source.get("id") or source.get("path") or "")
+        try:
+            detailed = container.permanent_memory.read_source(source_id, max_chars=8000)
+        except Exception as exc:
+            detailed = source
+            warnings.append(f"{source_id}: {exc}")
+        used_sources.append(_readable_source_payload(detailed, selected=True, order=order))
+    volatile_payloads: list[VolatileMemoryPayload] = []
+    if payload.include_volatile:
+        for raw in container.volatile_memory.list():
+            if isinstance(raw, dict):
+                volatile_payloads.append(
+                    VolatileMemoryPayload.from_memory(VolatileMemory.from_mapping(raw))
+                )
+    markdown = _render_readable_context_markdown(
+        query=payload.query,
+        sources=used_sources,
+        volatile_memories=volatile_payloads,
+        token_budget=payload.token_budget,
+    )
+    return ReadableContextBundlePayload(
+        query=payload.query,
+        used_sources=used_sources,
+        volatile_memories=volatile_payloads,
+        estimated_tokens=_estimate_tokens(markdown),
+        warnings=warnings,
+        markdown=markdown,
+    )
+
+
+def _render_readable_context_markdown(
+    *,
+    query: str,
+    sources: list[ReadableContextSourcePayload],
+    volatile_memories: list[VolatileMemoryPayload],
+    token_budget: int,
+) -> str:
+    lines = [
+        "# AI 가독 정보 번들",
+        "",
+        f"- Query: {query or '(없음)'}",
+        f"- Token budget: {token_budget}",
+        f"- Sources: {len(sources)}",
+        f"- Volatile memories: {len(volatile_memories)}",
+        "",
+    ]
+    for source in sources:
+        content = source.content or source.excerpt
+        lines.extend(
+            [
+                f"## Source {source.order + 1}: {source.title}",
+                f"- kind: {source.kind}",
+                f"- path: {source.path}",
+                "",
+                content[:8000],
+                "",
+            ]
+        )
+    if volatile_memories:
+        lines.append("## Volatile memories")
+        lines.append("")
+        for memory in volatile_memories:
+            lines.extend(
+                [
+                    f"### {memory.scope}:{memory.key}",
+                    f"- 요약: {memory.summary or '(없음)'}",
+                    f"- 현재 의도: {memory.current_intent or '(없음)'}",
+                    f"- 원천 참조: {', '.join(memory.relevant_sources) or '(없음)'}",
+                    "",
+                ]
+            )
+    return "\n".join(lines).strip()
+
+
+def _estimate_tokens(text: str) -> int:
+    return max(1, len(text) // 4) if text else 0
+
+
+def _ai_job_payload(record: AiJobRecord) -> AiJobStatusPayload:
+    return AiJobStatusPayload(**record.to_dict())
+
+
+def _start_ai_job(
+    container: Container,
+    *,
+    task: str,
+    actor: str = "system",
+    input_summary: str = "",
+    used_sources: list[str] | None = None,
+) -> AiJobRecord:
+    job = container.ai_jobs.create(
+        task=task,
+        actor=actor,
+        input_summary=input_summary,
+        used_sources=used_sources,
+    )
+    running = job.with_status("running")
+    return container.ai_jobs.update(running)
+
+
+def _finish_ai_job(
+    container: Container,
+    job: AiJobRecord,
+    *,
+    status: Literal["succeeded", "failed"],
+    result_path: str = "",
+    error: str = "",
+    used_sources: list[str] | None = None,
+) -> AiJobRecord:
+    return container.ai_jobs.update(
+        job.with_status(
+            status,
+            result_path=result_path,
+            error=error,
+            used_sources=used_sources,
+        )
+    )
+
+
 def _settings_api_key(container: Container, provider: str) -> str:
     if provider == "openai":
         return container.settings.llm.openai_api_key
@@ -2217,7 +2782,7 @@ def _settings_api_key(container: Container, provider: str) -> str:
 def _audit(
     container: Container,
     *,
-    actor: str,
+    actor: str = "system",
     action: str,
     target: str,
     target_id: str = "",
@@ -2356,6 +2921,8 @@ def _sync_local_llm_state(container: Container, *, enabled: bool) -> None:
     provider = container.embedded_vllm()
     if provider is None:
         return
+    runtime = container.llm_runtime.read()
+    provider.configure_model(runtime.local_model or container.settings.llm.vllm_model)
     if enabled:
         if provider.status()["state"] not in {"loading", "running"}:
             task = asyncio.create_task(provider.preload(), name="vllm-local-preload")
@@ -2415,6 +2982,7 @@ async def _generate_hiring_document(
     container: Container,
     payload: HiringRequest,
     *,
+    actor: str = "system",
     kind: str,
     instruction: str,
 ) -> GeneratedDocumentPayload:
@@ -2426,14 +2994,30 @@ async def _generate_hiring_document(
         priority=payload.priority,
         instruction=instruction,
     ).strip()
-    markdown = await _complete_office_task(container, prompt, task="hiring")
-    path = _write_generated_doc(
-        container.settings.archive_dir,
-        folder="hr/interview_kits",
-        slug=f"{kind}_{payload.role_title}",
-        markdown=markdown,
+    job = _start_ai_job(
+        container,
+        task=f"hiring.{kind}",
+        actor=actor,
+        input_summary=f"{payload.role_title}: {payload.business_need}",
     )
-    return GeneratedDocumentPayload(title=payload.role_title, markdown=markdown, path=path)
+    try:
+        markdown = await _complete_office_task(container, prompt, task="hiring")
+        path = _write_generated_doc(
+            container.settings.archive_dir,
+            folder="hr/interview_kits",
+            slug=f"{kind}_{payload.role_title}",
+            markdown=markdown,
+        )
+        job = _finish_ai_job(container, job, status="succeeded", result_path=path)
+    except Exception as exc:
+        _finish_ai_job(container, job, status="failed", error=str(exc))
+        raise
+    return GeneratedDocumentPayload(
+        title=payload.role_title,
+        markdown=markdown,
+        path=path,
+        ai_job=_ai_job_payload(job).model_dump(),
+    )
 
 
 def _resolve_runtime_task(container: Container, task: str) -> tuple[LlmProviderName, LlmRoute]:
@@ -2465,6 +3049,7 @@ async def _complete_office_task(
         route=route,
         temperature=0.2,
         max_tokens=1600,
+        task=task,
     )
     return response.text.strip() or "_(LLM 응답 없음)_"
 
@@ -2491,6 +3076,7 @@ async def _complete_patchops_task(
         route=route,
         temperature=0.1,
         max_tokens=2200,
+        task=task,
     )
     return response.text.strip()
 
@@ -2503,6 +3089,8 @@ async def _complete_with_provider(
     route: LlmRoute,
     temperature: float,
     max_tokens: int,
+    task: str = "chat",
+    actor: str = "",
 ) -> LlmResponse:
     destination = _firewall_destination(provider=provider, route=route)
     policy = load_context_firewall_policy(container.settings.workspace_dir)
@@ -2527,7 +3115,15 @@ async def _complete_with_provider(
         if firewall_result.decision == "local_only":
             route = "local"
     try:
+        container.token_usage.check_limits(attempted_tokens=max(0, int(max_tokens or 0)))
+    except TokenLimitExceededError as exc:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(exc),
+        ) from exc
+    try:
         response: LlmResponse
+        sanitized: LlmResponse
         if container.settings.llm.gateway_url:
             response = await _complete_via_gateway(
                 container,
@@ -2537,7 +3133,18 @@ async def _complete_with_provider(
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
-            return sanitize_llm_response(response, destination=destination, task_type=str(provider))
+            sanitized = sanitize_llm_response(
+                response, destination=destination, task_type=str(provider)
+            )
+            _record_token_usage(
+                container,
+                provider=provider,
+                model=sanitized.model,
+                task=task,
+                actor=actor,
+                response=sanitized,
+            )
+            return sanitized
         saved = container.secret_store.read(provider)
         if saved and saved.api_key and provider == "openai" and route != "local":
             response = await OpenAiProvider(
@@ -2545,28 +3152,72 @@ async def _complete_with_provider(
                 model=saved.model or container.settings.llm.openai_model,
                 base_url=default_base_url("openai"),
             ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
-            return sanitize_llm_response(response, destination=destination, task_type=str(provider))
+            sanitized = sanitize_llm_response(
+                response, destination=destination, task_type=str(provider)
+            )
+            _record_token_usage(
+                container,
+                provider=provider,
+                model=sanitized.model,
+                task=task,
+                actor=actor,
+                response=sanitized,
+            )
+            return sanitized
         if saved and saved.api_key and provider == "anthropic" and route != "local":
             response = await AnthropicProvider(
                 api_key=saved.api_key,
                 model=saved.model or container.settings.llm.anthropic_model,
                 base_url=default_base_url("anthropic"),
             ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
-            return sanitize_llm_response(response, destination=destination, task_type=str(provider))
+            sanitized = sanitize_llm_response(
+                response, destination=destination, task_type=str(provider)
+            )
+            _record_token_usage(
+                container,
+                provider=provider,
+                model=sanitized.model,
+                task=task,
+                actor=actor,
+                response=sanitized,
+            )
+            return sanitized
         if saved and saved.api_key and provider == "gemini" and route != "local":
             response = await GeminiProvider(
                 api_key=saved.api_key,
                 model=saved.model or container.settings.llm.gemini_model,
                 base_url=default_base_url("gemini"),
             ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
-            return sanitize_llm_response(response, destination=destination, task_type=str(provider))
+            sanitized = sanitize_llm_response(
+                response, destination=destination, task_type=str(provider)
+            )
+            _record_token_usage(
+                container,
+                provider=provider,
+                model=sanitized.model,
+                task=task,
+                actor=actor,
+                response=sanitized,
+            )
+            return sanitized
         if saved and provider == "vllm" and container.settings.llm.vllm_mode != "embedded":
             response = await VllmProvider(
                 base_url=saved.base_url or container.settings.llm.vllm_base_url,
                 model=saved.model or container.settings.llm.vllm_model,
                 api_key=saved.api_key or "EMPTY",
             ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
-            return sanitize_llm_response(response, destination="local_llm", task_type=str(provider))
+            sanitized = sanitize_llm_response(
+                response, destination="local_llm", task_type=str(provider)
+            )
+            _record_token_usage(
+                container,
+                provider=provider,
+                model=sanitized.model,
+                task=task,
+                actor=actor,
+                response=sanitized,
+            )
+            return sanitized
         if isinstance(container.llm, LlmGateway):
             response = await container.llm.complete_with_provider(
                 messages,
@@ -2575,14 +3226,34 @@ async def _complete_with_provider(
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
-            return sanitize_llm_response(response, destination=destination, task_type=str(provider))
+            sanitized = sanitize_llm_response(
+                response, destination=destination, task_type=str(provider)
+            )
+            _record_token_usage(
+                container,
+                provider=provider,
+                model=sanitized.model,
+                task=task,
+                actor=actor,
+                response=sanitized,
+            )
+            return sanitized
         response = await container.llm.complete(
             messages,
             route=route,
             temperature=temperature,
             max_tokens=max_tokens,
         )
-        return sanitize_llm_response(response, destination=destination, task_type=str(provider))
+        sanitized = sanitize_llm_response(response, destination=destination, task_type=str(provider))
+        _record_token_usage(
+            container,
+            provider=provider,
+            model=sanitized.model,
+            task=task,
+            actor=actor,
+            response=sanitized,
+        )
+        return sanitized
     except VllmConnectionError as exc:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -2593,6 +3264,54 @@ async def _complete_with_provider(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         ) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _llm_provider_http_error(provider, exc) from exc
+
+
+def _record_token_usage(
+    container: Container,
+    *,
+    provider: LlmProviderName,
+    model: str,
+    task: str,
+    actor: str,
+    response: LlmResponse,
+) -> None:
+    try:
+        container.token_usage.record(
+            provider=str(provider),
+            model=model,
+            task=task,
+            actor=actor,
+            prompt_tokens=int(getattr(response, "prompt_tokens", 0) or 0),
+            completion_tokens=int(getattr(response, "completion_tokens", 0) or 0),
+        )
+    except Exception:
+        return
+
+
+def _llm_provider_http_error(provider: LlmProviderName, exc: Exception) -> HTTPException:
+    """Convert a third-party LLM client error into a user-friendly HTTPException."""
+
+    status_code = getattr(exc, "status_code", None)
+    detail = str(exc) or exc.__class__.__name__
+    if isinstance(status_code, int):
+        if status_code in {400, 401, 403, 404, 422}:
+            return HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=f"{provider} 요청이 거절되었습니다: {detail}",
+            )
+        if status_code in {408, 429, 500, 502, 503, 504}:
+            return HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"{provider} 서비스 응답 실패: {detail}",
+            )
+    return HTTPException(
+        status.HTTP_502_BAD_GATEWAY,
+        detail=f"{provider} 호출 중 오류: {detail}",
+    )
 
 
 def _firewall_destination(*, provider: LlmProviderName, route: LlmRoute) -> str:
@@ -2730,16 +3449,161 @@ def _summarize_bottlenecks(items: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _resolve_github_runtime(
+    container: Container,
+) -> tuple[GitHubConnectorConfig, str, str]:
+    config = container.integration_config.read().github
+    saved_token = container.secret_store.read("github_app")
+    token = (saved_token.api_key if saved_token else "") or container.settings.github.app_token
+    trigger_label = config.trigger_label or container.settings.github.trigger_label
+    return config, token, trigger_label
+
+
+def _resolve_discord_runtime(
+    container: Container,
+) -> tuple[DiscordConnectorConfig, str]:
+    config = container.integration_config.read().discord
+    saved_token = container.secret_store.read("discord_bot")
+    token = (saved_token.api_key if saved_token else "") or container.settings.discord.bot_token
+    return config, token
+
+
+def _save_github_secrets(container: Container, payload: GitHubConnectorPayload) -> None:
+    if payload.app_token.strip():
+        container.secret_store.upsert(
+            ApiKeyRecord(
+                provider="github_app",
+                api_key=payload.app_token.strip(),
+                model="",
+                base_url="",
+            )
+        )
+    if payload.webhook_secret.strip():
+        container.secret_store.upsert(
+            ApiKeyRecord(
+                provider="github_webhook",
+                api_key=payload.webhook_secret.strip(),
+                model="",
+                base_url="",
+            )
+        )
+
+
+def _save_discord_secrets(container: Container, payload: DiscordConnectorPayload) -> None:
+    if payload.bot_token.strip():
+        container.secret_store.upsert(
+            ApiKeyRecord(
+                provider="discord_bot",
+                api_key=payload.bot_token.strip(),
+                model="",
+                base_url="",
+            )
+        )
+
+
+def _integration_config_payload(
+    container: Container,
+    *,
+    config: IntegrationConfig | None = None,
+) -> IntegrationConfigPayload:
+    config = config or container.integration_config.read()
+    github = config.github
+    discord = config.discord
+    return IntegrationConfigPayload(
+        github=GitHubConnectorPayload(
+            enabled=github.enabled,
+            allowed_repos=list(github.allowed_repos),
+            trigger_label=github.trigger_label,
+            webhook_secret_present=container.secret_store.has_secret("github_webhook"),
+            app_token_present=container.secret_store.has_secret("github_app"),
+            event_forms=list(github.event_forms),
+        ),
+        discord=DiscordConnectorPayload(
+            enabled=discord.enabled,
+            bot_token_present=container.secret_store.has_secret("discord_bot"),
+            guild_allowlist=list(discord.guild_allowlist),
+            channel_bindings=[
+                DiscordChannelBindingPayload(
+                    guild_id=binding.guild_id,
+                    channel_id=binding.channel_id,
+                    channel_name=binding.channel_name,
+                    repo=binding.repo,
+                )
+                for binding in discord.channel_bindings
+            ],
+            command_forms=list(discord.command_forms),
+        ),
+    )
+
+
+def _read_archive_document(container: Container, raw_path: str) -> DocumentReadPayload:
+    if not raw_path or not raw_path.strip():
+        raise ValueError("path 는 필수입니다.")
+    cleaned = raw_path.strip().lstrip("/")
+    if "\x00" in cleaned:
+        raise ValueError("path 에 잘못된 문자가 포함되어 있습니다.")
+    archive_root = container.settings.archive_dir.resolve()
+    candidate = (archive_root / cleaned).resolve()
+    try:
+        candidate.relative_to(archive_root)
+    except ValueError as exc:
+        raise ValueError("archive 외부 경로는 열람할 수 없습니다.") from exc
+    if not candidate.exists() or not candidate.is_file():
+        raise FileNotFoundError(f"문서를 찾을 수 없습니다: {cleaned}")
+    if candidate.suffix.lower() not in {".md", ".markdown", ".txt", ".json", ".jsonl", ".yaml", ".yml"}:
+        raise ValueError("열람 지원 파일 형식이 아닙니다.")
+    text = candidate.read_text(encoding="utf-8")
+    stat = candidate.stat()
+    modified = datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat()
+    return DocumentReadPayload(
+        path=str(candidate.relative_to(archive_root)).replace("\\", "/"),
+        markdown=text,
+        bytes=stat.st_size,
+        modified_at=modified,
+    )
+
+
+def _token_limit_status(container: Container) -> TokenLimitStatusPayload:
+    limits = container.token_usage.read_limits()
+    summary = container.token_usage.summary()
+    return TokenLimitStatusPayload(
+        limits=TokenLimitPayload(**limits.to_dict()),
+        usage=TokenUsageSummaryPayload(
+            daily_total=summary.daily_total,
+            monthly_total=summary.monthly_total,
+            by_provider=dict(summary.by_provider),
+            by_task=dict(summary.by_task),
+            by_actor=dict(summary.by_actor),
+            recent=[TokenUsageEntryPayload(**entry.to_dict()) for entry in summary.recent],
+        ),
+    )
+
+
+def _patch_record_payload(record: PatchRecord) -> PatchRecordPayload:
+    return PatchRecordPayload(**record.to_dict())
+
+
+def _patch_record_detail_payload(record: PatchRecord, markdown: str) -> PatchRecordDetailPayload:
+    return PatchRecordDetailPayload(markdown=markdown, **record.to_dict())
+
+
 async def _fetch_github_status(container: Container) -> IntegrationStatusPayload:
-    repos = container.settings.github.allowed_repos
+    config, token, trigger_label = _resolve_github_runtime(container)
+    if not config.enabled:
+        return IntegrationStatusPayload(
+            ok=False,
+            configured=False,
+            reason="GitHub 커넥터가 비활성 상태입니다. 설정 폼에서 활성화하세요.",
+            items=[],
+        )
+    repos = config.allowed_repos or container.settings.github.allowed_repos
     if not repos:
         return IntegrationStatusPayload(
             ok=False,
             configured=False,
-            reason="PM_GITHUB_ALLOWED_REPOS is empty",
+            reason="허용된 저장소가 없습니다. GitHub 설정에 repo를 추가하세요.",
             items=[],
         )
-    token = container.settings.github.app_token
     headers = {"Accept": "application/vnd.github+json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -2752,7 +3616,7 @@ async def _fetch_github_status(container: Container) -> IntegrationStatusPayload
                     headers=headers,
                     params={
                         "state": "open",
-                        "labels": container.settings.github.trigger_label,
+                        "labels": trigger_label,
                         "per_page": 10,
                         "sort": "updated",
                     },
@@ -2763,6 +3627,7 @@ async def _fetch_github_status(container: Container) -> IntegrationStatusPayload
                     {
                         "repo": repo,
                         "open_issue_count": len(issues) if isinstance(issues, list) else 0,
+                        "event_forms": list(config.event_forms),
                         "issues": [
                             {
                                 "number": issue.get("number"),
@@ -2781,15 +3646,32 @@ async def _fetch_github_status(container: Container) -> IntegrationStatusPayload
 
 
 async def _fetch_discord_status(container: Container) -> IntegrationStatusPayload:
-    bindings = container.discord.channel_map.bindings
+    config, token = _resolve_discord_runtime(container)
+    if not config.enabled:
+        return IntegrationStatusPayload(
+            ok=False,
+            configured=False,
+            reason="Discord 커넥터가 비활성 상태입니다. 설정 폼에서 활성화하세요.",
+            items=[],
+        )
+    bindings: list[DiscordChannelBindingConfig] = list(config.channel_bindings)
+    if not bindings:
+        for legacy in container.discord.channel_map.bindings:
+            bindings.append(
+                DiscordChannelBindingConfig(
+                    guild_id=legacy.guild_id,
+                    channel_id=legacy.channel_id,
+                    channel_name=legacy.channel_name,
+                    repo=legacy.repo.full_name,
+                )
+            )
     if not bindings:
         return IntegrationStatusPayload(
             ok=False,
             configured=False,
-            reason="config/channel_map.yml has no active channel mappings",
+            reason="채널 바인딩이 없습니다. Discord 설정 폼에서 채널을 등록하세요.",
             items=[],
         )
-    token = container.settings.discord.bot_token
     items: list[dict[str, Any]] = []
     async with httpx.AsyncClient(timeout=10) as client:
         for binding in bindings:
@@ -2797,10 +3679,11 @@ async def _fetch_discord_status(container: Container) -> IntegrationStatusPayloa
                 "guild_id": binding.guild_id,
                 "channel_id": binding.channel_id,
                 "channel_name": binding.channel_name,
-                "repo": binding.repo.full_name,
+                "repo": binding.repo,
                 "live": False,
+                "command_forms": list(config.command_forms),
             }
-            if token:
+            if token and binding.channel_id:
                 try:
                     response = await client.get(
                         f"https://discord.com/api/v10/channels/{binding.channel_id}",
@@ -2811,7 +3694,7 @@ async def _fetch_discord_status(container: Container) -> IntegrationStatusPayloa
                     item.update({"live": True, "name": data.get("name", binding.channel_name)})
                 except Exception as exc:
                     item["error"] = str(exc)
-            else:
-                item["reason"] = "PM_DISCORD_BOT_TOKEN is empty"
+            elif not token:
+                item["reason"] = "Discord bot 토큰이 등록되지 않았습니다."
             items.append(item)
     return IntegrationStatusPayload(ok=True, configured=True, items=items)

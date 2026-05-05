@@ -26,12 +26,14 @@ from patch_machine.application.event_bus import EventBus
 from patch_machine.application.orchestrator import Orchestrator
 from patch_machine.archive.access_control import AccessControlStore
 from patch_machine.archive.agent_execution import AgentExecutionStore
+from patch_machine.archive.ai_jobs import AiJobStore
 from patch_machine.archive.audit_log import AuditLogStore
 from patch_machine.archive.auth_store import AuthStore
 from patch_machine.archive.context_compressor import CompressedContextStore
 from patch_machine.archive.context_firewall import ContextFirewallStore
 from patch_machine.archive.conversation_store import ConversationStore
 from patch_machine.archive.deletion_requests import DeletionRequestStore
+from patch_machine.archive.integration_config import IntegrationConfigStore
 from patch_machine.archive.issue_memory import IssueMemoryStore
 from patch_machine.archive.llm_runtime import LlmRuntimeStore
 from patch_machine.archive.mcp_audit import McpAuditStore
@@ -39,9 +41,11 @@ from patch_machine.archive.mcp_sessions import McpSessionStore
 from patch_machine.archive.memory_schema import MemorySchemaStore
 from patch_machine.archive.operations_memory import OperationsMemoryStore
 from patch_machine.archive.patch_execution import PatchExecutionStore
+from patch_machine.archive.patch_records import PatchRecordStore
 from patch_machine.archive.patch_runs import PatchRunStore
 from patch_machine.archive.permanent_memory import PermanentMemoryStore
 from patch_machine.archive.secret_store import SecretStore
+from patch_machine.archive.token_usage import TokenUsageStore
 from patch_machine.archive.uploads import UploadStore
 from patch_machine.archive.volatile_memory import VolatileMemoryStore
 from patch_machine.archive.work_memory import WorkMemoryStore, WorkScheduleStore
@@ -60,6 +64,7 @@ class Container:
     repo_snapshot: RepoSnapshotService
     retriever: MarkdownRetriever
     operations_memory: OperationsMemoryStore
+    ai_jobs: AiJobStore
     llm_runtime: LlmRuntimeStore
     access_control: AccessControlStore
     agent_execution: AgentExecutionStore
@@ -69,14 +74,17 @@ class Container:
     context_firewall: ContextFirewallStore
     conversations: ConversationStore
     deletion_requests: DeletionRequestStore
+    integration_config: IntegrationConfigStore
     memory_schema: MemorySchemaStore
     issue_memory: IssueMemoryStore
     mcp_audit: McpAuditStore
     mcp_sessions: McpSessionStore
     permanent_memory: PermanentMemoryStore
     patch_execution: PatchExecutionStore
+    patch_records: PatchRecordStore
     patch_runs: PatchRunStore
     secret_store: SecretStore
+    token_usage: TokenUsageStore
     uploads: UploadStore
     volatile_memory: VolatileMemoryStore
     work_memory: WorkMemoryStore
@@ -106,6 +114,7 @@ class Container:
 
         archive = ArchiveWriter(settings.archive_dir)
         operations_memory = OperationsMemoryStore(settings.archive_dir)
+        ai_jobs = AiJobStore(settings.archive_dir)
         llm_runtime = LlmRuntimeStore(settings.archive_dir)
         access_control = AccessControlStore(settings.archive_dir)
         agent_execution = AgentExecutionStore(settings.archive_dir)
@@ -115,14 +124,20 @@ class Container:
         context_firewall = ContextFirewallStore(settings.archive_dir)
         conversations = ConversationStore(settings.archive_dir)
         deletion_requests = DeletionRequestStore(settings.archive_dir)
+        integration_config = IntegrationConfigStore(settings.archive_dir)
         issue_memory = IssueMemoryStore(settings.archive_dir)
         mcp_audit = McpAuditStore(settings.archive_dir)
         mcp_sessions = McpSessionStore(settings.archive_dir)
         memory_schema = MemorySchemaStore(settings.archive_dir)
         permanent_memory = PermanentMemoryStore(settings.archive_dir)
         patch_execution = PatchExecutionStore(settings.archive_dir)
+        patch_records = PatchRecordStore(settings.archive_dir)
         patch_runs = PatchRunStore(settings.archive_dir)
-        secret_store = SecretStore(settings.archive_dir, master_key=settings.secret_key)
+        secret_store = SecretStore(
+            settings.archive_dir,
+            master_key=_resolve_secret_key(settings),
+        )
+        token_usage = TokenUsageStore(settings.archive_dir)
         uploads = UploadStore(settings.archive_dir)
         volatile_memory = VolatileMemoryStore(settings.archive_dir)
         work_memory = WorkMemoryStore(settings.archive_dir)
@@ -181,6 +196,7 @@ class Container:
             repo_snapshot=repo_snapshot,
             retriever=retriever,
             operations_memory=operations_memory,
+            ai_jobs=ai_jobs,
             llm_runtime=llm_runtime,
             access_control=access_control,
             agent_execution=agent_execution,
@@ -190,14 +206,17 @@ class Container:
             context_firewall=context_firewall,
             conversations=conversations,
             deletion_requests=deletion_requests,
+            integration_config=integration_config,
             issue_memory=issue_memory,
             mcp_audit=mcp_audit,
             mcp_sessions=mcp_sessions,
             memory_schema=memory_schema,
             permanent_memory=permanent_memory,
             patch_execution=patch_execution,
+            patch_records=patch_records,
             patch_runs=patch_runs,
             secret_store=secret_store,
+            token_usage=token_usage,
             uploads=uploads,
             volatile_memory=volatile_memory,
             work_memory=work_memory,
@@ -272,3 +291,11 @@ def build_container(
         for attr, value in overrides.items():
             setattr(container, attr, value)
     return container
+
+
+def _resolve_secret_key(settings: Settings) -> str:
+    if settings.secret_key:
+        return settings.secret_key
+    if settings.env == "production":
+        return ""
+    return SecretStore.local_master_key(settings.archive_dir)

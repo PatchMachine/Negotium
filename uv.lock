@@ -1014,6 +1014,15 @@ wheels = [
 ]
 
 [[package]]
+name = "et-xmlfile"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d3/38/af70d7ab1ae9d4da450eeec1fa3918940a5fafb9055e934af8d6eb0c2313/et_xmlfile-2.0.0.tar.gz", hash = "sha256:dab3f4764309081ce75662649be815c4c9081e88f0837825f90fd28317d4da54", size = 17234, upload-time = "2024-10-25T17:25:40.039Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c1/8b/5fe2cc11fee489817272089c4203e679c63b570a5aaeb18d852ae3cbba6a/et_xmlfile-2.0.0-py3-none-any.whl", hash = "sha256:7a91720bc756843502c3b7504c77b8fe44217c85c537d85037f0f536151b2caa", size = 18059, upload-time = "2024-10-25T17:25:39.051Z" },
+]
+
+[[package]]
 name = "fastapi"
 version = "0.136.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2947,6 +2956,18 @@ wheels = [
 ]
 
 [[package]]
+name = "openpyxl"
+version = "3.1.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "et-xmlfile" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3d/f9/88d94a75de065ea32619465d2f77b29a0469500e99012523b91cc4141cd1/openpyxl-3.1.5.tar.gz", hash = "sha256:cf0e3cf56142039133628b5acffe8ef0c12bc902d2aadd3e0fe5878dc08d1050", size = 186464, upload-time = "2024-06-28T14:03:44.161Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c0/da/977ded879c29cbd04de313843e76868e6e13408a94ed6b987245dc7c8506/openpyxl-3.1.5-py2.py3-none-any.whl", hash = "sha256:5282c12b107bffeef825f4617dc029afaf41d0ea60823bbb665ef3079dc79de2", size = 250910, upload-time = "2024-06-28T14:03:41.161Z" },
+]
+
+[[package]]
 name = "opentelemetry-api"
 version = "1.41.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3235,6 +3256,7 @@ dependencies = [
     { name = "jinja2" },
     { name = "langgraph" },
     { name = "openai" },
+    { name = "openpyxl" },
     { name = "portalocker" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -3282,6 +3304,7 @@ requires-dist = [
     { name = "langgraph", specifier = ">=0.2" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
     { name = "openai", specifier = ">=1.30" },
+    { name = "openpyxl", specifier = ">=3.1" },
     { name = "portalocker", specifier = ">=2.8" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.7" },
     { name = "pydantic", specifier = ">=2.6" },
@@ -5338,6 +5361,8 @@ dependencies = [
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/34/b4/32429ebde396149e5570c9a6b2e3b52dc47261d8b20465cc6ae36c4659fb/vllm-0.20.1.tar.gz", hash = "sha256:778df065237704d51e8b4cc95bcc6f6a0c2317f13feb38295de3ce76146bf140", size = 33519792, upload-time = "2026-05-03T08:24:43.794Z" }
 wheels = [
+    { url = "https://files.pythonhosted.org/packages/6e/2a/4bee1ddd867895e63bcca4f4ad78048f6a5d96d0ea241cdb70657cce966e/vllm-0.20.1-1-cp38-abi3-manylinux_2_35_aarch64.whl", hash = "sha256:4a5c24a94be8413ce682e72d6c22762ac7be64635cf191f4807d30910f928268", size = 235787780, upload-time = "2026-05-04T10:38:44.956Z" },
+    { url = "https://files.pythonhosted.org/packages/f1/ae/55bb24db43e02a21fe98d64293a309d7cf67054785ac8e8ff2e60e59789e/vllm-0.20.1-1-cp38-abi3-manylinux_2_35_x86_64.whl", hash = "sha256:11907857c94c226caf82ada92ab09b1e0dbf538b5b80a93aed74be29e861020c", size = 244425444, upload-time = "2026-05-04T10:39:12.327Z" },
     { url = "https://files.pythonhosted.org/packages/a7/23/8b48eeee87d9e5589f11bf5139f768053b90c4f85a33cfb72655a30cd14a/vllm-0.20.1-cp38-abi3-manylinux_2_35_aarch64.whl", hash = "sha256:1cfa5f5654e4c7a8a9f949ef7a9597a63b9736129202c96c006434b57f511223", size = 235787697, upload-time = "2026-05-03T08:25:12.511Z" },
     { url = "https://files.pythonhosted.org/packages/76/80/16ee5d248a795abefd1476d4884394e3d917c68096f8dd696a8216347a74/vllm-0.20.1-cp38-abi3-manylinux_2_35_x86_64.whl", hash = "sha256:da89341f2a07f49a2571edecbec612071839b04b6d7ea1e3bddb5347d47859df", size = 244425347, upload-time = "2026-05-03T08:25:32.198Z" },
 ]

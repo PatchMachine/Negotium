@@ -103,6 +103,7 @@ class ChatResponse(BaseModel):
     model: str
     prompt_tokens: int
     completion_tokens: int
+    ai_job: dict[str, Any] = Field(default_factory=dict)
 
 
 class LocalLlmStatusPayload(BaseModel):
@@ -199,6 +200,7 @@ class WorkArchitecturePayload(BaseModel):
     markdown: str
     path: str
     architecture: dict[str, object]
+    ai_job: dict[str, Any] = Field(default_factory=dict)
 
 
 class WorkScheduleGenerationRequest(BaseModel):
@@ -257,6 +259,50 @@ class ContextCompressRequest(BaseModel):
     source_limit: int = 20
     source_ids: list[str] = Field(default_factory=list)
     include_volatile: bool = False
+
+
+class ReadableContextPreviewRequest(BaseModel):
+    query: str = ""
+    source_ids: list[str] = Field(default_factory=list)
+    source_limit: int = 20
+    include_volatile: bool = False
+    token_budget: int = 4000
+
+
+class ReadableContextSourcePayload(BaseModel):
+    id: str
+    kind: str
+    path: str
+    title: str
+    excerpt: str = ""
+    content: str = ""
+    selected: bool = False
+    order: int = 0
+    sensitivity: str = "internal"
+    origin: str = "archive"
+    updated_at: str = ""
+
+
+class ReadableContextBundlePayload(BaseModel):
+    query: str = ""
+    used_sources: list[ReadableContextSourcePayload] = Field(default_factory=list)
+    volatile_memories: list[VolatileMemoryPayload] = Field(default_factory=list)
+    estimated_tokens: int = 0
+    warnings: list[str] = Field(default_factory=list)
+    markdown: str = ""
+
+
+class AiJobStatusPayload(BaseModel):
+    job_id: str
+    task: str
+    status: Literal["queued", "running", "succeeded", "failed"] = "queued"
+    actor: str = ""
+    input_summary: str = ""
+    used_sources: list[str] = Field(default_factory=list)
+    result_path: str = ""
+    error: str = ""
+    created_at: str = ""
+    updated_at: str = ""
 
 
 class PromoteMemoryPayload(BaseModel):
@@ -352,6 +398,113 @@ class IntegrationStatusPayload(BaseModel):
     items: list[dict[str, Any]]
 
 
+class GitHubConnectorPayload(BaseModel):
+    enabled: bool = False
+    allowed_repos: list[str] = Field(default_factory=list)
+    trigger_label: str = "patch-machine"
+    webhook_secret: str = ""
+    app_token: str = ""
+    webhook_secret_present: bool = False
+    app_token_present: bool = False
+    event_forms: list[str] = Field(
+        default_factory=lambda: ["issue", "pull_request", "repository", "push"]
+    )
+
+
+class DiscordChannelBindingPayload(BaseModel):
+    guild_id: str = ""
+    channel_id: str = ""
+    channel_name: str = ""
+    repo: str = ""
+
+
+class DiscordConnectorPayload(BaseModel):
+    enabled: bool = False
+    bot_token: str = ""
+    bot_token_present: bool = False
+    guild_allowlist: list[str] = Field(default_factory=list)
+    channel_bindings: list[DiscordChannelBindingPayload] = Field(default_factory=list)
+    command_forms: list[str] = Field(
+        default_factory=lambda: ["bug_report", "thread_digest", "slash_command"]
+    )
+
+
+class IntegrationConfigPayload(BaseModel):
+    github: GitHubConnectorPayload = Field(default_factory=GitHubConnectorPayload)
+    discord: DiscordConnectorPayload = Field(default_factory=DiscordConnectorPayload)
+
+
+class DocumentReadPayload(BaseModel):
+    path: str
+    markdown: str
+    bytes: int
+    modified_at: str
+
+
+class TokenLimitPayload(BaseModel):
+    enforcement_enabled: bool = True
+    per_request_max_tokens: int = 4000
+    daily_total_tokens: int = 200_000
+    monthly_total_tokens: int = 4_000_000
+
+
+class TokenUsageEntryPayload(BaseModel):
+    provider: str = ""
+    model: str = ""
+    task: str = ""
+    actor: str = ""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    occurred_at: str = ""
+
+
+class TokenUsageSummaryPayload(BaseModel):
+    daily_total: int = 0
+    monthly_total: int = 0
+    by_provider: dict[str, int] = Field(default_factory=dict)
+    by_task: dict[str, int] = Field(default_factory=dict)
+    by_actor: dict[str, int] = Field(default_factory=dict)
+    recent: list[TokenUsageEntryPayload] = Field(default_factory=list)
+
+
+class TokenLimitStatusPayload(BaseModel):
+    limits: TokenLimitPayload
+    usage: TokenUsageSummaryPayload
+
+
+class PatchRecordCreatePayload(BaseModel):
+    title: str
+    summary: str = ""
+    request: str = ""
+    plan: list[str] = Field(default_factory=list)
+    changed_files: list[str] = Field(default_factory=list)
+    verification: list[str] = Field(default_factory=list)
+    follow_ups: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    agent: str = ""
+
+
+class PatchRecordPayload(BaseModel):
+    record_id: str
+    title: str
+    summary: str = ""
+    request: str = ""
+    plan: list[str] = Field(default_factory=list)
+    changed_files: list[str] = Field(default_factory=list)
+    verification: list[str] = Field(default_factory=list)
+    follow_ups: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    actor: str = ""
+    agent: str = ""
+    created_at: str = ""
+    relative_path: str = ""
+
+
+class PatchRecordDetailPayload(PatchRecordPayload):
+    markdown: str = ""
+
+
 class HiringRequest(BaseModel):
     role_title: str
     business_need: str = ""
@@ -362,6 +515,7 @@ class GeneratedDocumentPayload(BaseModel):
     title: str
     markdown: str
     path: str
+    ai_job: dict[str, Any] = Field(default_factory=dict)
 
 
 class HandoverRequest(BaseModel):
@@ -399,6 +553,24 @@ class ProviderModelPreviewPayload(BaseModel):
     api_key: str = ""
     base_url: str = ""
     include_fallback: bool = True
+
+
+class HuggingFaceModelSearchPayload(BaseModel):
+    query: str = ""
+    limit: int = 12
+
+
+class HuggingFaceModelItemPayload(BaseModel):
+    id: str
+    downloads: int = 0
+    likes: int = 0
+    tags: list[str] = Field(default_factory=list)
+    pipeline_tag: str = ""
+
+
+class HuggingFaceModelSearchResultPayload(BaseModel):
+    query: str
+    models: list[HuggingFaceModelItemPayload]
 
 
 class SetupStatusPayload(BaseModel):
@@ -482,6 +654,13 @@ class CompanyProfilePayload(BaseModel):
     )
     data_sensitivity: list[str] = Field(default_factory=lambda: ["general"])
     deployment_preference: str = "local_recommended"
+    company_name: str = ""
+    office_project: str = ""
+    work_summary: str = ""
+    current_tools: str = ""
+    recurring_workflows: str = ""
+    change_management_needs: str = ""
+    automation_priorities: str = ""
 
 
 class PatchNoteRecommendationPayload(BaseModel):
@@ -523,3 +702,4 @@ class InitialOfficeSetupResult(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     questions: list[str] = Field(default_factory=list)
     sensitive_hint: bool = False
+    ai_job: dict[str, Any] = Field(default_factory=dict)

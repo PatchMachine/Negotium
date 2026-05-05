@@ -5,6 +5,7 @@ import {
   fetchLlmRuntime,
   fetchLocalLlmStatus,
   sendChatMessage,
+  type AiJobStatus,
   type AgentPlan,
   type ChatResponse,
   type LocalLlmStatus,
@@ -12,6 +13,7 @@ import {
   type LlmRuntime,
   type LlmRuntimeRoute,
 } from '../../api';
+import AiJobStatusBar from '../common/AiJobStatusBar';
 import AgentPlansPanel from '../memory/AgentPlansPanel';
 import PatchOpsCockpit from './PatchOpsCockpit';
 
@@ -28,6 +30,7 @@ export default function AiAgentPage() {
   const [history, setHistory] = useState<Array<{ question: string; response: ChatResponse }>>([]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [chatJob, setChatJob] = useState<AiJobStatus | null>(null);
 
   async function refreshPlans() {
     try {
@@ -70,12 +73,36 @@ export default function AiAgentPage() {
     if (!message.trim()) return;
     setBusy(true);
     setNotice(null);
+    setChatJob({
+      job_id: 'local-chat',
+      task: 'chat',
+      status: 'queued',
+      actor: '',
+      input_summary: message,
+      used_sources: [],
+      result_path: '',
+      error: '',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
     try {
+      setChatJob((current) => current ? { ...current, status: 'running', updated_at: new Date().toISOString() } : current);
       const response = await sendChatMessage(message, route, provider, 'chat');
       setHistory([{ question: message, response }, ...history]);
+      setChatJob(response.ai_job ?? null);
       setMessage('');
     } catch (err) {
       setNotice(err instanceof Error ? err.message : '테스트 채팅 호출 실패');
+      setChatJob((current) =>
+        current
+          ? {
+              ...current,
+              status: 'failed',
+              error: err instanceof Error ? err.message : '테스트 채팅 호출 실패',
+              updated_at: new Date().toISOString(),
+            }
+          : current,
+      );
     } finally {
       setBusy(false);
     }
@@ -145,6 +172,7 @@ export default function AiAgentPage() {
             {busy ? '호출 중...' : '테스트 채팅 보내기'}
           </button>
         </form>
+        <AiJobStatusBar job={chatJob} />
         <div className="log-list">
           {history.map((entry, index) => (
             <article className="log-card" key={`${entry.question}-${index}`}>

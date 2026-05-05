@@ -1,0 +1,58 @@
+{
+  "roles": [
+    {
+      "id": "owner",
+      "name": "대표/관리자",
+      "level": 100,
+      "permissions": [
+        "*"
+      ]
+    },
+    {
+      "id": "manager",
+      "name": "매니저",
+      "level": 70,
+      "permissions": [
+        "memory:write",
+        "llm:chat",
+        "documents:write",
+        "uploads:write",
+        "work:read"
+      ]
+    },
+    {
+      "id": "staff",
+      "name": "직원",
+      "level": 40,
+      "permissions": [
+        "llm:chat",
+        "uploads:write",
+        "work:read"
+      ]
+    },
+    {
+      "id": "viewer",
+      "name": "조회자",
+      "level": 10,
+      "permissions": [
+        "work:read"
+      ]
+    }
+  ],
+  "users": [
+    {
+      "id": "owner",
+      "display_name": "시스템 관리자",
+      "title": "대표",
+      "role_id": "owner",
+      "active": true
+    },
+    {
+      "id": "jepetolee",
+      "display_name": "이재석",
+      "title": "시스템 관리자",
+      "role_id": "owner",
+      "active": true
+    }
+  ]
+}

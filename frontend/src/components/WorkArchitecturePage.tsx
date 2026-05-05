@@ -1,6 +1,7 @@
 import { useState } from 'react';
 
-import { generateWorkArchitecture, type WorkArchitecture } from '../api';
+import { generateWorkArchitecture, type AiJobStatus, type WorkArchitecture } from '../api';
+import AiJobStatusBar from './common/AiJobStatusBar';
 
 export default function WorkArchitecturePage() {
   const [draft, setDraft] = useState({
@@ -13,15 +14,40 @@ export default function WorkArchitecturePage() {
   });
   const [result, setResult] = useState<WorkArchitecture | null>(null);
   const [message, setMessage] = useState('');
+  const [job, setJob] = useState<AiJobStatus | null>(null);
 
   async function generate() {
     setMessage('생성 중...');
+    setJob({
+      job_id: 'local-work-architecture',
+      task: 'work_architecture',
+      status: 'queued',
+      actor: '',
+      input_summary: draft.objective,
+      used_sources: [],
+      result_path: '',
+      error: '',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
     try {
+      setJob((current) => current ? { ...current, status: 'running', updated_at: new Date().toISOString() } : current);
       const next = await generateWorkArchitecture(draft);
       setResult(next);
+      setJob(next.ai_job ?? null);
       setMessage(`저장됨: ${next.path}`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : '업무 아키텍처 생성 실패');
+      setJob((current) =>
+        current
+          ? {
+              ...current,
+              status: 'failed',
+              error: err instanceof Error ? err.message : '업무 아키텍처 생성 실패',
+              updated_at: new Date().toISOString(),
+            }
+          : current,
+      );
     }
   }
 
@@ -43,6 +69,7 @@ export default function WorkArchitecturePage() {
           <button type="button" onClick={() => void generate()}>업무 아키텍처 생성</button>
           {message ? <p className="muted">{message}</p> : null}
         </div>
+        <AiJobStatusBar job={job} />
       </div>
       <div className="panel">
         <p className="eyebrow">Generated Plan</p>

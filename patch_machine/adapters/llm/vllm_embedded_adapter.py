@@ -159,6 +159,14 @@ class VllmEmbeddedProvider(LlmProvider):
 
         reset_engine_for_tests(clear_cuda=True)
 
+    def configure_model(self, model: str) -> None:
+        next_model = model.strip()
+        if not next_model or next_model == self._model:
+            return
+        self.unload()
+        self._model = next_model
+        self._log = get_logger(component="llm.vllm.embedded", model=next_model)
+
     def status(self) -> dict[str, object]:
         return {
             "mode": "embedded",

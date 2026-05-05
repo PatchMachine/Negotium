@@ -39,7 +39,8 @@ patch-machine serve
 ```
 
 백엔드 API와 기존 서버 렌더링 페이지는 FastAPI 서버에서 제공됩니다.
-API 키를 웹에서 저장하려면 `.env`에 `PM_SECRET_KEY`를 반드시 설정하세요.
+개발 모드에서는 API 키 암호화용 개발 키가 자동 적용됩니다. 운영 배포에서는 반드시 `.env`에
+충분히 긴 `PM_SECRET_KEY`를 직접 설정하세요.
 
 - 외부 참여 안내: `http://localhost:8080/`
 - 참여 방법: `http://localhost:8080/join`

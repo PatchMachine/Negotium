@@ -21,6 +21,7 @@ export default function AdminSettingsPage() {
   const [draft, setDraft] = useState({ provider: 'openai', api_key: '', model: '' });
   const [models, setModels] = useState<ProviderModelPayload | null>(null);
   const [message, setMessage] = useState('');
+  const modelOptions = models?.models.length ? models.models : [draft.model].filter(Boolean);
 
   async function refresh() {
     try {
@@ -49,9 +50,14 @@ export default function AdminSettingsPage() {
   }, [draft.provider]);
 
   async function save() {
-    const result = await saveApiKey(draft);
-    setProviders(result.providers);
-    setMessage('저장했습니다.');
+    try {
+      const result = await saveApiKey(draft);
+      setProviders(result.providers);
+      setMessage(`${draft.provider} API 키를 암호화 저장소에 저장했습니다.`);
+      setDraft((current) => ({ ...current, api_key: '' }));
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'API 키 저장 실패');
+    }
   }
 
   async function previewModels() {
@@ -59,7 +65,11 @@ export default function AdminSettingsPage() {
       const next = await previewProviderModels(draft.provider, draft.api_key);
       setModels(next);
       setDraft((current) => ({ ...current, model: next.models[0] || current.model }));
-      setMessage(next.source === 'live' ? '입력한 API 키로 모델 목록을 확인했습니다.' : `기본 추천 목록: ${next.reason}`);
+      setMessage(
+        next.source === 'live'
+          ? '입력한 API 키로 채팅 가능한 모델 목록을 확인했습니다.'
+          : `기본 추천 목록: ${next.reason}`,
+      );
     } catch (err) {
       setMessage(err instanceof Error ? err.message : '모델 목록 확인 실패');
     }
@@ -68,6 +78,7 @@ export default function AdminSettingsPage() {
   async function remove(provider: string) {
     const result = await deleteApiKey(provider);
     setProviders(result.providers);
+    setMessage(`${provider} API 키를 삭제했습니다.`);
   }
 
   return (
@@ -93,16 +104,24 @@ export default function AdminSettingsPage() {
             <input type="password" value={draft.api_key} onChange={(event) => setDraft({ ...draft, api_key: event.target.value })} />
           </label>
           <label>
-            Model
-            <select value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })}>
-              {(models?.models.length ? models.models : [draft.model].filter(Boolean)).map((model) => (
-                <option key={model} value={model}>{model}</option>
-              ))}
-            </select>
+            Model 선택
+            <div className="model-select-panel">
+              <select value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })}>
+                {modelOptions.length ? null : <option value="">먼저 모델 목록을 확인하세요</option>}
+                {modelOptions.map((model) => (
+                  <option key={model} value={model}>{model}</option>
+                ))}
+              </select>
+              <input
+                placeholder="목록에 없으면 모델 ID 직접 입력"
+                value={draft.model}
+                onChange={(event) => setDraft({ ...draft, model: event.target.value })}
+              />
+            </div>
           </label>
           {models ? (
             <p className="muted">
-              모델 목록: {models.source === 'live' ? '실시간 API' : '기본 추천 목록'}
+              모델 목록: {models.source === 'live' ? '실시간 API에서 확인한 채팅 가능 모델' : '기본 추천 목록'}
               {models.reason ? ` · ${models.reason}` : ''}
             </p>
           ) : null}

@@ -6,8 +6,10 @@ import {
   fetchWorkSchedule,
   generateWorkSchedule,
   updateWorkScheduleItem,
+  type AiJobStatus,
   type WorkScheduleItem,
 } from '../api';
+import AiJobStatusBar from './common/AiJobStatusBar';
 
 const emptyItem: WorkScheduleItem = {
   id: '',
@@ -28,6 +30,7 @@ export default function WorkSchedulePage() {
   const [draft, setDraft] = useState<WorkScheduleItem>(emptyItem);
   const [generator, setGenerator] = useState({ objective: '', participants: '', horizon: '', constraints: '' });
   const [message, setMessage] = useState('');
+  const [job, setJob] = useState<AiJobStatus | null>(null);
 
   async function refresh() {
     const payload = await fetchWorkSchedule();
@@ -45,9 +48,37 @@ export default function WorkSchedulePage() {
   }
 
   async function generate() {
-    const doc = await generateWorkSchedule(generator);
-    setMessage(`AI 스케줄 문서 저장됨: ${doc.path}`);
-    await refresh();
+    setJob({
+      job_id: 'local-work-schedule',
+      task: 'work_schedule.generate',
+      status: 'queued',
+      actor: '',
+      input_summary: generator.objective,
+      used_sources: [],
+      result_path: '',
+      error: '',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+    try {
+      setJob((current) => current ? { ...current, status: 'running', updated_at: new Date().toISOString() } : current);
+      const doc = await generateWorkSchedule(generator);
+      setJob(doc.ai_job ?? null);
+      setMessage(`AI 스케줄 문서 저장됨: ${doc.path}`);
+      await refresh();
+    } catch (err) {
+      setJob((current) =>
+        current
+          ? {
+              ...current,
+              status: 'failed',
+              error: err instanceof Error ? err.message : 'AI 스케줄 생성 실패',
+              updated_at: new Date().toISOString(),
+            }
+          : current,
+      );
+      setMessage(err instanceof Error ? err.message : 'AI 스케줄 생성 실패');
+    }
   }
 
   return (
@@ -98,6 +129,7 @@ export default function WorkSchedulePage() {
           <button type="button" onClick={() => void generate()}>AI 스케줄 생성</button>
           {message ? <p className="muted">{message}</p> : null}
         </div>
+        <AiJobStatusBar job={job} />
       </div>
     </section>
   );

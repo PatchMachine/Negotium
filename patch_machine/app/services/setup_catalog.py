@@ -168,6 +168,7 @@ def recommend_patchnote_setup(
     )
     workflows = _unique_by_id(GOAL_WORKFLOWS.get(item) for item in goals)
     integrations = _integration_priorities(industries, departments, goals)
+    integrations = _augment_integrations_from_profile(integrations, profile)
     security_defaults = _security_defaults(profile, local_required=local_required)
 
     return {
@@ -179,8 +180,10 @@ def recommend_patchnote_setup(
         "security_defaults": security_defaults,
         "integration_priorities": integrations,
         "llm_task_routes": _llm_task_routes(local_required=local_required),
-        "first_14_days": _first_14_days(goals, industries),
+        "first_14_days": _first_14_days(goals, industries, profile=profile),
         "human_review_required": _human_review_required(departments, sensitivities),
+        "operations_memory_seed": _operations_memory_seed(profile),
+        "work_memory_seed": _work_memory_seed(profile),
     }
 
 
@@ -279,7 +282,12 @@ def _llm_task_routes(*, local_required: bool) -> dict[str, dict[str, str]]:
     }
 
 
-def _first_14_days(goals: list[str], industries: list[str]) -> list[str]:
+def _first_14_days(
+    goals: list[str],
+    industries: list[str],
+    *,
+    profile: CompanyProfilePayload | None = None,
+) -> list[str]:
     actions = [
         "1일차: 회사 파일과 핵심 업무 문서를 업로드하고 권한 범위를 확인합니다.",
         "3일차: 회의록에서 결정사항과 액션아이템을 자동 추출해 팀 패치 노트를 만듭니다.",
@@ -287,8 +295,86 @@ def _first_14_days(goals: list[str], industries: list[str]) -> list[str]:
     ]
     if "release_notes" in goals or "it_saas" in industries:
         actions.append("10일차: GitHub/Jira 변경사항으로 제품 릴리즈 노트 자동화를 연결합니다.")
+    if profile is not None:
+        priority_text = (profile.automation_priorities or "").strip()
+        if priority_text:
+            actions.append(f"5일차: 사용자가 지정한 우선 자동화 대상부터 적용합니다 — {priority_text}")
+        recurring = (profile.recurring_workflows or "").strip()
+        if recurring:
+            actions.append(f"7일차: 반복 업무/회의에 운영 템플릿을 연결합니다 — {recurring}")
+        change_needs = (profile.change_management_needs or "").strip()
+        if change_needs:
+            actions.append(f"9일차: 변경사항 누락 이슈를 패치 노트로 해결합니다 — {change_needs}")
     actions.append("14일차: 에이전트 팩, 템플릿, 보안 정책의 실제 사용 결과를 검토합니다.")
     return actions
+
+
+def _augment_integrations_from_profile(
+    integrations: list[dict[str, Any]], profile: CompanyProfilePayload
+) -> list[dict[str, Any]]:
+    text = (profile.current_tools or "").lower()
+    if not text:
+        return integrations
+    extras: list[dict[str, Any]] = []
+    keyword_map = [
+        ("slack", {"id": "slack", "name": "Slack", "reason": "사용자가 도구로 지정"}),
+        ("notion", {"id": "notion", "name": "Notion", "reason": "사용자가 도구로 지정"}),
+        ("jira", {"id": "jira", "name": "Jira/Linear", "reason": "사용자가 도구로 지정"}),
+        ("linear", {"id": "jira", "name": "Jira/Linear", "reason": "사용자가 도구로 지정"}),
+        ("github", {"id": "github", "name": "GitHub", "reason": "사용자가 도구로 지정"}),
+        ("gitlab", {"id": "github", "name": "GitHub/GitLab", "reason": "사용자가 도구로 지정"}),
+        ("hubspot", {"id": "hubspot", "name": "HubSpot/Salesforce", "reason": "사용자가 도구로 지정"}),
+        ("salesforce", {"id": "hubspot", "name": "HubSpot/Salesforce", "reason": "사용자가 도구로 지정"}),
+        ("zendesk", {"id": "zendesk", "name": "Zendesk/Intercom", "reason": "사용자가 도구로 지정"}),
+        ("intercom", {"id": "zendesk", "name": "Zendesk/Intercom", "reason": "사용자가 도구로 지정"}),
+        ("google", {"id": "google_workspace", "name": "Google Workspace", "reason": "사용자가 도구로 지정"}),
+        ("drive", {"id": "google_workspace", "name": "Google Workspace", "reason": "사용자가 도구로 지정"}),
+        (
+            "microsoft",
+            {"id": "microsoft_365", "name": "Microsoft 365", "reason": "사용자가 도구로 지정"},
+        ),
+        (
+            "office 365",
+            {"id": "microsoft_365", "name": "Microsoft 365", "reason": "사용자가 도구로 지정"},
+        ),
+    ]
+    for keyword, payload in keyword_map:
+        if keyword in text:
+            extras.append(payload)
+    return _unique_by_id([*integrations, *extras])
+
+
+def _operations_memory_seed(profile: CompanyProfilePayload) -> dict[str, str]:
+    seed: dict[str, str] = {}
+    if profile.company_name.strip():
+        seed["company_name"] = profile.company_name.strip()
+    if profile.office_project.strip():
+        seed["office_project"] = profile.office_project.strip()
+    workflow_lines: list[str] = []
+    if profile.work_summary.strip():
+        workflow_lines.append(f"회사 업무 요약: {profile.work_summary.strip()}")
+    if profile.recurring_workflows.strip():
+        workflow_lines.append(f"반복 업무/회의: {profile.recurring_workflows.strip()}")
+    if profile.change_management_needs.strip():
+        workflow_lines.append(f"변경사항 관리 이슈: {profile.change_management_needs.strip()}")
+    if workflow_lines:
+        seed["key_workflows"] = "\n".join(workflow_lines)
+    if profile.current_tools.strip():
+        seed["office_tools"] = profile.current_tools.strip()
+    return seed
+
+
+def _work_memory_seed(profile: CompanyProfilePayload) -> dict[str, str]:
+    seed: dict[str, str] = {}
+    if profile.office_project.strip():
+        seed["goals"] = profile.office_project.strip()
+    if profile.automation_priorities.strip():
+        seed["next_actions"] = profile.automation_priorities.strip()
+    if profile.work_summary.strip():
+        seed["current_focus"] = profile.work_summary.strip()
+    if profile.change_management_needs.strip():
+        seed["risks"] = profile.change_management_needs.strip()
+    return seed
 
 
 def _human_review_required(departments: list[str], sensitivities: set[str]) -> list[str]:

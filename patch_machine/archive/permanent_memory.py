@@ -21,6 +21,9 @@ SourceKind = Literal[
     "document",
     "conversation",
     "promoted_memory",
+    "patch_record",
+    "upload",
+    "token_usage",
     "unknown",
 ]
 
@@ -68,6 +71,27 @@ class PermanentMemoryStore:
             ]
         sources.sort(key=lambda source: source.updated_at, reverse=True)
         return [source.to_dict() for source in sources[:limit]]
+
+    def read_source(self, source_id: str, *, max_chars: int = 12_000) -> dict[str, object]:
+        """Read one source body by archive-relative id/path."""
+
+        cleaned = source_id.strip().lstrip("/")
+        if not cleaned or "\x00" in cleaned:
+            raise ValueError("invalid source id")
+        path = (self._archive_dir / cleaned).resolve()
+        archive_root = self._archive_dir.resolve()
+        try:
+            path.relative_to(archive_root)
+        except ValueError as exc:
+            raise ValueError("source path escapes archive") from exc
+        if not path.exists() or not path.is_file():
+            raise FileNotFoundError(cleaned)
+        kind = _kind_for(path, self._archive_dir)
+        if kind == "unknown":
+            raise ValueError("unsupported source kind")
+        source = _source_from_path(path, self._archive_dir, kind)
+        content = _read_content(path, max_chars=max(1, max_chars))
+        return {**source.to_dict(), "content": content}
 
     def resolve_sources(
         self,
@@ -166,6 +190,12 @@ def _kind_for(path: Path, archive_dir: Path) -> SourceKind:
         return "conversation"
     if parts[:2] == ("memory", "promoted") and path.suffix == ".md":
         return "promoted_memory"
+    if parts and parts[0] == "patch_records" and path.suffix in {".md", ".jsonl"}:
+        return "patch_record"
+    if parts and parts[0] == "uploads" and path.suffix in {".md", ".markdown", ".txt", ".json", ".jsonl", ".yaml", ".yml"}:
+        return "upload"
+    if parts and parts[0] == "token_usage" and path.suffix in {".json", ".jsonl"}:
+        return "token_usage"
     if parts and parts[0] in {"documents", "hr", "handover", "work_architecture"} and path.suffix in {".md", ".jsonl"}:
         return "document"
     return "unknown"
@@ -199,6 +229,16 @@ def _read_excerpt(path: Path) -> str:
                     rendered.append(line[:240])
             return "\n".join(rendered)
         return path.read_text(encoding="utf-8", errors="ignore")[:1200]
+    except OSError:
+        return ""
+
+
+def _read_content(path: Path, *, max_chars: int) -> str:
+    try:
+        if path.suffix == ".jsonl":
+            lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+            return "\n".join(lines[-80:])[:max_chars]
+        return path.read_text(encoding="utf-8", errors="ignore")[:max_chars]
     except OSError:
         return ""
 

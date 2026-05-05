@@ -70,3 +70,43 @@ async def test_anthropic_model_catalog_parses_live_response(
     assert payload["source"] == "live"
     assert payload["models"] == ["claude-opus-4-7", "claude-sonnet-4-6"]
     assert payload["configured"] is True
+
+
+async def test_openai_model_catalog_filters_non_chat_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        async def __aenter__(self) -> FakeClient:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        async def get(self, *args: object, **kwargs: object) -> httpx.Response:
+            request = httpx.Request("GET", "https://api.openai.com/v1/models")
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "data": [
+                        {"id": "babbage-002"},
+                        {"id": "text-embedding-3-large"},
+                        {"id": "whisper-1"},
+                        {"id": "gpt-4o-mini"},
+                        {"id": "gpt-4.1"},
+                        {"id": "o4-mini"},
+                    ]
+                },
+            )
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+
+    payload = await catalog.list_models("openai", api_key="test-key")
+
+    assert payload["source"] == "live"
+    assert payload["models"] == ["gpt-4.1", "gpt-4o-mini", "o4-mini"]
+    assert "babbage-002" not in payload["models"]
+    assert "text-embedding-3-large" not in payload["models"]

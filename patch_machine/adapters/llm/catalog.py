@@ -187,11 +187,47 @@ async def _openai_models(*, api_key: str, base_url: str) -> list[str]:
             headers={"Authorization": f"Bearer {api_key}"},
         )
         response.raise_for_status()
-    return sorted(
+    ids = [
         model["id"]
         for model in response.json().get("data", [])
         if isinstance(model, dict) and isinstance(model.get("id"), str)
+    ]
+    return _chat_model_order("openai", [model_id for model_id in ids if _is_openai_chat_model(model_id)])
+
+
+def _is_openai_chat_model(model_id: str) -> bool:
+    """Return True for OpenAI models suitable for chat/responses-style text generation."""
+
+    blocked_prefixes = (
+        "babbage",
+        "davinci",
+        "text-",
+        "dall-e",
+        "tts",
+        "whisper",
+        "omni-moderation",
+        "text-embedding",
     )
+    if model_id.startswith(blocked_prefixes):
+        return False
+    if "embedding" in model_id or "moderation" in model_id or "audio" in model_id:
+        return False
+    return model_id.startswith(("gpt-", "o1", "o3", "o4"))
+
+
+def _chat_model_order(provider: str, models: list[str]) -> list[str]:
+    metadata = require_provider(provider)
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for preferred in metadata.fallback_models:
+        if preferred in models and preferred not in seen:
+            ordered.append(preferred)
+            seen.add(preferred)
+    for model in sorted(models):
+        if model not in seen:
+            ordered.append(model)
+            seen.add(model)
+    return ordered
 
 
 async def _openai_compatible_models(*, base_url: str, api_key: str) -> list[str]:
@@ -237,3 +273,55 @@ async def _gemini_models(*, api_key: str, base_url: str) -> list[str]:
         if name and "generateContent" in methods:
             models.append(name)
     return sorted(models)
+
+
+async def search_huggingface_models(query: str, *, limit: int = 12) -> list[dict[str, object]]:
+    term = query.strip()
+    if not term:
+        return [
+            {
+                "id": model_id,
+                "downloads": 0,
+                "likes": 0,
+                "tags": ["recommended"],
+                "pipeline_tag": "text-generation",
+            }
+            for model_id in (
+                "Qwen/Qwen3-4B",
+                "Qwen/Qwen3-8B",
+                "Qwen/Qwen2.5-7B-Instruct",
+                "LGAI-EXAONE/EXAONE-4.5-33B",
+                "LGAI-EXAONE/EXAONE-4.0-1.2B",
+                "LGAI-EXAONE/EXAONE-3.0-7.8B-Instruct",
+                "upstage/SOLAR-10.7B-Instruct-v1.0",
+            )
+        ]
+    async with httpx.AsyncClient(timeout=20) as client:
+        response = await client.get(
+            "https://huggingface.co/api/models",
+            params={
+                "search": term,
+                "filter": "text-generation",
+                "sort": "downloads",
+                "direction": "-1",
+                "limit": limit,
+            },
+        )
+        response.raise_for_status()
+    results: list[dict[str, object]] = []
+    for item in response.json():
+        if not isinstance(item, dict):
+            continue
+        model_id = item.get("modelId") or item.get("id")
+        if not isinstance(model_id, str) or not model_id:
+            continue
+        results.append(
+            {
+                "id": model_id,
+                "downloads": int(item.get("downloads") or 0),
+                "likes": int(item.get("likes") or 0),
+                "tags": [str(tag) for tag in item.get("tags", [])[:8]],
+                "pipeline_tag": str(item.get("pipeline_tag") or ""),
+            }
+        )
+    return results

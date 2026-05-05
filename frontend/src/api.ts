@@ -49,6 +49,7 @@ export type ChatResponse = {
   model: string;
   prompt_tokens: number;
   completion_tokens: number;
+  ai_job?: AiJobStatus;
 };
 
 export type LocalLlmStatus = {
@@ -120,6 +121,7 @@ export type WorkArchitecture = {
   markdown: string;
   path: string;
   architecture: Record<string, unknown>;
+  ai_job?: AiJobStatus;
 };
 
 export type PermanentMemorySource = {
@@ -128,6 +130,36 @@ export type PermanentMemorySource = {
   path: string;
   title: string;
   excerpt: string;
+  updated_at: string;
+};
+
+export type ReadableContextSource = PermanentMemorySource & {
+  content: string;
+  selected: boolean;
+  order: number;
+  sensitivity: string;
+  origin: string;
+};
+
+export type ReadableContextBundle = {
+  query: string;
+  used_sources: ReadableContextSource[];
+  volatile_memories: VolatileMemory[];
+  estimated_tokens: number;
+  warnings: string[];
+  markdown: string;
+};
+
+export type AiJobStatus = {
+  job_id: string;
+  task: string;
+  status: 'queued' | 'running' | 'succeeded' | 'failed';
+  actor: string;
+  input_summary: string;
+  used_sources: string[];
+  result_path: string;
+  error: string;
+  created_at: string;
   updated_at: string;
 };
 
@@ -317,6 +349,109 @@ export type IntegrationStatus = {
   items: Array<Record<string, unknown>>;
 };
 
+export type GitHubConnectorConfig = {
+  enabled: boolean;
+  allowed_repos: string[];
+  trigger_label: string;
+  webhook_secret: string;
+  app_token: string;
+  webhook_secret_present: boolean;
+  app_token_present: boolean;
+  event_forms: string[];
+};
+
+export type DiscordChannelBinding = {
+  guild_id: string;
+  channel_id: string;
+  channel_name: string;
+  repo: string;
+};
+
+export type DiscordConnectorConfig = {
+  enabled: boolean;
+  bot_token: string;
+  bot_token_present: boolean;
+  guild_allowlist: string[];
+  channel_bindings: DiscordChannelBinding[];
+  command_forms: string[];
+};
+
+export type IntegrationConfig = {
+  github: GitHubConnectorConfig;
+  discord: DiscordConnectorConfig;
+};
+
+export type DocumentRead = {
+  path: string;
+  markdown: string;
+  bytes: number;
+  modified_at: string;
+};
+
+export type TokenLimit = {
+  enforcement_enabled: boolean;
+  per_request_max_tokens: number;
+  daily_total_tokens: number;
+  monthly_total_tokens: number;
+};
+
+export type TokenUsageEntry = {
+  provider: string;
+  model: string;
+  task: string;
+  actor: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  occurred_at: string;
+};
+
+export type TokenUsageSummary = {
+  daily_total: number;
+  monthly_total: number;
+  by_provider: Record<string, number>;
+  by_task: Record<string, number>;
+  by_actor: Record<string, number>;
+  recent: TokenUsageEntry[];
+};
+
+export type TokenLimitStatus = {
+  limits: TokenLimit;
+  usage: TokenUsageSummary;
+};
+
+export type PatchRecord = {
+  record_id: string;
+  title: string;
+  summary: string;
+  request: string;
+  plan: string[];
+  changed_files: string[];
+  verification: string[];
+  follow_ups: string[];
+  tags: string[];
+  actor: string;
+  agent: string;
+  created_at: string;
+  relative_path: string;
+};
+
+export type PatchRecordDetail = PatchRecord & {
+  markdown: string;
+};
+
+export type PatchRecordCreate = {
+  title: string;
+  summary: string;
+  request: string;
+  plan: string[];
+  changed_files: string[];
+  verification: string[];
+  follow_ups: string[];
+  tags: string[];
+  agent: string;
+};
+
 export type HiringRequest = {
   role_title: string;
   business_need: string;
@@ -327,6 +462,7 @@ export type GeneratedDocument = {
   title: string;
   markdown: string;
   path: string;
+  ai_job?: AiJobStatus;
 };
 
 export type HandoverRequest = {
@@ -361,6 +497,19 @@ export type ProviderModelPayload = {
   reason: string;
   configured: boolean;
   requires_api_key: boolean;
+};
+
+export type HuggingFaceModelItem = {
+  id: string;
+  downloads: number;
+  likes: number;
+  tags: string[];
+  pipeline_tag: string;
+};
+
+export type HuggingFaceModelSearchResult = {
+  query: string;
+  models: HuggingFaceModelItem[];
 };
 
 export type AuthUser = {
@@ -414,6 +563,13 @@ export type CompanyProfile = {
   primary_goals: string[];
   data_sensitivity: string[];
   deployment_preference: string;
+  company_name: string;
+  office_project: string;
+  work_summary: string;
+  current_tools: string;
+  recurring_workflows: string;
+  change_management_needs: string;
+  automation_priorities: string;
 };
 
 export type PatchNoteRecommendationItem = {
@@ -450,6 +606,7 @@ export type InitialOfficeSetupResult = {
   warnings: string[];
   questions: string[];
   sensitive_hint: boolean;
+  ai_job?: AiJobStatus;
 };
 
 export type UploadRecord = {
@@ -569,6 +726,30 @@ export function fetchPermanentMemory(query = ''): Promise<{ sources: PermanentMe
   return requestJson<{ sources: PermanentMemorySource[] }>(path);
 }
 
+export function fetchReadableSources(query = '', limit = 100): Promise<{ sources: ReadableContextSource[] }> {
+  const params = new URLSearchParams();
+  if (query) params.set('q', query);
+  params.set('limit', String(limit));
+  return requestJson<{ sources: ReadableContextSource[] }>(`/api/memory/readable-sources?${params.toString()}`);
+}
+
+export function fetchReadableSource(sourceId: string): Promise<ReadableContextSource> {
+  return requestJson<ReadableContextSource>(`/api/memory/readable-source?source_id=${encodeURIComponent(sourceId)}`);
+}
+
+export function previewReadableContext(payload: {
+  query: string;
+  source_ids: string[];
+  source_limit: number;
+  include_volatile: boolean;
+  token_budget: number;
+}): Promise<ReadableContextBundle> {
+  return requestJson<ReadableContextBundle>('/api/memory/readable-context/preview', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
 export function fetchVolatileMemories(): Promise<{ memories: VolatileMemory[] }> {
   return requestJson<{ memories: VolatileMemory[] }>('/api/memory/volatile');
 }
@@ -598,11 +779,19 @@ export function compressContext(payload: {
   source_limit: number;
   source_ids?: string[];
   include_volatile?: boolean;
-}): Promise<{ context: Record<string, unknown> }> {
-  return requestJson<{ context: Record<string, unknown> }>('/api/memory/context/compress', {
+}): Promise<{ context: Record<string, unknown>; used_sources?: Array<Record<string, unknown>>; volatile_memories?: string[] }> {
+  return requestJson<{ context: Record<string, unknown>; used_sources?: Array<Record<string, unknown>>; volatile_memories?: string[] }>('/api/memory/context/compress', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
+}
+
+export function fetchAiJobs(limit = 30): Promise<{ jobs: AiJobStatus[] }> {
+  return requestJson<{ jobs: AiJobStatus[] }>(`/api/ai-jobs/recent?limit=${limit}`);
+}
+
+export function fetchAiJob(jobId: string): Promise<AiJobStatus> {
+  return requestJson<AiJobStatus>(`/api/ai-jobs/${encodeURIComponent(jobId)}`);
 }
 
 export function fetchConversations(): Promise<{ records: ConversationRecord[] }> {
@@ -855,6 +1044,13 @@ export function stopLocalLlm(): Promise<LocalLlmStatus> {
   return requestJson<LocalLlmStatus>('/api/llm/local/stop', { method: 'POST' });
 }
 
+export function searchHuggingFaceModels(query: string): Promise<HuggingFaceModelSearchResult> {
+  return requestJson<HuggingFaceModelSearchResult>('/api/llm/local/huggingface/search', {
+    method: 'POST',
+    body: JSON.stringify({ query, limit: 12 }),
+  });
+}
+
 export function sendChatMessage(
   message: string,
   route: LlmRuntimeRoute,
@@ -1062,4 +1258,52 @@ export async function uploadDocument(formData: FormData): Promise<{ ok: boolean;
 
 export function deleteUpload(uploadId: string): Promise<{ ok: boolean }> {
   return requestJson<{ ok: boolean }>(`/api/uploads/${uploadId}`, { method: 'DELETE' });
+}
+
+export function fetchIntegrationConfig(): Promise<IntegrationConfig> {
+  return requestJson<IntegrationConfig>('/api/integrations/config');
+}
+
+export function saveGithubConnector(payload: GitHubConnectorConfig): Promise<IntegrationConfig> {
+  return requestJson<IntegrationConfig>('/api/integrations/github', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function saveDiscordConnector(payload: DiscordConnectorConfig): Promise<IntegrationConfig> {
+  return requestJson<IntegrationConfig>('/api/integrations/discord', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function readArchiveDocument(path: string): Promise<DocumentRead> {
+  return requestJson<DocumentRead>(`/api/archive/documents?path=${encodeURIComponent(path)}`);
+}
+
+export function fetchTokenLimits(): Promise<TokenLimitStatus> {
+  return requestJson<TokenLimitStatus>('/api/llm/token-limits');
+}
+
+export function saveTokenLimits(payload: TokenLimit): Promise<TokenLimitStatus> {
+  return requestJson<TokenLimitStatus>('/api/llm/token-limits', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fetchPatchRecords(): Promise<{ items: PatchRecord[] }> {
+  return requestJson<{ items: PatchRecord[] }>('/api/patch-records');
+}
+
+export function fetchPatchRecord(recordId: string): Promise<PatchRecordDetail> {
+  return requestJson<PatchRecordDetail>(`/api/patch-records/${encodeURIComponent(recordId)}`);
+}
+
+export function createPatchRecord(payload: PatchRecordCreate): Promise<PatchRecordDetail> {
+  return requestJson<PatchRecordDetail>('/api/patch-records', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
 }

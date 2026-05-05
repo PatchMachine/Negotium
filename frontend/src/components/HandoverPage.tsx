@@ -1,6 +1,7 @@
 import { FormEvent, useState } from 'react';
 
-import { createHandoverBrief, type GeneratedDocument, type HandoverRequest } from '../api';
+import { createHandoverBrief, type AiJobStatus, type GeneratedDocument, type HandoverRequest } from '../api';
+import AiJobStatusBar from './common/AiJobStatusBar';
 
 const emptyHandover: HandoverRequest = {
   work_title: '',
@@ -13,12 +14,39 @@ export default function HandoverPage() {
   const [draft, setDraft] = useState<HandoverRequest>(emptyHandover);
   const [result, setResult] = useState<GeneratedDocument | null>(null);
   const [busy, setBusy] = useState(false);
+  const [job, setJob] = useState<AiJobStatus | null>(null);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
+    setJob({
+      job_id: 'local-handover',
+      task: 'handover',
+      status: 'queued',
+      actor: '',
+      input_summary: draft.work_title,
+      used_sources: [],
+      result_path: '',
+      error: '',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
     try {
-      setResult(await createHandoverBrief(draft));
+      setJob((current) => current ? { ...current, status: 'running', updated_at: new Date().toISOString() } : current);
+      const next = await createHandoverBrief(draft);
+      setResult(next);
+      setJob(next.ai_job ?? null);
+    } catch (err) {
+      setJob((current) =>
+        current
+          ? {
+              ...current,
+              status: 'failed',
+              error: err instanceof Error ? err.message : '인수인계 문서 생성 실패',
+              updated_at: new Date().toISOString(),
+            }
+          : current,
+      );
     } finally {
       setBusy(false);
     }
@@ -65,6 +93,7 @@ export default function HandoverPage() {
           </label>
           <button disabled={busy} type="submit">{busy ? '생성 중...' : '인수인계 문서 생성'}</button>
         </form>
+        <AiJobStatusBar job={job} />
       </div>
       <div className="panel">
         <p className="eyebrow">Generated</p>

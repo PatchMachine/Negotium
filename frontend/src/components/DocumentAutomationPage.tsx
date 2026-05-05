@@ -2,9 +2,12 @@ import { FormEvent, useState } from 'react';
 
 import {
   createOfficeDocument,
+  readArchiveDocument,
+  type AiJobStatus,
   type GeneratedDocument,
   type OfficeDocumentRequest,
 } from '../api';
+import AiJobStatusBar from './common/AiJobStatusBar';
 
 const emptyDocument: OfficeDocumentRequest = {
   document_type: 'meeting_minutes',
@@ -17,15 +20,47 @@ export default function DocumentAutomationPage() {
   const [draft, setDraft] = useState<OfficeDocumentRequest>(emptyDocument);
   const [result, setResult] = useState<GeneratedDocument | null>(null);
   const [busy, setBusy] = useState(false);
+  const [job, setJob] = useState<AiJobStatus | null>(null);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
+    setJob({
+      job_id: 'local-document-generation',
+      task: 'document_generation',
+      status: 'queued',
+      actor: '',
+      input_summary: draft.title,
+      used_sources: [],
+      result_path: '',
+      error: '',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
     try {
-      setResult(await createOfficeDocument(draft));
+      setJob((current) => current ? { ...current, status: 'running', updated_at: new Date().toISOString() } : current);
+      const next = await createOfficeDocument(draft);
+      setResult(next);
+      setJob(next.ai_job ?? null);
+    } catch (err) {
+      setJob((current) =>
+        current
+          ? {
+              ...current,
+              status: 'failed',
+              error: err instanceof Error ? err.message : '문서 생성 실패',
+              updated_at: new Date().toISOString(),
+            }
+          : current,
+      );
     } finally {
       setBusy(false);
     }
+  }
+
+  async function openResult(path: string) {
+    const doc = await readArchiveDocument(path);
+    setResult({ title: path, markdown: doc.markdown, path });
   }
 
   return (
@@ -78,6 +113,7 @@ export default function DocumentAutomationPage() {
           </label>
           <button disabled={busy} type="submit">{busy ? '생성 중...' : '문서 생성'}</button>
         </form>
+        <AiJobStatusBar job={job} onOpenResult={(path) => void openResult(path)} />
       </div>
       <div className="panel">
         <p className="eyebrow">Generated</p>

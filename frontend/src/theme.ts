@@ -2,13 +2,6 @@ export type Theme = 'light' | 'dark';
 
 const STORAGE_KEY = 'pm-theme';
 
-function detectSystemTheme(): Theme {
-  if (typeof window === 'undefined' || !window.matchMedia) {
-    return 'light';
-  }
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-}
-
 export function getTheme(): Theme {
   if (typeof window === 'undefined') {
     return 'light';
@@ -17,7 +10,7 @@ export function getTheme(): Theme {
   if (saved === 'light' || saved === 'dark') {
     return saved;
   }
-  return detectSystemTheme();
+  return 'light';
 }
 
 export function applyTheme(theme: Theme): void {

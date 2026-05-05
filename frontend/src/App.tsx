@@ -15,14 +15,17 @@ import AppShell from './components/AppShell';
 import AuthPage from './components/AuthPage';
 import ContributorGuide from './components/ContributorGuide';
 import DocumentAutomationPage from './components/DocumentAutomationPage';
+import DocumentsViewerPage from './components/DocumentsViewerPage';
 import HandoverPage from './components/HandoverPage';
 import HrEvaluationPage from './components/HrEvaluationPage';
 import HiringPage from './components/HiringPage';
 import HomePage from './components/HomePage';
 import IntegrationsPage from './components/IntegrationsPage';
 import OperationsMemoryForm from './components/OperationsMemoryForm';
+import PatchRecordsPage from './components/PatchRecordsPage';
 import ProgressLogPage from './components/ProgressLogPage';
 import SystemStatus from './components/SystemStatus';
+import TokenLimitsPage from './components/TokenLimitsPage';
 import UploadPage from './components/UploadPage';
 import UserProfilePage from './components/UserProfilePage';
 import WorkArchitecturePage from './components/WorkArchitecturePage';
@@ -30,7 +33,7 @@ import WorkItemsPage from './components/WorkItemsPage';
 import WorkMemoryPage from './components/WorkMemoryPage';
 import WorkSchedulePage from './components/WorkSchedulePage';
 import AiAgentPage from './components/ai/AiAgentPage';
-import InitialOfficeSetupWizard from './components/setup/InitialOfficeSetupWizard';
+import InitialOfficeSetupWizard, { hasIncompleteInitialSetupDraft } from './components/setup/InitialOfficeSetupWizard';
 
 const emptyMemory: OperationsMemory = {
   company_name: '',
@@ -56,11 +59,14 @@ type Page =
   | 'work-schedule'
   | 'hiring'
   | 'documents'
+  | 'documents-viewer'
   | 'handover'
   | 'integrations'
   | 'uploads'
   | 'admin'
   | 'access'
+  | 'token-limits'
+  | 'patch-records'
   | 'hr-evaluation';
 
 type NavItem = { id: Page; label: string; group: string; requiredPermission?: string };
@@ -77,11 +83,14 @@ const navItems: NavItem[] = [
   { id: 'chat', label: 'AI 에이전트 실행계획', group: 'AI 에이전트' },
   { id: 'hiring', label: '채용/면접', group: '오피스워크' },
   { id: 'documents', label: '문서 자동화', group: '오피스워크' },
+  { id: 'documents-viewer', label: '문서 열람', group: '오피스워크', requiredPermission: 'documents:read' },
   { id: 'handover', label: '인수인계', group: '오피스워크' },
+  { id: 'patch-records', label: '코딩 패치 기록', group: '오피스워크', requiredPermission: 'patch_records:read' },
   { id: 'uploads', label: '업로드', group: '관리', requiredPermission: 'uploads:write' },
   { id: 'admin', label: 'API 키·로컬 에이전트', group: '관리', requiredPermission: 'admin:api_keys' },
   { id: 'access', label: '권한 관리', group: '관리', requiredPermission: 'admin:users' },
   { id: 'integrations', label: 'MCP 서버 연동', group: '관리', requiredPermission: 'admin:mcp' },
+  { id: 'token-limits', label: '토큰 사용량·한도', group: '관리', requiredPermission: 'admin:token_limits' },
   { id: 'hr-evaluation', label: '인사평가', group: '관리', requiredPermission: 'admin:hr_evaluation' },
 ];
 
@@ -98,6 +107,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState<Page>('home');
   const [setupRequired, setSetupRequired] = useState(false);
+  const [resumeInitialSetup, setResumeInitialSetup] = useState(false);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
 
   async function refresh() {
@@ -121,6 +131,7 @@ export default function App() {
     try {
       const setup = await fetchSetupStatus();
       setSetupRequired(setup.setup_required);
+      setResumeInitialSetup(hasIncompleteInitialSetupDraft());
       if (!setup.setup_required) {
         const me = await fetchCurrentUser();
         setCurrentUser(me.authenticated ? me.user : null);
@@ -140,14 +151,16 @@ export default function App() {
     return <main className="auth-layout"><section className="panel">로딩 중...</section></main>;
   }
 
-  if (setupRequired) {
+  if (setupRequired || (resumeInitialSetup && currentUser)) {
     return (
       <>
         {error ? <div className="alert">API 연결 실패: {error}</div> : null}
         <InitialOfficeSetupWizard
+          initialUser={currentUser}
           onAuthenticated={(user) => {
             setCurrentUser(user);
             setSetupRequired(false);
+            setResumeInitialSetup(false);
             void refresh();
           }}
         />
@@ -164,6 +177,7 @@ export default function App() {
           onAuthenticated={(user) => {
             setCurrentUser(user);
             setSetupRequired(false);
+            setResumeInitialSetup(hasIncompleteInitialSetupDraft());
             void refresh();
           }}
         />
@@ -205,11 +219,14 @@ export default function App() {
       {page === 'work-schedule' ? <WorkSchedulePage /> : null}
       {page === 'hiring' ? <HiringPage /> : null}
       {page === 'documents' ? <DocumentAutomationPage /> : null}
+      {page === 'documents-viewer' ? <DocumentsViewerPage /> : null}
       {page === 'handover' ? <HandoverPage /> : null}
-      {page === 'integrations' ? <IntegrationsPage /> : null}
+      {page === 'integrations' ? <IntegrationsPage permissions={currentUser.permissions || []} /> : null}
       {page === 'uploads' ? <UploadPage /> : null}
       {page === 'admin' ? <AdminSettingsPage /> : null}
       {page === 'access' ? <AccessControlPage /> : null}
+      {page === 'token-limits' ? <TokenLimitsPage /> : null}
+      {page === 'patch-records' ? <PatchRecordsPage /> : null}
       {page === 'hr-evaluation' ? <HrEvaluationPage /> : null}
     </AppShell>
   );

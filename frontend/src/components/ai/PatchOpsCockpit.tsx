@@ -12,11 +12,13 @@ import {
   fetchPatchRuns,
   runPatchRunTests,
   writePatchRunMemory,
+  type AiJobStatus,
   type IssueCluster,
   type PatchEvent,
   type PatchRun,
   type TestRequirement,
 } from '../../api';
+import AiJobStatusBar from '../common/AiJobStatusBar';
 import AiTestWriterPanel from './AiTestWriterPanel';
 import IssueMemoryPanel from './IssueMemoryPanel';
 
@@ -33,6 +35,7 @@ export default function PatchOpsCockpit({ onMessage }: Props) {
   const [autonomyLevel, setAutonomyLevel] = useState('L1');
   const [privacyMode, setPrivacyMode] = useState('hybrid_redacted');
   const [busy, setBusy] = useState(false);
+  const [job, setJob] = useState<AiJobStatus | null>(null);
 
   async function refreshRuns() {
     const payload = await fetchPatchRuns();
@@ -57,7 +60,9 @@ export default function PatchOpsCockpit({ onMessage }: Props) {
     event.preventDefault();
     if (!request.trim()) return;
     setBusy(true);
+    setJob(localJob('patchops.create', request, 'queued'));
     try {
+      setJob(localJob('patchops.create', request, 'running'));
       const payload = await createPatchRun({
         repo_id: repoId,
         request,
@@ -73,8 +78,10 @@ export default function PatchOpsCockpit({ onMessage }: Props) {
       setRequest('');
       await refreshRuns();
       await loadRun(payload.patch_run.id);
+      setJob(localJob('patchops.create', request, 'succeeded'));
     } catch (err) {
       onMessage(err instanceof Error ? err.message : 'PatchOps run 생성 실패');
+      setJob(localJob('patchops.create', request, 'failed', err instanceof Error ? err.message : 'PatchOps run 생성 실패'));
     } finally {
       setBusy(false);
     }
@@ -83,7 +90,9 @@ export default function PatchOpsCockpit({ onMessage }: Props) {
   async function runStep(action: 'analyze' | 'approve' | 'draft' | 'apply' | 'test' | 'failure' | 'pr' | 'memory') {
     if (!selected) return;
     setBusy(true);
+    setJob(localJob(`patchops.${action}`, selected.request, 'queued'));
     try {
+      setJob(localJob(`patchops.${action}`, selected.request, 'running'));
       if (action === 'analyze') {
         const payload = await analyzePatchRun(selected.id);
         setSelected(payload.patch_run);
@@ -119,8 +128,10 @@ export default function PatchOpsCockpit({ onMessage }: Props) {
         await loadRun(selected.id);
       }
       await refreshRuns();
+      setJob(localJob(`patchops.${action}`, selected.request, 'succeeded'));
     } catch (err) {
       onMessage(err instanceof Error ? err.message : 'PatchOps 단계 실행 실패');
+      setJob(localJob(`patchops.${action}`, selected.request, 'failed', err instanceof Error ? err.message : 'PatchOps 단계 실행 실패'));
     } finally {
       setBusy(false);
     }
@@ -156,6 +167,7 @@ export default function PatchOpsCockpit({ onMessage }: Props) {
         </div>
         <button type="submit" disabled={busy}>{busy ? '처리 중...' : 'Patch Run 생성'}</button>
       </form>
+      <AiJobStatusBar job={job} />
 
       <div className="split-panel">
         <div>
@@ -218,6 +230,27 @@ function arrayFromContext<T>(value: unknown): T[] {
 
 function arrayFromArtifact<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
+}
+
+function localJob(
+  task: string,
+  inputSummary: string,
+  status: AiJobStatus['status'],
+  error = '',
+): AiJobStatus {
+  const now = new Date().toISOString();
+  return {
+    job_id: `local-${task}`,
+    task,
+    status,
+    actor: '',
+    input_summary: inputSummary,
+    used_sources: [],
+    result_path: '',
+    error,
+    created_at: now,
+    updated_at: now,
+  };
 }
 
 function PatchLiveBriefingPanel({ events }: { events: PatchEvent[] }) {

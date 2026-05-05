@@ -15,6 +15,7 @@ import {
   type DeletionRequest,
   type OperationsMemory,
   type PermanentMemorySource,
+  type ReadableContextBundle,
   type VolatileMemory,
   type WorkMemory,
 } from '../api';
@@ -22,6 +23,7 @@ import ContextCompressPanel from './memory/ContextCompressPanel';
 import ConversationHistoryModal from './memory/ConversationHistoryModal';
 import MemoryGovernancePanel from './memory/MemoryGovernancePanel';
 import PermanentSourcesList, { type MemoryKindFilter } from './memory/PermanentSourcesList';
+import ReadableContextWorkbench from './memory/ReadableContextWorkbench';
 import VolatileMemoriesPanel from './memory/VolatileMemoriesPanel';
 import WorkMemoryEditSection from './memory/WorkMemoryEditSection';
 
@@ -64,6 +66,7 @@ export default function WorkMemoryPage() {
   const [convOpen, setConvOpen] = useState(false);
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
   const [selectedKind, setSelectedKind] = useState<MemoryKindFilter>('all');
+  const [readableBundle, setReadableBundle] = useState<ReadableContextBundle | null>(null);
   const queryRef = useRef(query);
   queryRef.current = query;
 
@@ -180,13 +183,33 @@ export default function WorkMemoryPage() {
         ) : null}
 
         {section === 'summary' ? (
-          <ContextCompressPanel
-            query={query}
-            selectedSourceIds={selectedSourceIds}
-            fallbackSourceIds={currentKindSourceIds}
-            onMessage={setMessage}
-            onAfterCompress={() => refreshAdminMemory()}
-          />
+          <>
+            <ReadableContextWorkbench
+              query={query}
+              onQueryChange={setQuery}
+              selectedIds={selectedSourceIds}
+              onSelectedIdsChange={setSelectedSourceIds}
+              onBundlePreview={setReadableBundle}
+              onRequestDeletion={(source) =>
+                void requestMemoryDeletion({
+                  target_type: source.kind,
+                  target_id: source.id,
+                  summary: source.title,
+                  source_path: source.path,
+                  sensitivity: source.sensitivity || 'internal',
+                  reason: '관리자 요청',
+                }).then(() => refreshAdminMemory())
+              }
+            />
+            <ContextCompressPanel
+              query={query}
+              selectedSourceIds={selectedSourceIds}
+              fallbackSourceIds={currentKindSourceIds}
+              readableBundle={readableBundle}
+              onMessage={setMessage}
+              onAfterCompress={() => refreshAdminMemory()}
+            />
+          </>
         ) : null}
 
         {section === 'cache' ? (

@@ -1,0 +1,25 @@
+{
+  "local_enabled": true,
+  "api_enabled": true,
+  "default_route": "api",
+  "default_provider": "openai",
+  "local_model": "Qwen/Qwen3-4B",
+  "task_routes": {
+    "memory_summary": {
+      "route": "local",
+      "provider": "vllm",
+      "model": "Qwen/Qwen3-4B"
+    },
+    "document_generation": {
+      "route": "api",
+      "provider": "openai",
+      "model": "gpt-5-nano"
+    },
+    "chat": {
+      "route": "local",
+      "provider": "vllm",
+      "model": "Qwen/Qwen3-4B"
+    }
+  },
+  "updated_at": "2026-05-05T02:49:25.980302+00:00"
+}

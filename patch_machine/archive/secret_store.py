@@ -46,6 +46,19 @@ class SecretStore:
         self._path = archive_dir / "secrets" / "api_keys.enc.json"
         self._master_key = master_key
 
+    @staticmethod
+    def local_master_key(archive_dir: Path) -> str:
+        path = archive_dir / "secrets" / "local_master.key"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            return path.read_text(encoding="utf-8").strip()
+        key = secrets.token_urlsafe(48)
+        with portalocker.Lock(path, "w", encoding="utf-8", timeout=5) as fh:
+            fh.write(key)
+            fh.write("\n")
+        path.chmod(0o600)
+        return key
+
     def list_masked(self) -> list[dict[str, object]]:
         payload = self._read_payload()
         providers = ["openai", "anthropic", "gemini", "vllm"]
@@ -59,6 +72,10 @@ class SecretStore:
             }
             for provider in providers
         ]
+
+    def has_secret(self, provider: str) -> bool:
+        record = self.read(provider)
+        return bool(record and record.api_key)
 
     def upsert(self, record: ApiKeyRecord) -> None:
         payload = self._read_payload()
