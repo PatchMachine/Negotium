@@ -6,7 +6,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from patch_machine.domain.entities import LlmRoute
-from patch_machine.domain.ports import LlmMessage, LlmProvider, LlmResponse
+from patch_machine.domain.ports import (
+    LlmMessage,
+    LlmProvider,
+    LlmResponse,
+    flatten_message_text,
+)
 
 
 @dataclass
@@ -60,9 +65,10 @@ class FakeLlmProvider(LlmProvider):
     @staticmethod
     def _infer_tag(messages: Sequence[LlmMessage]) -> str | None:
         for message in reversed(messages):
-            if message.role == "system" and "[agent:" in message.content:
-                start = message.content.find("[agent:")
-                end = message.content.find("]", start)
+            content = flatten_message_text(message.content)
+            if message.role == "system" and "[agent:" in content:
+                start = content.find("[agent:")
+                end = content.find("]", start)
                 if end > start:
-                    return message.content[start + len("[agent:") : end].strip()
+                    return content[start + len("[agent:") : end].strip()
         return None

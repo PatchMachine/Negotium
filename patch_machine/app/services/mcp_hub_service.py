@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -24,6 +26,8 @@ from patch_machine.app.services.patch_execution_service import (
     create_pr_draft,
     git_diff,
 )
+from patch_machine.app.services.patchops_service import analyze_patch_run, draft_patch_artifacts
+from patch_machine.app.services.skill_registry import get_skill, get_skills
 from patch_machine.app.services.test_writer_service import (
     analyze_test_failure,
     detect_test_frameworks,
@@ -31,7 +35,9 @@ from patch_machine.app.services.test_writer_service import (
     generate_test_plan,
     run_test_command,
 )
+from patch_machine.archive.agent_execution import AgentPlan
 from patch_machine.archive.issue_memory import PatchCandidate, TestRequirement
+from patch_machine.archive.patch_runs import PatchRun
 from patch_machine.prompts import render as render_prompt
 
 READ_TOOLS = {
@@ -48,6 +54,7 @@ READ_TOOLS = {
     "test.generate_plan",
     "test.analyze_failure",
     "git.diff",
+    "skills.list",
 }
 
 TOOL_POLICIES: dict[str, dict[str, Any]] = {
@@ -86,6 +93,14 @@ TOOL_POLICIES: dict[str, dict[str, Any]] = {
         "scopes": ["github:write"],
         "risk": "medium",
     },
+    "agent.generate_plan": {"permission": "memory:write", "scopes": ["agent:write"], "risk": "low"},
+    "patch.create_run": {"permission": "memory:write", "scopes": ["patch:write"], "risk": "medium"},
+    "patch.start": {"permission": "memory:write", "scopes": ["patch:write"], "risk": "medium"},
+    "patch.analyze": {"permission": "memory:write", "scopes": ["patch:write"], "risk": "medium"},
+    "patch.draft_diff": {"permission": "memory:write", "scopes": ["patch:write"], "risk": "medium"},
+    "patch.apply_diff": {"permission": "memory:write", "scopes": ["patch:write"], "risk": "high"},
+    "patch.run_tests": {"permission": "memory:write", "scopes": ["test:run"], "risk": "medium"},
+    "patch.draft_pr": {"permission": "memory:write", "scopes": ["github:write"], "risk": "medium"},
 }
 
 PROMPT_INJECTION_PATTERNS = [
@@ -217,9 +232,313 @@ def list_tool_descriptors() -> list[dict[str, Any]]:
                 "memory:write",
                 "github",
             ),
+            _tool(
+                "skills.list",
+                "List registered Patch Machine skills.",
+                {},
+                "work:read",
+                "skills",
+            ),
+            _tool(
+                "skills.run",
+                "Run a registered skill by id (tool/cli executors only via MCP).",
+                {"skill_id": "string", "inputs": "object"},
+                "memory:write",
+                "skills",
+            ),
+            _tool(
+                "agent.generate_plan",
+                "Create an agent execution plan from an objective.",
+                {"objective": "string", "title": "string", "mode": "string"},
+                "memory:write",
+                "agent",
+            ),
+            _tool(
+                "patch.create_run",
+                "Start an AI dev helper patch run for a repository change request.",
+                {
+                    "repo_id": "string",
+                    "request": "string",
+                    "autonomy_level": "string",
+                    "privacy_mode": "string",
+                    "target_branch": "string",
+                },
+                "memory:write",
+                "patch",
+            ),
+            _tool(
+                "patch.start",
+                "Create and analyze a patch run in one step (AI dev helper entry point).",
+                {
+                    "repo_id": "string",
+                    "request": "string",
+                    "autonomy_level": "string",
+                    "privacy_mode": "string",
+                    "target_branch": "string",
+                },
+                "memory:write",
+                "patch",
+            ),
+            _tool(
+                "patch.analyze",
+                "Analyze a patch run: scan repo, interview, and draft a plan.",
+                {"patch_run_id": "string"},
+                "memory:write",
+                "patch",
+            ),
+            _tool(
+                "patch.draft_diff",
+                "Draft diff, docs, and test artifacts for an analyzed patch run.",
+                {"patch_run_id": "string"},
+                "memory:write",
+                "patch",
+            ),
+            _tool(
+                "patch.apply_diff",
+                "Policy-check or apply a patch run diff (apply defaults to false).",
+                {"patch_run_id": "string", "branch_name": "string", "apply": "boolean"},
+                "memory:write",
+                "patch",
+            ),
+            _tool(
+                "patch.run_tests",
+                "Run or dry-run tests for a patch run (dry_run defaults to true).",
+                {"patch_run_id": "string", "command": "string", "dry_run": "boolean"},
+                "memory:write",
+                "patch",
+            ),
+            _tool(
+                "patch.draft_pr",
+                "Draft a pull request for a patch run.",
+                {"patch_run_id": "string", "branch_name": "string"},
+                "memory:write",
+                "patch",
+            ),
         ]
     )
     return tools
+
+
+def _run_async_safe(coro: Any) -> Any:
+    """Run an async coroutine from sync MCP/skill dispatch (may be inside FastAPI loop)."""
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        return executor.submit(asyncio.run, coro).result()
+
+
+def _agent_plan_steps(
+    objective: str, schedule_refs: list[str], memory_refs: list[str]
+) -> list[dict[str, object]]:
+    return [
+        {
+            "id": "review-memory",
+            "title": "영구 메모리와 압축 컨텍스트 검토",
+            "requires_approval": False,
+            "memory_refs": memory_refs,
+        },
+        {
+            "id": "split-work",
+            "title": f"작업 분할: {objective}",
+            "requires_approval": True,
+            "schedule_refs": schedule_refs,
+        },
+        {
+            "id": "execute-approved",
+            "title": "승인된 작업 실행",
+            "requires_approval": True,
+            "external_effects": ["files", "llm"],
+        },
+    ]
+
+
+def _agent_generate_plan(container: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    objective = str(arguments.get("objective") or arguments.get("text") or "").strip()
+    if not objective:
+        raise ValueError("objective is required")
+    memory_refs = [
+        str(source["path"]) for source in container.permanent_memory.recent(limit=5)
+    ]
+    schedule_refs = [str(item["id"]) for item in container.work_schedule.list()[:10]]
+    steps = _agent_plan_steps(objective, schedule_refs, memory_refs)
+    plan = container.agent_execution.save_plan(
+        AgentPlan.create(
+            title=str(arguments.get("title") or objective),
+            objective=objective,
+            mode=str(arguments.get("mode") or "approved_tasks_only"),
+            schedule_refs=schedule_refs,
+            memory_refs=memory_refs,
+            steps=steps,
+            created_by=str(arguments.get("actor") or "system"),
+        )
+    )
+    return {
+        "ok": True,
+        "plan": plan.to_dict(),
+        "next_step": "관리자가 AI 에이전트 실행계획 화면에서 승인한 뒤 실행하세요.",
+    }
+
+
+async def _patch_complete_for(container: Any, prompt: str, task: str) -> str:
+    from patch_machine.app.api import _complete_patchops_task
+
+    return await _complete_patchops_task(container, prompt, task=task)
+
+
+def _patch_create_run(container: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    request = str(arguments.get("request") or arguments.get("text") or "").strip()
+    if not request:
+        raise ValueError("request is required")
+    run = container.patch_runs.create(
+        PatchRun.create(
+            repo_id=str(arguments.get("repo_id") or "local"),
+            request=request,
+            autonomy_level=str(arguments.get("autonomy_level") or "L1"),
+            privacy_mode=str(arguments.get("privacy_mode") or "standard"),
+            target_branch=str(arguments.get("target_branch") or "main"),
+            constraints=dict(arguments.get("constraints") or {}),
+            created_by=str(arguments.get("actor") or "system"),
+        )
+    )
+    container.patch_runs.append_event(
+        run.id,
+        event_type="patch.created",
+        summary="AI 개발 도우미 패치 실행을 생성했습니다.",
+        payload={"repo_id": run.repo_id, "request": request},
+    )
+    return {
+        "ok": True,
+        "patch_run": run.to_dict(),
+        "next_step": f"/dev.patch_start 로 분석을 시작하거나 patch.analyze patch_run_id={run.id}",
+    }
+
+
+def _patch_analyze(container: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    patch_run_id = str(arguments.get("patch_run_id") or "").strip()
+    if not patch_run_id:
+        raise ValueError("patch_run_id is required")
+    run = container.patch_runs.read(patch_run_id)
+
+    async def _analyze() -> PatchRun:
+        async def complete(prompt: str, task: str) -> str:
+            return await _patch_complete_for(container, prompt, task)
+
+        return await analyze_patch_run(
+            container, run.with_updates(status="REPO_SCANNING"), complete
+        )
+
+    analyzed = _run_async_safe(_analyze())
+    return {
+        "ok": True,
+        "patch_run": analyzed.to_dict(),
+        "events": container.patch_runs.list_events(patch_run_id),
+        "next_step": "관리자 승인 후 patch.draft_diff 로 diff 초안을 생성하세요.",
+    }
+
+
+def _patch_draft_diff(container: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    patch_run_id = str(arguments.get("patch_run_id") or "").strip()
+    if not patch_run_id:
+        raise ValueError("patch_run_id is required")
+    run = container.patch_runs.read(patch_run_id)
+
+    async def _draft() -> PatchRun:
+        async def complete(prompt: str, task: str) -> str:
+            return await _patch_complete_for(container, prompt, task)
+
+        return await draft_patch_artifacts(container, run, complete)
+
+    drafted = _run_async_safe(_draft())
+    return {
+        "ok": True,
+        "patch_run": drafted.to_dict(),
+        "events": container.patch_runs.list_events(patch_run_id),
+        "next_step": "patch.apply_diff apply=false 로 정책 검사 후 patch.run_tests dry_run=true",
+    }
+
+
+def _patch_apply_diff(container: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    patch_run_id = str(arguments.get("patch_run_id") or "").strip()
+    if not patch_run_id:
+        raise ValueError("patch_run_id is required")
+    run = container.patch_runs.read(patch_run_id)
+    apply = bool(arguments.get("apply", False))
+    result = apply_patch_run_diff(
+        container,
+        run,
+        branch_name=str(arguments.get("branch_name") or ""),
+        apply=apply,
+    )
+    return {
+        "ok": True,
+        "apply": apply,
+        "execution": result,
+        "next_step": "patch.run_tests 로 테스트를 실행하세요." if apply else "승인 후 apply=true 로 적용",
+    }
+
+
+def _patch_run_tests(container: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    command = str(arguments.get("command") or "python -m pytest -q")
+    dry_run = bool(arguments.get("dry_run", True))
+    result = run_test_command(
+        container.settings.workspace_dir,
+        command=command,
+        dry_run=dry_run,
+    )
+    return {
+        "ok": True,
+        "dry_run": dry_run,
+        "test_result": result,
+        "next_step": "patch.draft_pr 로 PR 초안을 작성하세요.",
+    }
+
+
+def _patch_draft_pr(container: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    patch_run_id = str(arguments.get("patch_run_id") or "").strip()
+    if not patch_run_id:
+        raise ValueError("patch_run_id is required")
+    run = container.patch_runs.read(patch_run_id)
+    result = create_pr_draft(
+        container,
+        run,
+        branch_name=str(arguments.get("branch_name") or ""),
+    )
+    return {"ok": True, "pr_draft": result, "next_step": "관리자가 PR 초안을 검토하고 머지하세요."}
+
+
+def _patch_start(container: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    created = _patch_create_run(container, arguments)
+    run_id = str(created.get("patch_run", {}).get("id") or "")
+    if not run_id:
+        return created
+    analyzed = _patch_analyze(container, {"patch_run_id": run_id})
+    return {
+        "ok": True,
+        "patch_run": analyzed.get("patch_run"),
+        "events": analyzed.get("events"),
+        "next_step": analyzed.get("next_step"),
+    }
+
+
+def _patch_tool(container: Any, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    if tool_name == "patch.create_run":
+        return _patch_create_run(container, arguments)
+    if tool_name == "patch.start":
+        return _patch_start(container, arguments)
+    if tool_name == "patch.analyze":
+        return _patch_analyze(container, arguments)
+    if tool_name == "patch.draft_diff":
+        return _patch_draft_diff(container, arguments)
+    if tool_name == "patch.apply_diff":
+        return _patch_apply_diff(container, arguments)
+    if tool_name == "patch.run_tests":
+        return _patch_run_tests(container, arguments)
+    if tool_name == "patch.draft_pr":
+        return _patch_draft_pr(container, arguments)
+    raise ValueError(f"unknown patch MCP tool: {tool_name}")
 
 
 def guard_tool_arguments(arguments: dict[str, Any]) -> list[str]:
@@ -577,7 +896,35 @@ def _dispatch_tool(container: Any, tool_name: str, arguments: dict[str, Any]) ->
         )
     if tool_name == "test.analyze_failure":
         return analyze_test_failure(arguments)
+    if tool_name == "skills.list":
+        return {"skills": [skill.to_descriptor() for skill in get_skills().values()]}
+    if tool_name == "skills.run":
+        return _run_skill_via_mcp(container, arguments)
+    if tool_name == "agent.generate_plan":
+        return _agent_generate_plan(container, arguments)
+    if tool_name.startswith("patch."):
+        return _patch_tool(container, tool_name, arguments)
     raise ValueError(f"unknown MCP tool: {tool_name}")
+
+
+def _run_skill_via_mcp(container: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    skill_id = str(arguments.get("skill_id") or "")
+    skill = get_skill(skill_id)
+    if skill is None:
+        raise ValueError(f"unknown skill: {skill_id}")
+    raw_inputs = arguments.get("inputs")
+    inputs = dict(raw_inputs) if isinstance(raw_inputs, dict) else {}
+    if skill.executor == "tool":
+        if not skill.tool:
+            raise ValueError(f"skill '{skill_id}' has no bound tool")
+        return {"skill_id": skill_id, "result": _dispatch_tool(container, skill.tool, inputs)}
+    if skill.executor == "cli":
+        from patch_machine.app.services.skill_runtime import run_cli_skill_sync
+
+        return {"skill_id": skill_id, "result": run_cli_skill_sync(container, skill, inputs)}
+    raise ValueError(
+        f"skill '{skill_id}' uses the prompt executor; run it via the /api/skills HTTP endpoint"
+    )
 
 
 def _handle_json_rpc_result(container: Any, method: str, params: dict[str, Any]) -> dict[str, Any]:

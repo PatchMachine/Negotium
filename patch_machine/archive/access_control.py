@@ -27,6 +27,8 @@ ALL_PERMISSIONS = [
     "patch_records:write",
 ]
 
+AclPayload = dict[str, list[Any]]
+
 
 @dataclass(frozen=True)
 class RoleRecord:
@@ -60,6 +62,8 @@ class UserRecord:
     title: str
     role_id: str
     active: bool = True
+    department: str = ""
+    position_id: str = ""
 
     @classmethod
     def from_mapping(cls, payload: dict[str, Any]) -> UserRecord:
@@ -69,6 +73,8 @@ class UserRecord:
             title=str(payload.get("title") or ""),
             role_id=str(payload.get("role_id") or "viewer"),
             active=bool(payload.get("active", True)),
+            department=str(payload.get("department") or ""),
+            position_id=str(payload.get("position_id") or ""),
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -78,6 +84,61 @@ class UserRecord:
             "title": self.title,
             "role_id": self.role_id,
             "active": self.active,
+            "department": self.department,
+            "position_id": self.position_id,
+        }
+
+
+@dataclass(frozen=True)
+class DepartmentRecord:
+    id: str
+    name: str
+    description: str = ""
+    lead_user_id: str = ""
+    parent_id: str = ""
+
+    @classmethod
+    def from_mapping(cls, payload: dict[str, Any]) -> DepartmentRecord:
+        return cls(
+            id=str(payload.get("id") or ""),
+            name=str(payload.get("name") or ""),
+            description=str(payload.get("description") or ""),
+            lead_user_id=str(payload.get("lead_user_id") or ""),
+            parent_id=str(payload.get("parent_id") or ""),
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "lead_user_id": self.lead_user_id,
+            "parent_id": self.parent_id,
+        }
+
+
+@dataclass(frozen=True)
+class PositionRecord:
+    id: str
+    name: str
+    level: int = 0
+    description: str = ""
+
+    @classmethod
+    def from_mapping(cls, payload: dict[str, Any]) -> PositionRecord:
+        return cls(
+            id=str(payload.get("id") or ""),
+            name=str(payload.get("name") or ""),
+            level=int(payload.get("level") or 0),
+            description=str(payload.get("description") or ""),
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "level": self.level,
+            "description": self.description,
         }
 
 
@@ -87,9 +148,21 @@ class AccessControlStore:
 
     def read(self) -> dict[str, list[dict[str, object]]]:
         payload = self._read_payload()
+        roles = payload["roles"]
+        users = payload["users"]
+        departments = payload["departments"]
+        positions = payload["positions"]
         return {
-            "roles": [role.to_dict() for role in payload["roles"]],
-            "users": [user.to_dict() for user in payload["users"]],
+            "roles": [role.to_dict() for role in roles if isinstance(role, RoleRecord)],
+            "users": [user.to_dict() for user in users if isinstance(user, UserRecord)],
+            "departments": [
+                dept.to_dict() for dept in departments if isinstance(dept, DepartmentRecord)
+            ],
+            "positions": [
+                position.to_dict()
+                for position in positions
+                if isinstance(position, PositionRecord)
+            ],
         }
 
     def upsert_role(self, role: RoleRecord) -> None:
@@ -118,43 +191,132 @@ class AccessControlStore:
         payload["users"] = [user for user in payload["users"] if user.id != user_id]
         self._write_payload(payload)
 
+    def upsert_department(self, department: DepartmentRecord) -> None:
+        if not department.id.strip():
+            raise ValueError("department id is required")
+        payload = self._read_payload()
+        existing_departments = [
+            existing
+            for existing in payload["departments"]
+            if isinstance(existing, DepartmentRecord)
+        ]
+        if department.parent_id:
+            if department.parent_id == department.id:
+                raise ValueError("department cannot be its own parent")
+            others = {dept.id: dept for dept in existing_departments if dept.id != department.id}
+            if department.parent_id not in others:
+                raise ValueError("parent department does not exist")
+            # Walk up the parent chain to ensure no cycle is introduced.
+            visited: set[str] = {department.id}
+            cursor = department.parent_id
+            while cursor:
+                if cursor in visited:
+                    raise ValueError("department hierarchy cannot contain a cycle")
+                visited.add(cursor)
+                parent = others.get(cursor)
+                cursor = parent.parent_id if parent else ""
+        departments = [dept for dept in existing_departments if dept.id != department.id]
+        departments.append(department)
+        payload["departments"] = departments
+        self._write_payload(payload)
+
+    def delete_department(self, department_id: str) -> None:
+        payload = self._read_payload()
+        remaining: list[DepartmentRecord] = []
+        for dept in payload["departments"]:
+            if not isinstance(dept, DepartmentRecord) or dept.id == department_id:
+                continue
+            if dept.parent_id == department_id:
+                # Re-parent orphaned children to the deleted node's parent (or root).
+                remaining.append(_replace_parent(dept, ""))
+            else:
+                remaining.append(dept)
+        payload["departments"] = remaining
+        self._write_payload(payload)
+
+    def upsert_position(self, position: PositionRecord) -> None:
+        if not position.id.strip():
+            raise ValueError("position id is required")
+        payload = self._read_payload()
+        positions = [
+            existing
+            for existing in payload["positions"]
+            if isinstance(existing, PositionRecord) and existing.id != position.id
+        ]
+        positions.append(position)
+        payload["positions"] = positions
+        self._write_payload(payload)
+
+    def delete_position(self, position_id: str) -> None:
+        payload = self._read_payload()
+        payload["positions"] = [
+            position
+            for position in payload["positions"]
+            if isinstance(position, PositionRecord) and position.id != position_id
+        ]
+        self._write_payload(payload)
+
     def has_permission(self, user_id: str | None, permission: str) -> bool:
         payload = self._read_payload()
         user = self._resolve_user(payload, user_id)
         if user is None or not user.active:
             return False
-        role = next((role for role in payload["roles"] if role.id == user.role_id), None)
+        roles = [role for role in payload["roles"] if isinstance(role, RoleRecord)]
+        role = next((role for role in roles if role.id == user.role_id), None)
         if role is None:
             return False
         return "*" in role.permissions or permission in role.permissions
 
-    def _read_payload(self) -> dict[str, list[RoleRecord] | list[UserRecord]]:
+    def _read_payload(self) -> AclPayload:
         if not self._path.exists():
             return _default_payload()
         raw = json.loads(self._path.read_text(encoding="utf-8"))
-        roles = [RoleRecord.from_mapping(item) for item in raw.get("roles", [])]
-        users = [_normalize_user(UserRecord.from_mapping(item)) for item in raw.get("users", [])]
+        roles: list[RoleRecord] = [RoleRecord.from_mapping(item) for item in raw.get("roles", [])]
+        users: list[UserRecord] = [
+            _normalize_user(UserRecord.from_mapping(item)) for item in raw.get("users", [])
+        ]
+        departments: list[DepartmentRecord] = [
+            DepartmentRecord.from_mapping(item) for item in raw.get("departments", [])
+        ]
+        positions: list[PositionRecord] = [
+            PositionRecord.from_mapping(item) for item in raw.get("positions", [])
+        ]
         if not roles:
             return _default_payload()
         default_payload = _default_payload()
-        default_roles = default_payload["roles"]
-        assert all(isinstance(role, RoleRecord) for role in default_roles)
-        for default_role in default_roles:
-            if all(role.id != default_role.id for role in roles):
+        for default_role in default_payload["roles"]:
+            if isinstance(default_role, RoleRecord) and all(role.id != default_role.id for role in roles):
                 roles.append(default_role)
-        has_owner_role_user = any(user.role_id == "owner" for user in users)
-        if not has_owner_role_user and all(user.id != "owner" for user in users):
-            default_users = default_payload["users"]
-            assert all(isinstance(user, UserRecord) for user in default_users)
-            owner = next(user for user in default_users if user.id == "owner")
-            users.append(owner)
-        return {"roles": roles, "users": users}
+        # Lockout recovery only: if no active admin remains, restore the owner role
+        # on an existing "owner" user. We intentionally do NOT fabricate a default
+        # owner account — only the initial setup designer exists as administrator.
+        if not _has_active_admin_user(users, roles):
+            users = [
+                _restore_default_owner(user) if user.id == "owner" else user
+                for user in users
+            ]
+        return {
+            "roles": roles,
+            "users": users,
+            "departments": departments,
+            "positions": positions,
+        }
 
-    def _write_payload(self, payload: dict[str, list[RoleRecord] | list[UserRecord]]) -> None:
+    def _write_payload(self, payload: AclPayload) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         rendered = {
-            "roles": [role.to_dict() for role in payload["roles"]],  # type: ignore[union-attr]
-            "users": [user.to_dict() for user in payload["users"]],  # type: ignore[union-attr]
+            "roles": [role.to_dict() for role in payload["roles"] if isinstance(role, RoleRecord)],
+            "users": [user.to_dict() for user in payload["users"] if isinstance(user, UserRecord)],
+            "departments": [
+                dept.to_dict()
+                for dept in payload["departments"]
+                if isinstance(dept, DepartmentRecord)
+            ],
+            "positions": [
+                position.to_dict()
+                for position in payload.get("positions", [])
+                if isinstance(position, PositionRecord)
+            ],
         }
         with portalocker.Lock(self._path, "w", encoding="utf-8", timeout=5) as fh:
             json.dump(rendered, fh, ensure_ascii=False, indent=2)
@@ -162,17 +324,16 @@ class AccessControlStore:
 
     @staticmethod
     def _resolve_user(
-        payload: dict[str, list[RoleRecord] | list[UserRecord]],
+        payload: AclPayload,
         user_id: str | None,
     ) -> UserRecord | None:
-        users = payload["users"]
-        assert all(isinstance(user, UserRecord) for user in users)
+        users = [user for user in payload["users"] if isinstance(user, UserRecord)]
         if user_id:
             return next((user for user in users if user.id == user_id), None)
         return None
 
 
-def _default_payload() -> dict[str, list[RoleRecord] | list[UserRecord]]:
+def _default_payload() -> AclPayload:
     return {
         "roles": [
             RoleRecord(id="owner", name="대표/관리자", level=100, permissions=["*"]),
@@ -210,10 +371,20 @@ def _default_payload() -> dict[str, list[RoleRecord] | list[UserRecord]]:
                 permissions=["work:read", "documents:read", "patch_records:read"],
             ),
         ],
-        "users": [
-            UserRecord(id="owner", display_name="시스템 관리자", title="대표", role_id="owner"),
-        ],
+        "users": [],
+        "departments": [],
+        "positions": [],
     }
+
+
+def _replace_parent(department: DepartmentRecord, parent_id: str) -> DepartmentRecord:
+    return DepartmentRecord(
+        id=department.id,
+        name=department.name,
+        description=department.description,
+        lead_user_id=department.lead_user_id,
+        parent_id=parent_id,
+    )
 
 
 def _normalize_user(user: UserRecord) -> UserRecord:
@@ -226,3 +397,22 @@ def _normalize_user(user: UserRecord) -> UserRecord:
             active=user.active,
         )
     return user
+
+
+def _restore_default_owner(user: UserRecord) -> UserRecord:
+    return UserRecord(
+        id=user.id,
+        display_name=user.display_name or "시스템 관리자",
+        title=user.title or "대표",
+        role_id="owner",
+        active=True,
+        department=user.department,
+        position_id=user.position_id,
+    )
+
+
+def _has_active_admin_user(users: list[UserRecord], roles: list[RoleRecord]) -> bool:
+    admin_role_ids = {
+        role.id for role in roles if "*" in role.permissions or "admin:users" in role.permissions
+    }
+    return any(user.active and user.role_id in admin_role_ids for user in users)

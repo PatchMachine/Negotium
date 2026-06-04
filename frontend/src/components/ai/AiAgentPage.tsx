@@ -1,12 +1,11 @@
 import { FormEvent, useEffect, useState } from 'react';
 
 import {
-  fetchAgentPlans,
+  fetchCurrentUser,
   fetchLlmRuntime,
   fetchLocalLlmStatus,
   sendChatMessage,
   type AiJobStatus,
-  type AgentPlan,
   type ChatResponse,
   type LocalLlmStatus,
   type LlmProviderName,
@@ -14,14 +13,11 @@ import {
   type LlmRuntimeRoute,
 } from '../../api';
 import AiJobStatusBar from '../common/AiJobStatusBar';
-import AgentPlansPanel from '../memory/AgentPlansPanel';
 import PatchOpsCockpit from './PatchOpsCockpit';
 
-const providerOptions: LlmProviderName[] = ['vllm', 'openai', 'anthropic', 'gemini', 'fake'];
+const providerOptions: LlmProviderName[] = ['vllm', 'openai', 'anthropic', 'gemini', 'together', 'fake'];
 
 export default function AiAgentPage() {
-  const [plans, setPlans] = useState<AgentPlan[]>([]);
-  const [agentObjective, setAgentObjective] = useState('');
   const [runtime, setRuntime] = useState<LlmRuntime | null>(null);
   const [localStatus, setLocalStatus] = useState<LocalLlmStatus | null>(null);
   const [message, setMessage] = useState('');
@@ -31,14 +27,7 @@ export default function AiAgentPage() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [chatJob, setChatJob] = useState<AiJobStatus | null>(null);
-
-  async function refreshPlans() {
-    try {
-      setPlans((await fetchAgentPlans()).plans);
-    } catch (err) {
-      setNotice(err instanceof Error ? err.message : '에이전트 계획 로드 실패');
-    }
-  }
+  const [isAdmin, setIsAdmin] = useState(false);
 
   async function refreshRuntime() {
     try {
@@ -54,11 +43,17 @@ export default function AiAgentPage() {
   }
 
   useEffect(() => {
-    void refreshPlans();
     void refreshRuntime();
+    void fetchCurrentUser()
+      .then((me) => {
+        const perms = me.user?.permissions ?? [];
+        setIsAdmin(perms.includes('*') || perms.includes('admin:local_llm'));
+      })
+      .catch(() => setIsAdmin(false));
   }, []);
 
   useEffect(() => {
+    if (!isAdmin) return undefined;
     if (localStatus?.state !== 'loading' && localStatus?.state !== 'running') {
       return undefined;
     }
@@ -66,7 +61,7 @@ export default function AiAgentPage() {
       void fetchLocalLlmStatus().then(setLocalStatus).catch(() => undefined);
     }, 2500);
     return () => window.clearInterval(timer);
-  }, [localStatus?.state]);
+  }, [localStatus?.state, isAdmin]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -111,35 +106,31 @@ export default function AiAgentPage() {
   return (
     <section className="ai-agent-layout">
       <div className="panel ai-agent-hero">
-        <p className="eyebrow">AI agent operations</p>
-        <h2>AI 에이전트 실행계획</h2>
+        <p className="eyebrow">AI development assistant</p>
+        <h2>AI 개발 도우미</h2>
         <p className="muted">
-          AI를 단순 채팅창으로 쓰지 않고, 승인 가능한 실행계획과 작업별 LLM 선택 기준으로 운영합니다.
+          코드 패치 작업(PatchOps)을 관리합니다. 계획(plan.md)은 AI 어시스턴트의 “계획 모드”에서 만들고, 일반 대화는
+          “대화 모드”에서 사용하세요. 아래 코드 패치에서 만들어진 계획을 불러와 작업을 시작할 수 있습니다.
         </p>
-        <div className="switch-row">
-          <button type="button" className="secondary-button" onClick={() => void refreshRuntime()}>
-            LLM 상태 새로고침
-          </button>
-          <span className="status-pill">Local {localStatus?.state || 'unknown'}</span>
-        </div>
-        <p className="muted small">로컬 모델 기동/중지는 관리자 메뉴의 “로컬 에이전트 관리”에서만 수행합니다.</p>
-        {runtime ? (
+        {isAdmin ? (
+          <div className="switch-row">
+            <button type="button" className="secondary-button" onClick={() => void refreshRuntime()}>
+              LLM 상태 새로고침
+            </button>
+            <span className="status-pill">Local {localStatus?.state || 'unknown'}</span>
+          </div>
+        ) : null}
+        <p className="muted small">로컬 모델 기동/중지·상태 확인은 관리자 메뉴의 “로컬 에이전트 관리”에서만 수행합니다.</p>
+        {isAdmin && runtime ? (
           <p className="muted small">
             기본값: {runtime.default_route} / {runtime.default_provider} · 로컬 모델 {runtime.local_model}
           </p>
         ) : null}
       </div>
 
-      <AgentPlansPanel
-        plans={plans}
-        agentObjective={agentObjective}
-        setAgentObjective={setAgentObjective}
-        onMessage={setNotice}
-        onRefresh={() => refreshPlans()}
-      />
-
       <PatchOpsCockpit onMessage={setNotice} />
 
+      {isAdmin ? (
       <details className="panel ai-test-chat-panel">
         <summary>테스트 채팅 (LLM 연결 확인용)</summary>
         <form className="memory-form" onSubmit={handleSubmit}>
@@ -185,6 +176,7 @@ export default function AiAgentPage() {
           ))}
         </div>
       </details>
+      ) : null}
 
       {notice ? <p className="alert">{notice}</p> : null}
     </section>

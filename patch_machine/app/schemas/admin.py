@@ -2,6 +2,8 @@
 
 from patch_machine.app.schemas.core import (
     ApiKeyPayload,
+    DepartmentPayload,
+    PositionPayload,
     ProviderModelPayload,
     ProviderModelPreviewPayload,
     RolePayload,
@@ -10,6 +12,8 @@ from patch_machine.app.schemas.core import (
 
 __all__ = [
     "ApiKeyPayload",
+    "DepartmentPayload",
+    "PositionPayload",
     "ProviderModelPayload",
     "ProviderModelPreviewPayload",
     "RolePayload",

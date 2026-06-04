@@ -16,8 +16,11 @@
         "memory:write",
         "llm:chat",
         "documents:write",
+        "documents:read",
         "uploads:write",
-        "work:read"
+        "work:read",
+        "patch_records:read",
+        "patch_records:write"
       ]
     },
     {
@@ -27,7 +30,9 @@
       "permissions": [
         "llm:chat",
         "uploads:write",
-        "work:read"
+        "work:read",
+        "documents:read",
+        "patch_records:read"
       ]
     },
     {
@@ -35,24 +40,70 @@
       "name": "조회자",
       "level": 10,
       "permissions": [
-        "work:read"
+        "work:read",
+        "documents:read",
+        "patch_records:read"
       ]
     }
   ],
   "users": [
     {
-      "id": "owner",
-      "display_name": "시스템 관리자",
-      "title": "대표",
-      "role_id": "owner",
-      "active": true
-    },
-    {
       "id": "jepetolee",
       "display_name": "이재석",
       "title": "시스템 관리자",
       "role_id": "owner",
-      "active": true
+      "active": true,
+      "department": "",
+      "position_id": ""
+    },
+    {
+      "id": "minwoo123",
+      "display_name": "이민우",
+      "title": "대리",
+      "role_id": "staff",
+      "active": true,
+      "department": "product",
+      "position_id": ""
+    },
+    {
+      "id": "chulsu456",
+      "display_name": "김철수",
+      "title": "개발팀장",
+      "role_id": "manager",
+      "active": false,
+      "department": "developer",
+      "position_id": ""
+    }
+  ],
+  "departments": [
+    {
+      "id": "management",
+      "name": "인사팀",
+      "description": "인사",
+      "lead_user_id": "",
+      "parent_id": ""
+    },
+    {
+      "id": "product",
+      "name": "제품 개발팀",
+      "description": "제품",
+      "lead_user_id": "",
+      "parent_id": "management"
+    },
+    {
+      "id": "developer",
+      "name": "개발",
+      "description": "개발팀",
+      "lead_user_id": "",
+      "parent_id": "management"
+    }
+  ],
+  "positions": [
+    {
+      "id": "jepetolee",
+      "name": "CEO",
+      "level": 0,
+      "description": ""
     }
   ]
 }

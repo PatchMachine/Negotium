@@ -1,0 +1,4 @@
+{"actor": "", "completion_tokens": 1600, "model": "gpt-5.4-mini", "occurred_at": "2026-06-03T11:56:51.816868+00:00", "prompt_tokens": 1486, "provider": "openai", "task": "hiring", "total_tokens": 3086}
+{"actor": "jepetolee", "completion_tokens": 14, "model": "gpt-5.4-mini", "occurred_at": "2026-06-03T12:23:36.343339+00:00", "prompt_tokens": 2149, "provider": "openai", "task": "chat", "total_tokens": 2163}
+{"actor": "jepetolee", "completion_tokens": 196, "model": "gpt-5.4-mini", "occurred_at": "2026-06-03T12:23:59.662583+00:00", "prompt_tokens": 2179, "provider": "openai", "task": "chat", "total_tokens": 2375}
+{"actor": "jepetolee", "completion_tokens": 262, "model": "gpt-5.4-mini", "occurred_at": "2026-06-03T12:24:13.461445+00:00", "prompt_tokens": 2364, "provider": "openai", "task": "chat", "total_tokens": 2626}

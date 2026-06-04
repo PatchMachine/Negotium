@@ -14,6 +14,11 @@ import portalocker
 WorkStatus = Literal["todo", "in_progress", "blocked", "done", "cancelled"]
 WorkPriority = Literal["low", "normal", "high", "urgent"]
 
+# Module-level aliases so annotations resolve the builtin ``list`` even though
+# ``WorkScheduleStore`` defines a method named ``list`` that shadows it in class scope.
+ScheduleItemRows = list[dict[str, object]]
+ScheduleItemList = list["WorkScheduleItem"]
+
 
 @dataclass(frozen=True)
 class WorkMemory:
@@ -79,6 +84,11 @@ class WorkScheduleItem:
     dependencies: list[str] = field(default_factory=list)
     notes: str = ""
     source_architecture_id: str = ""
+    queue_order: int = 0
+    assignee_kind: str = "unassigned"
+    signed_off_by: str = ""
+    signed_off_at: str = ""
+    completion_record: str = ""
     created_at: str = ""
     updated_at: str = ""
 
@@ -97,6 +107,11 @@ class WorkScheduleItem:
             dependencies=[str(item).strip() for item in payload.get("dependencies", []) if str(item).strip()],
             notes=str(payload.get("notes") or "").strip(),
             source_architecture_id=str(payload.get("source_architecture_id") or "").strip(),
+            queue_order=_safe_int(payload.get("queue_order")),
+            assignee_kind=_assignee_kind(payload.get("assignee_kind")),
+            signed_off_by=str(payload.get("signed_off_by") or "").strip(),
+            signed_off_at=str(payload.get("signed_off_at") or "").strip(),
+            completion_record=str(payload.get("completion_record") or "").strip(),
             created_at=str(payload.get("created_at") or now),
             updated_at=now,
         )
@@ -118,6 +133,11 @@ class WorkScheduleItem:
             "dependencies": self.dependencies,
             "notes": self.notes,
             "source_architecture_id": self.source_architecture_id,
+            "queue_order": self.queue_order,
+            "assignee_kind": self.assignee_kind,
+            "signed_off_by": self.signed_off_by,
+            "signed_off_at": self.signed_off_at,
+            "completion_record": self.completion_record,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -151,8 +171,15 @@ class WorkScheduleStore:
     def __init__(self, archive_dir: Path) -> None:
         self._path = archive_dir / "work_schedule.json"
 
-    def list(self) -> list[dict[str, object]]:
-        return [item.to_dict() for item in self._read_items()]
+    def list(self) -> ScheduleItemRows:
+        items = sorted(self._read_items(), key=lambda item: (item.queue_order, item.created_at))
+        return [item.to_dict() for item in items]
+
+    def get(self, item_id: str) -> WorkScheduleItem | None:
+        for item in self._read_items():
+            if item.id == item_id:
+                return item
+        return None
 
     def upsert(self, item: WorkScheduleItem) -> WorkScheduleItem:
         if not item.title:
@@ -169,7 +196,7 @@ class WorkScheduleStore:
         self._write_items(next_items)
         return len(next_items) != len(items)
 
-    def _read_items(self) -> list[WorkScheduleItem]:
+    def _read_items(self) -> ScheduleItemList:
         if not self._path.exists():
             return []
         raw = self._path.read_text(encoding="utf-8")
@@ -180,7 +207,7 @@ class WorkScheduleStore:
             return []
         return [WorkScheduleItem.from_mapping(item) for item in payload if isinstance(item, dict)]
 
-    def _write_items(self, items: list[WorkScheduleItem]) -> None:
+    def _write_items(self, items: ScheduleItemList) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with portalocker.Lock(self._path, "w", encoding="utf-8", timeout=5) as fh:
             json.dump([item.to_dict() for item in items], fh, ensure_ascii=False, indent=2)
@@ -194,8 +221,30 @@ def _status(value: object) -> WorkStatus:
     return "todo"
 
 
+def _assignee_kind(value: object) -> str:
+    kind = str(value or "unassigned")
+    if kind in {"unassigned", "human", "ai"}:
+        return kind
+    return "unassigned"
+
+
 def _priority(value: object) -> WorkPriority:
     priority = str(value or "normal")
     if priority in {"low", "normal", "high", "urgent"}:
         return priority  # type: ignore[return-value]
     return "normal"
+
+
+def _safe_int(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value.strip())
+        except ValueError:
+            return 0
+    return 0

@@ -7,6 +7,7 @@ from collections.abc import Sequence
 
 import httpx
 
+from patch_machine.adapters.llm.multimodal import to_gemini_parts, to_text
 from patch_machine.domain.entities import LlmRoute
 from patch_machine.domain.ports import LlmMessage, LlmProvider, LlmResponse
 from patch_machine.observability import get_logger
@@ -35,10 +36,19 @@ class GeminiProvider(LlmProvider):
         temperature: float = 0.0,
         max_tokens: int | None = None,
     ) -> LlmResponse:
-        system = "\n\n".join(m.content for m in messages if m.role == "system")
-        user_text = "\n\n".join(f"{m.role}: {m.content}" for m in messages if m.role != "system")
+        system = "\n\n".join(to_text(m.content) for m in messages if m.role == "system")
+        user_parts: list[dict[str, object]] = []
+        for m in messages:
+            if m.role == "system":
+                continue
+            for part in to_gemini_parts(m.content):
+                if "text" in part:
+                    part = {"text": f"{m.role}: {part['text']}"}
+                user_parts.append(part)
+        if not user_parts:
+            user_parts.append({"text": ""})
         payload: dict[str, object] = {
-            "contents": [{"role": "user", "parts": [{"text": user_text}]}],
+            "contents": [{"role": "user", "parts": user_parts}],
             "generationConfig": {
                 "temperature": temperature,
                 "maxOutputTokens": max_tokens or 1024,

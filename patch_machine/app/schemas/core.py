@@ -7,7 +7,13 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from patch_machine.app.container import Container
-from patch_machine.archive.access_control import ALL_PERMISSIONS, RoleRecord, UserRecord
+from patch_machine.archive.access_control import (
+    ALL_PERMISSIONS,
+    DepartmentRecord,
+    PositionRecord,
+    RoleRecord,
+    UserRecord,
+)
 from patch_machine.archive.llm_runtime import LlmProviderName, LlmRuntimeConfig, LlmTaskRoute
 from patch_machine.archive.memory_schema import MemorySchema
 from patch_machine.archive.operations_memory import OperationsMemory
@@ -58,6 +64,7 @@ class LlmRuntimePayload(BaseModel):
     openai_model: str = ""
     anthropic_model: str = ""
     gemini_model: str = ""
+    together_model: str = ""
     task_routes: dict[str, dict[str, str]] = Field(default_factory=dict)
 
     @classmethod
@@ -70,6 +77,7 @@ class LlmRuntimePayload(BaseModel):
             openai_model=container.settings.llm.openai_model,
             anthropic_model=container.settings.llm.anthropic_model,
             gemini_model=container.settings.llm.gemini_model,
+            together_model=container.settings.llm.together_model,
             task_routes={
                 task: route.to_dict() for task, route in (config.task_routes or {}).items()
             },
@@ -94,6 +102,8 @@ class ChatRequest(BaseModel):
     route: Literal["local", "api"] | None = None
     provider: LlmProviderName | None = None
     task: str = "chat"
+    attachment_ids: list[str] = Field(default_factory=list)
+    history_limit: int = 8
 
 
 class ChatResponse(BaseModel):
@@ -104,6 +114,10 @@ class ChatResponse(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     ai_job: dict[str, Any] = Field(default_factory=dict)
+    skill_id: str = ""
+    skill_result: dict[str, Any] = Field(default_factory=dict)
+    attachment_notes: list[str] = Field(default_factory=list)
+    used_history: int = 0
 
 
 class LocalLlmStatusPayload(BaseModel):
@@ -169,6 +183,7 @@ class WorkScheduleItemPayload(BaseModel):
     dependencies: list[str] = []
     notes: str = ""
     source_architecture_id: str = ""
+    assignee_kind: str = "unassigned"
 
     def to_record(self, *, item_id: str | None = None) -> WorkScheduleItem:
         return WorkScheduleItem.create(
@@ -183,6 +198,7 @@ class WorkScheduleItemPayload(BaseModel):
             dependencies=self.dependencies,
             notes=self.notes,
             source_architecture_id=self.source_architecture_id,
+            assignee_kind=self.assignee_kind,
         )
 
 
@@ -200,7 +216,57 @@ class WorkArchitecturePayload(BaseModel):
     markdown: str
     path: str
     architecture: dict[str, object]
+    queue: list[dict[str, Any]] = Field(default_factory=list)
+    plan: dict[str, Any] = Field(default_factory=dict)
     ai_job: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProcessPlanPayload(BaseModel):
+    id: str
+    objective: str = ""
+    architecture_path: str = ""
+    status: str = "draft"
+    mode: str = "manual"
+    approved_by: str = ""
+    approved_at: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+    step_total: int = 0
+    step_done: int = 0
+    steps: list[dict[str, Any]] = Field(default_factory=list)
+    plan_markdown: str = ""
+
+
+class ProcessPlanListPayload(BaseModel):
+    items: list[ProcessPlanPayload] = Field(default_factory=list)
+
+
+class ProcessPlanModeRequest(BaseModel):
+    mode: str
+
+
+class ProcessStepCreatePayload(BaseModel):
+    title: str
+    notes: str = ""
+    owner_name: str = ""
+    priority: str = "normal"
+    assignee_kind: str = "unassigned"
+
+
+class ProcessStepEditPayload(BaseModel):
+    title: str | None = None
+    notes: str | None = None
+    owner_name: str | None = None
+    priority: str | None = None
+    assignee_kind: str | None = None
+
+
+class ProcessStepReorderRequest(BaseModel):
+    ordered_ids: list[str] = Field(default_factory=list)
+
+
+class WorkItemSignOffPayload(BaseModel):
+    note: str = ""
 
 
 class WorkScheduleGenerationRequest(BaseModel):
@@ -355,6 +421,7 @@ class AgentPlanRequest(BaseModel):
     mode: str = "plan_only"
     schedule_refs: list[str] = []
     memory_refs: list[str] = []
+    context: str = ""
 
 
 class PatchRunCreatePayload(BaseModel):
@@ -509,6 +576,12 @@ class HiringRequest(BaseModel):
     role_title: str
     business_need: str = ""
     priority: str = "normal"
+    department_id: str = ""
+    position_id: str = ""
+    candidate_name: str = ""
+    candidate_profile: str = ""
+    interview_stage: str = ""
+    include_workload: bool = True
 
 
 class GeneratedDocumentPayload(BaseModel):
@@ -516,6 +589,8 @@ class GeneratedDocumentPayload(BaseModel):
     markdown: str
     path: str
     ai_job: dict[str, Any] = Field(default_factory=dict)
+    output_format: str = "markdown"
+    attachment_notes: list[str] = Field(default_factory=list)
 
 
 class HandoverRequest(BaseModel):
@@ -523,6 +598,7 @@ class HandoverRequest(BaseModel):
     outgoing_owner: str = ""
     incoming_owner: str = ""
     notes: str = ""
+    generate_tasks: bool = True
 
 
 class OfficeDocumentRequest(BaseModel):
@@ -530,6 +606,40 @@ class OfficeDocumentRequest(BaseModel):
     title: str
     source_text: str
     audience: str = ""
+    source_ids: list[str] = Field(default_factory=list)
+    query: str = ""
+    source_limit: int = 20
+    include_volatile: bool = False
+    token_budget: int = 4000
+    attachment_ids: list[str] = Field(default_factory=list)
+    output_format: Literal["auto", "markdown", "html", "csv", "json", "text"] = "auto"
+
+
+class SkillRunRequest(BaseModel):
+    inputs: dict[str, Any] = Field(default_factory=dict)
+
+
+class SkillInputPayload(BaseModel):
+    name: str
+    type: str = "string"
+    required: bool = False
+    description: str = ""
+
+
+class SkillCreateRequest(BaseModel):
+    id: str
+    name: str
+    description: str = ""
+    instructions: str = ""
+    category: str = "general"
+    executor: Literal["prompt", "tool", "cli"] = "prompt"
+    required_permission: str = ""
+    risk: str = "low"
+    output_format: str = "auto"
+    output_folder: str = "documents"
+    task: str = "document_generation"
+    tool: str = ""
+    inputs: list[SkillInputPayload] = Field(default_factory=list)
 
 
 class ApiKeyPayload(BaseModel):
@@ -628,6 +738,8 @@ class UserPayload(BaseModel):
     title: str = ""
     role_id: str = "viewer"
     active: bool = True
+    department: str = ""
+    position_id: str = ""
 
     def to_record(self) -> UserRecord:
         return UserRecord(
@@ -636,6 +748,44 @@ class UserPayload(BaseModel):
             title=self.title.strip(),
             role_id=self.role_id.strip() or "viewer",
             active=self.active,
+            department=self.department.strip(),
+            position_id=self.position_id.strip(),
+        )
+
+
+class AdminCreateUserPayload(UserPayload):
+    password: str
+
+
+class DepartmentPayload(BaseModel):
+    id: str
+    name: str
+    description: str = ""
+    lead_user_id: str = ""
+    parent_id: str = ""
+
+    def to_record(self) -> DepartmentRecord:
+        return DepartmentRecord(
+            id=self.id.strip(),
+            name=self.name.strip(),
+            description=self.description.strip(),
+            lead_user_id=self.lead_user_id.strip(),
+            parent_id=self.parent_id.strip(),
+        )
+
+
+class PositionPayload(BaseModel):
+    id: str
+    name: str
+    level: int = 0
+    description: str = ""
+
+    def to_record(self) -> PositionRecord:
+        return PositionRecord(
+            id=self.id.strip(),
+            name=self.name.strip(),
+            level=self.level,
+            description=self.description.strip(),
         )
 
 

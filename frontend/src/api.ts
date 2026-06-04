@@ -20,7 +20,7 @@ export type ApiStatus = {
   operations_memory_configured: boolean;
 };
 
-export type LlmProviderName = 'vllm' | 'openai' | 'anthropic' | 'gemini' | 'fake';
+export type LlmProviderName = 'vllm' | 'openai' | 'anthropic' | 'gemini' | 'together' | 'fake';
 export type LlmRuntimeRoute = 'local' | 'api';
 
 export type LlmTaskRoute = {
@@ -39,6 +39,7 @@ export type LlmRuntime = {
   openai_model: string;
   anthropic_model: string;
   gemini_model: string;
+  together_model: string;
   task_routes: Record<string, LlmTaskRoute>;
 };
 
@@ -50,6 +51,10 @@ export type ChatResponse = {
   prompt_tokens: number;
   completion_tokens: number;
   ai_job?: AiJobStatus;
+  skill_id?: string;
+  skill_result?: Record<string, unknown>;
+  attachment_notes?: string[];
+  used_history?: number;
 };
 
 export type LocalLlmStatus = {
@@ -75,6 +80,19 @@ export type ProgressLog = {
   llm_route: string;
   kind?: string;
   summary?: string;
+  id?: string;
+  stage_state?: string;
+  runnable?: boolean;
+  queue_order?: number;
+  source_architecture_id?: string;
+  notes?: string;
+  owner_id?: string;
+  owner_name?: string;
+  assignee_kind?: string;
+  signed_off_by?: string;
+  signed_off_at?: string;
+  completion_record?: string;
+  priority?: string;
 };
 
 export type ProgressPayload = {
@@ -112,8 +130,48 @@ export type WorkScheduleItem = {
   dependencies: string[];
   notes: string;
   source_architecture_id: string;
+  queue_order?: number;
+  assignee_kind?: string;
+  signed_off_by?: string;
+  signed_off_at?: string;
+  completion_record?: string;
   created_at?: string;
   updated_at?: string;
+};
+
+export type ProcessPlanStep = {
+  id: string;
+  path: string;
+  title: string;
+  summary?: string;
+  status: string;
+  stage_state?: string;
+  runnable?: boolean;
+  queue_order?: number;
+  source_architecture_id?: string;
+  notes?: string;
+  owner_id?: string;
+  owner_name?: string;
+  assignee_kind?: string;
+  signed_off_by?: string;
+  signed_off_at?: string;
+  priority?: string;
+};
+
+export type ProcessPlan = {
+  id: string;
+  objective: string;
+  architecture_path: string;
+  status: 'draft' | 'approved' | 'running' | 'paused' | 'completed' | 'cancelled' | string;
+  mode: 'manual' | 'auto' | string;
+  approved_by: string;
+  approved_at: string;
+  created_at: string;
+  updated_at: string;
+  step_total: number;
+  step_done: number;
+  steps: ProcessPlanStep[];
+  plan_markdown: string;
 };
 
 export type WorkArchitecture = {
@@ -121,6 +179,8 @@ export type WorkArchitecture = {
   markdown: string;
   path: string;
   architecture: Record<string, unknown>;
+  queue?: WorkScheduleItem[];
+  plan?: ProcessPlan;
   ai_job?: AiJobStatus;
 };
 
@@ -209,6 +269,7 @@ export type AgentPlan = {
   steps: Array<Record<string, unknown>>;
   memory_refs: string[];
   schedule_refs: string[];
+  plan_markdown_path?: string;
 };
 
 export type PatchRun = {
@@ -388,6 +449,15 @@ export type DocumentRead = {
   modified_at: string;
 };
 
+export type ArchiveDocumentListItem = {
+  path: string;
+  title: string;
+  kind: string;
+  excerpt: string;
+  bytes: number;
+  modified_at: string;
+};
+
 export type TokenLimit = {
   enforcement_enabled: boolean;
   per_request_max_tokens: number;
@@ -456,6 +526,12 @@ export type HiringRequest = {
   role_title: string;
   business_need: string;
   priority: string;
+  department_id?: string;
+  position_id?: string;
+  candidate_name?: string;
+  candidate_profile?: string;
+  interview_stage?: string;
+  include_workload?: boolean;
 };
 
 export type GeneratedDocument = {
@@ -463,6 +539,8 @@ export type GeneratedDocument = {
   markdown: string;
   path: string;
   ai_job?: AiJobStatus;
+  output_format?: string;
+  attachment_notes?: string[];
 };
 
 export type HandoverRequest = {
@@ -470,13 +548,23 @@ export type HandoverRequest = {
   outgoing_owner: string;
   incoming_owner: string;
   notes: string;
+  generate_tasks?: boolean;
 };
+
+export type OfficeDocumentOutputFormat = 'auto' | 'markdown' | 'html' | 'csv' | 'json' | 'text';
 
 export type OfficeDocumentRequest = {
   document_type: 'meeting_minutes' | 'report_draft' | 'work_request' | 'ppt_outline';
   title: string;
   source_text: string;
   audience: string;
+  source_ids?: string[];
+  query?: string;
+  source_limit?: number;
+  include_volatile?: boolean;
+  token_budget?: number;
+  attachment_ids?: string[];
+  output_format?: OfficeDocumentOutputFormat;
 };
 
 export type ApiKeyInfo = {
@@ -554,6 +642,23 @@ export type UserRecord = {
   title: string;
   role_id: string;
   active: boolean;
+  department?: string;
+  position_id?: string;
+};
+
+export type DepartmentRecord = {
+  id: string;
+  name: string;
+  description?: string;
+  lead_user_id?: string;
+  parent_id?: string;
+};
+
+export type PositionRecord = {
+  id: string;
+  name: string;
+  level: number;
+  description?: string;
 };
 
 export type CompanyProfile = {
@@ -584,6 +689,8 @@ export type PatchNoteRecommendationItem = {
 export type AccessControlPayload = {
   roles: RoleRecord[];
   users: UserRecord[];
+  departments: DepartmentRecord[];
+  positions: PositionRecord[];
   permissions: string[];
 };
 
@@ -674,6 +781,13 @@ export function applyInitialOfficeSetup(payload: InitialOfficeSetupResult): Prom
 
 export function login(payload: { user_id: string; password: string }): Promise<AuthSession> {
   return requestJson<AuthSession>('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function createLoginUser(payload: UserRecord & { password: string }): Promise<{ ok: boolean; access_control: AccessControlPayload }> {
+  return requestJson<{ ok: boolean; access_control: AccessControlPayload }>('/api/admin/users/create-login', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
@@ -839,12 +953,20 @@ export function rejectDeletionRequest(id: string): Promise<{ ok: boolean; reques
   return requestJson<{ ok: boolean; request: DeletionRequest }>(`/api/memory/deletion-requests/${id}/reject`, { method: 'POST' });
 }
 
+export function deleteMemorySource(sourceId: string): Promise<{ ok: boolean; source: PermanentMemorySource; request: DeletionRequest; physical_deleted?: boolean }> {
+  return requestJson<{ ok: boolean; source: PermanentMemorySource; request: DeletionRequest; physical_deleted?: boolean }>(
+    `/api/memory/sources?source_id=${encodeURIComponent(sourceId)}`,
+    { method: 'DELETE' },
+  );
+}
+
 export function generateAgentPlan(payload: {
   objective: string;
   title: string;
   mode: string;
   schedule_refs: string[];
   memory_refs: string[];
+  context?: string;
 }): Promise<{ ok: boolean; plan: AgentPlan }> {
   return requestJson<{ ok: boolean; plan: AgentPlan }>('/api/agent/plans/generate', {
     method: 'POST',
@@ -1051,16 +1173,98 @@ export function searchHuggingFaceModels(query: string): Promise<HuggingFaceModel
   });
 }
 
+export type ChatSendOptions = {
+  task?: string;
+  attachmentIds?: string[];
+  historyLimit?: number;
+};
+
 export function sendChatMessage(
   message: string,
   route: LlmRuntimeRoute,
   provider: LlmProviderName,
-  task = 'chat',
+  options: string | ChatSendOptions = 'chat',
 ): Promise<ChatResponse> {
+  const opts: ChatSendOptions = typeof options === 'string' ? { task: options } : options;
   return requestJson<ChatResponse>('/api/llm/chat', {
     method: 'POST',
-    body: JSON.stringify({ message, route, provider, task }),
+    body: JSON.stringify({
+      message,
+      route,
+      provider,
+      task: opts.task ?? 'chat',
+      attachment_ids: opts.attachmentIds ?? [],
+      history_limit: opts.historyLimit ?? 8,
+    }),
   });
+}
+
+export type ChatStreamHandlers = {
+  onMeta?: (meta: { route: string; provider: string; model: string; skill_id: string }) => void;
+  onDelta?: (text: string) => void;
+  onDone?: (response: ChatResponse) => void;
+  onError?: (detail: string) => void;
+};
+
+/**
+ * Stream a chat completion over SSE. Returns the final ChatResponse (also
+ * delivered via onDone). Falls back gracefully if the stream errors.
+ */
+export async function streamChatMessage(
+  message: string,
+  route: LlmRuntimeRoute,
+  provider: LlmProviderName,
+  handlers: ChatStreamHandlers,
+  options: ChatSendOptions = {},
+): Promise<void> {
+  const response = await fetch('/api/llm/chat/stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    body: JSON.stringify({
+      message,
+      route,
+      provider,
+      task: options.task ?? 'chat',
+      attachment_ids: options.attachmentIds ?? [],
+      history_limit: options.historyLimit ?? 8,
+    }),
+  });
+  if (!response.ok || !response.body) {
+    const detail = response.body ? await response.text() : `${response.status} ${response.statusText}`;
+    handlers.onError?.(detail);
+    return;
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let boundary = buffer.indexOf('\n\n');
+    while (boundary !== -1) {
+      const rawEvent = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      boundary = buffer.indexOf('\n\n');
+      let eventName = 'message';
+      const dataLines: string[] = [];
+      for (const line of rawEvent.split('\n')) {
+        if (line.startsWith('event:')) eventName = line.slice(6).trim();
+        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+      }
+      if (dataLines.length === 0) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(dataLines.join('\n'));
+      } catch {
+        continue;
+      }
+      if (eventName === 'meta') handlers.onMeta?.(parsed as never);
+      else if (eventName === 'delta') handlers.onDelta?.((parsed as { text: string }).text);
+      else if (eventName === 'done') handlers.onDone?.(parsed as ChatResponse);
+      else if (eventName === 'error') handlers.onError?.((parsed as { detail: string }).detail);
+    }
+  }
 }
 
 export function fetchProgress(): Promise<ProgressPayload> {
@@ -1106,6 +1310,128 @@ export function updateWorkScheduleItem(payload: WorkScheduleItem): Promise<{ ok:
 export function deleteWorkScheduleItem(itemId: string): Promise<{ ok: boolean; items: WorkScheduleItem[] }> {
   return requestJson<{ ok: boolean; items: WorkScheduleItem[] }>(`/api/work-schedule/items/${itemId}`, {
     method: 'DELETE',
+  });
+}
+
+export function runWorkScheduleItem(itemId: string): Promise<{
+  ok: boolean;
+  item: WorkScheduleItem;
+  items: ProgressLog[];
+  result_path: string;
+  ai_job?: AiJobStatus;
+}> {
+  return requestJson<{
+    ok: boolean;
+    item: WorkScheduleItem;
+    items: ProgressLog[];
+    result_path: string;
+    ai_job?: AiJobStatus;
+  }>(`/api/work-schedule/items/${itemId}/run`, {
+    method: 'POST',
+  });
+}
+
+export type AssignmentScope = {
+  can_assign: boolean;
+  scope: 'all' | 'department' | 'none';
+  level: number;
+  department_ids: string[];
+  departments: DepartmentRecord[];
+  assignable_users: UserRecord[];
+};
+
+export function fetchAssignmentScope(): Promise<AssignmentScope> {
+  return requestJson<AssignmentScope>('/api/work-schedule/assignment-scope');
+}
+
+export type OrgRoster = {
+  users: UserRecord[];
+  departments: DepartmentRecord[];
+  positions: PositionRecord[];
+};
+
+export function fetchOrgRoster(): Promise<OrgRoster> {
+  return requestJson<OrgRoster>('/api/org/roster');
+}
+
+export function signOffWorkItem(
+  itemId: string,
+  note = '',
+): Promise<{
+  ok: boolean;
+  item: WorkScheduleItem;
+  items: ProgressLog[];
+  plan?: ProcessPlan;
+}> {
+  return requestJson<{
+    ok: boolean;
+    item: WorkScheduleItem;
+    items: ProgressLog[];
+    plan?: ProcessPlan;
+  }>(`/api/work-schedule/items/${itemId}/sign-off`, {
+    method: 'POST',
+    body: JSON.stringify({ note }),
+  });
+}
+
+export function fetchProcessPlans(): Promise<{ items: ProcessPlan[] }> {
+  return requestJson<{ items: ProcessPlan[] }>('/api/process-plans');
+}
+
+export function fetchProcessPlan(planId: string): Promise<ProcessPlan> {
+  return requestJson<ProcessPlan>(`/api/process-plans/${planId}`);
+}
+
+export function approveProcessPlan(planId: string): Promise<ProcessPlan> {
+  return requestJson<ProcessPlan>(`/api/process-plans/${planId}/approve`, { method: 'POST' });
+}
+
+export function setProcessPlanMode(planId: string, mode: 'manual' | 'auto'): Promise<ProcessPlan> {
+  return requestJson<ProcessPlan>(`/api/process-plans/${planId}/mode`, {
+    method: 'POST',
+    body: JSON.stringify({ mode }),
+  });
+}
+
+export function pauseProcessPlan(planId: string): Promise<ProcessPlan> {
+  return requestJson<ProcessPlan>(`/api/process-plans/${planId}/pause`, { method: 'POST' });
+}
+
+export function resumeProcessPlan(planId: string): Promise<ProcessPlan> {
+  return requestJson<ProcessPlan>(`/api/process-plans/${planId}/resume`, { method: 'POST' });
+}
+
+export function addProcessStep(
+  planId: string,
+  payload: { title: string; notes?: string; owner_name?: string; priority?: string; assignee_kind?: string },
+): Promise<ProcessPlan> {
+  return requestJson<ProcessPlan>(`/api/process-plans/${planId}/steps`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateProcessStep(
+  planId: string,
+  stepId: string,
+  payload: { title?: string; notes?: string; owner_name?: string; priority?: string; assignee_kind?: string },
+): Promise<ProcessPlan> {
+  return requestJson<ProcessPlan>(`/api/process-plans/${planId}/steps/${stepId}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteProcessStep(planId: string, stepId: string): Promise<ProcessPlan> {
+  return requestJson<ProcessPlan>(`/api/process-plans/${planId}/steps/${stepId}`, {
+    method: 'DELETE',
+  });
+}
+
+export function reorderProcessSteps(planId: string, orderedIds: string[]): Promise<ProcessPlan> {
+  return requestJson<ProcessPlan>(`/api/process-plans/${planId}/reorder`, {
+    method: 'POST',
+    body: JSON.stringify({ ordered_ids: orderedIds }),
   });
 }
 
@@ -1162,6 +1488,81 @@ export function createOfficeDocument(payload: OfficeDocumentRequest): Promise<Ge
     method: 'POST',
     body: JSON.stringify(payload),
   });
+}
+
+export type SkillInputSchema = {
+  name: string;
+  type: string;
+  required: boolean;
+  description: string;
+};
+
+export type SkillDescriptor = {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  executor: 'prompt' | 'tool' | 'cli';
+  required_permission: string;
+  risk: string;
+  tool: string;
+  output_format: string;
+  inputs: SkillInputSchema[];
+};
+
+export type SkillRunResult = {
+  skill_id: string;
+  executor: string;
+  status: string;
+  output_text: string;
+  output_path: string;
+  output_format: string;
+  tool_result: Record<string, unknown>;
+  notes: string[];
+};
+
+export function fetchSkills(): Promise<{ skills: SkillDescriptor[] }> {
+  return requestJson<{ skills: SkillDescriptor[] }>('/api/skills');
+}
+
+export function runSkill(
+  skillId: string,
+  inputs: Record<string, unknown>,
+): Promise<{ ok: boolean; result: SkillRunResult }> {
+  return requestJson<{ ok: boolean; result: SkillRunResult }>(
+    `/api/skills/${encodeURIComponent(skillId)}/run`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ inputs }),
+    },
+  );
+}
+
+export type SkillCreateInput = {
+  id: string;
+  name: string;
+  description?: string;
+  instructions?: string;
+  category?: string;
+  executor?: 'prompt' | 'tool' | 'cli';
+  required_permission?: string;
+  risk?: string;
+  output_format?: string;
+  output_folder?: string;
+  tool?: string;
+  inputs?: SkillInputSchema[];
+};
+
+export function createSkill(
+  payload: SkillCreateInput,
+): Promise<{ ok: boolean; skill: SkillDescriptor; skills: SkillDescriptor[] }> {
+  return requestJson<{ ok: boolean; skill: SkillDescriptor; skills: SkillDescriptor[] }>(
+    '/api/skills',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+  );
 }
 
 export function fetchApiKeys(): Promise<{ providers: ApiKeyInfo[] }> {
@@ -1222,6 +1623,28 @@ export function deleteUser(userId: string): Promise<AccessControlPayload> {
   return requestJson<AccessControlPayload>(`/api/admin/users/${userId}`, { method: 'DELETE' });
 }
 
+export function saveDepartment(payload: DepartmentRecord): Promise<AccessControlPayload> {
+  return requestJson<AccessControlPayload>('/api/admin/departments', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteDepartment(departmentId: string): Promise<AccessControlPayload> {
+  return requestJson<AccessControlPayload>(`/api/admin/departments/${departmentId}`, { method: 'DELETE' });
+}
+
+export function savePosition(payload: PositionRecord): Promise<AccessControlPayload> {
+  return requestJson<AccessControlPayload>('/api/admin/positions', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deletePosition(positionId: string): Promise<AccessControlPayload> {
+  return requestJson<AccessControlPayload>(`/api/admin/positions/${positionId}`, { method: 'DELETE' });
+}
+
 export function fetchAccountRequests(): Promise<{ requests: AccountRequest[] }> {
   return requestJson<{ requests: AccountRequest[] }>('/api/admin/account-requests');
 }
@@ -1280,6 +1703,12 @@ export function saveDiscordConnector(payload: DiscordConnectorConfig): Promise<I
 
 export function readArchiveDocument(path: string): Promise<DocumentRead> {
   return requestJson<DocumentRead>(`/api/archive/documents?path=${encodeURIComponent(path)}`);
+}
+
+export function fetchArchiveDocumentIndex(query = '', limit = 200): Promise<{ documents: ArchiveDocumentListItem[] }> {
+  return requestJson<{ documents: ArchiveDocumentListItem[] }>(
+    `/api/archive/document-index?q=${encodeURIComponent(query)}&limit=${limit}`,
+  );
 }
 
 export function fetchTokenLimits(): Promise<TokenLimitStatus> {

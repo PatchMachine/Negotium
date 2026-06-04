@@ -7,6 +7,7 @@ from collections.abc import Sequence
 
 import httpx
 
+from patch_machine.adapters.llm.multimodal import to_anthropic_content, to_text
 from patch_machine.domain.entities import LlmRoute
 from patch_machine.domain.ports import LlmMessage, LlmProvider, LlmResponse
 from patch_machine.observability import get_logger
@@ -35,9 +36,12 @@ class AnthropicProvider(LlmProvider):
         temperature: float = 0.0,
         max_tokens: int | None = None,
     ) -> LlmResponse:
-        system = "\n\n".join(m.content for m in messages if m.role == "system")
+        system = "\n\n".join(to_text(m.content) for m in messages if m.role == "system")
         user_messages = [
-            {"role": "assistant" if m.role == "assistant" else "user", "content": m.content}
+            {
+                "role": "assistant" if m.role == "assistant" else "user",
+                "content": to_anthropic_content(m.content),
+            }
             for m in messages
             if m.role != "system"
         ]

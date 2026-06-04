@@ -6,20 +6,20 @@
   "local_model": "Qwen/Qwen3-4B",
   "task_routes": {
     "memory_summary": {
-      "route": "local",
-      "provider": "vllm",
-      "model": "Qwen/Qwen3-4B"
+      "route": "api",
+      "provider": "openai",
+      "model": ""
     },
     "document_generation": {
       "route": "api",
       "provider": "openai",
-      "model": "gpt-5-nano"
+      "model": "gpt-5.4-mini"
     },
     "chat": {
-      "route": "local",
-      "provider": "vllm",
-      "model": "Qwen/Qwen3-4B"
+      "route": "api",
+      "provider": "openai",
+      "model": ""
     }
   },
-  "updated_at": "2026-05-05T02:49:25.980302+00:00"
+  "updated_at": "2026-06-03T12:23:15.618164+00:00"
 }

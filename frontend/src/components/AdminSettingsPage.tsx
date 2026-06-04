@@ -15,13 +15,32 @@ import {
   type ProviderModelPayload,
 } from '../api';
 import LocalAgentAdminPanel from './admin/LocalAgentAdminPanel';
+import LlmTaskRoutingPanel from './ai/LlmTaskRoutingPanel';
+
+type AdminSettingsSection = 'api-keys' | 'local-agent' | 'task-routing' | 'context-firewall';
+
+const adminSettingsSections: Array<{ id: AdminSettingsSection; label: string; description: string }> = [
+  { id: 'api-keys', label: 'API 키', description: '외부 LLM provider와 모델 선택' },
+  { id: 'local-agent', label: '로컬 에이전트', description: '로컬 모델과 기동 상태 관리' },
+  { id: 'task-routing', label: '작업 라우팅', description: '업무별 local/API 배정' },
+  { id: 'context-firewall', label: '반출 제어', description: '외부 LLM 검열과 감사 로그' },
+];
 
 export default function AdminSettingsPage() {
+  const [activeSection, setActiveSection] = useState<AdminSettingsSection>('api-keys');
   const [providers, setProviders] = useState<ApiKeyInfo[]>([]);
   const [draft, setDraft] = useState({ provider: 'openai', api_key: '', model: '' });
   const [models, setModels] = useState<ProviderModelPayload | null>(null);
+  const [modelSearch, setModelSearch] = useState('');
   const [message, setMessage] = useState('');
-  const modelOptions = models?.models.length ? models.models : [draft.model].filter(Boolean);
+  const allModelOptions = models?.models.length ? models.models : [draft.model].filter(Boolean);
+  const normalizedModelSearch = modelSearch.trim().toLowerCase();
+  const filteredModelOptions = normalizedModelSearch
+    ? allModelOptions.filter((model) => model.toLowerCase().includes(normalizedModelSearch))
+    : allModelOptions;
+  const modelOptions = draft.model && !filteredModelOptions.includes(draft.model)
+    ? [draft.model, ...filteredModelOptions]
+    : filteredModelOptions;
 
   async function refresh() {
     try {
@@ -82,72 +101,128 @@ export default function AdminSettingsPage() {
   }
 
   return (
-    <section className="page-grid">
-      <div className="panel">
-        <p className="eyebrow">Frontier API</p>
-        <h2>API 키 설정</h2>
-        <div className="memory-form">
-          <label>
-            Provider
-            <select
-              value={draft.provider}
-              onChange={(event) => setDraft({ provider: event.target.value, api_key: draft.api_key, model: '' })}
+    <section className="admin-settings-page">
+      <div className="panel admin-section-nav-panel">
+        <p className="eyebrow">Admin settings</p>
+        <h2>API 키·로컬 에이전트</h2>
+        <p className="muted">
+          설정 화면을 한 번에 모두 펼치지 않고, 필요한 영역만 네비게이션으로 전환해서 봅니다.
+        </p>
+        <nav className="admin-section-nav" aria-label="관리 설정 섹션">
+          {adminSettingsSections.map((section) => (
+            <button
+              key={section.id}
+              type="button"
+              className={activeSection === section.id ? 'active-tab' : 'secondary-button'}
+              onClick={() => setActiveSection(section.id)}
             >
-              <option value="openai">OpenAI / GPT</option>
-              <option value="anthropic">Anthropic / Claude</option>
-              <option value="gemini">Google / Gemini</option>
-              <option value="vllm">vLLM / Local</option>
-            </select>
-          </label>
-          <label>
-            API Key
-            <input type="password" value={draft.api_key} onChange={(event) => setDraft({ ...draft, api_key: event.target.value })} />
-          </label>
-          <label>
-            Model 선택
-            <div className="model-select-panel">
-              <select value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })}>
-                {modelOptions.length ? null : <option value="">먼저 모델 목록을 확인하세요</option>}
-                {modelOptions.map((model) => (
-                  <option key={model} value={model}>{model}</option>
-                ))}
-              </select>
-              <input
-                placeholder="목록에 없으면 모델 ID 직접 입력"
-                value={draft.model}
-                onChange={(event) => setDraft({ ...draft, model: event.target.value })}
-              />
-            </div>
-          </label>
-          {models ? (
-            <p className="muted">
-              모델 목록: {models.source === 'live' ? '실시간 API에서 확인한 채팅 가능 모델' : '기본 추천 목록'}
-              {models.reason ? ` · ${models.reason}` : ''}
-            </p>
-          ) : null}
-          <button className="secondary-button" type="button" onClick={() => void previewModels()}>
-            입력한 키로 모델 목록 확인
-          </button>
-          <button type="button" onClick={() => void save()}>암호화 저장</button>
-          {message ? <p className="muted">{message}</p> : null}
-        </div>
-      </div>
-      <div className="panel">
-        <p className="eyebrow">Configured</p>
-        <h2>저장된 Provider</h2>
-        <div className="log-list">
-          {providers.map((provider) => (
-            <article className="log-card" key={provider.provider}>
-              <strong>{provider.label || provider.provider}</strong>
-              <p>{provider.configured ? provider.masked_value : '미설정'} · {provider.model || 'model -'}</p>
-              <p className="muted">Base URL은 시스템 기본값 사용: {provider.base_url || '-'}</p>
-              <button className="secondary-button" type="button" onClick={() => void remove(provider.provider)}>삭제</button>
-            </article>
+              <span>{section.label}</span>
+              <small>{section.description}</small>
+            </button>
           ))}
-        </div>
+        </nav>
       </div>
-      <LocalAgentAdminPanel />
-      <ContextFirewallPanel />
+
+      {activeSection === 'api-keys' ? (
+        <section className="admin-api-grid">
+          <div className="panel">
+            <p className="eyebrow">Frontier API</p>
+            <h2>API 키 설정</h2>
+            <div className="memory-form">
+              <label>
+                Provider
+                <select
+                  value={draft.provider}
+                  onChange={(event) => {
+                    setModelSearch('');
+                    setDraft({ provider: event.target.value, api_key: draft.api_key, model: '' });
+                  }}
+                >
+                  <option value="openai">OpenAI / GPT</option>
+                  <option value="anthropic">Anthropic / Claude</option>
+                  <option value="gemini">Google / Gemini</option>
+                  <option value="together">Together AI</option>
+                </select>
+              </label>
+              <label>
+                API Key
+                <input type="password" value={draft.api_key} onChange={(event) => setDraft({ ...draft, api_key: event.target.value })} />
+              </label>
+              <div className="model-select-panel">
+                <div className="model-select-head">
+                  <span className="model-select-label">Model 선택</span>
+                  {draft.model ? <span className="model-selected-pill" title={draft.model}>{draft.model}</span> : null}
+                </div>
+                <input
+                  type="search"
+                  placeholder={
+                    draft.provider === 'together'
+                      ? 'Together 모델 검색: llama, qwen, mistral, gpt-oss...'
+                      : '모델 ID 검색'
+                  }
+                  value={modelSearch}
+                  onChange={(event) => setModelSearch(event.target.value)}
+                />
+                <div className="model-option-list">
+                  {modelOptions.length === 0 ? (
+                    <p className="muted small">먼저 아래 "모델 목록 확인"을 눌러 사용 가능한 모델을 불러오세요.</p>
+                  ) : (
+                    modelOptions.map((model) => (
+                      <button
+                        key={model}
+                        type="button"
+                        className={'model-option' + (draft.model === model ? ' selected' : '')}
+                        title={model}
+                        onClick={() => setDraft({ ...draft, model })}
+                      >
+                        {model}
+                      </button>
+                    ))
+                  )}
+                </div>
+                <input
+                  className="model-manual-input"
+                  placeholder="목록에 없으면 모델 ID 직접 입력"
+                  value={draft.model}
+                  onChange={(event) => setDraft({ ...draft, model: event.target.value })}
+                />
+                {models ? (
+                  <p className="muted small">
+                    {models.source === 'live' ? '실시간 API에서 확인한 채팅 가능 모델' : '기본 추천 목록'}
+                    {normalizedModelSearch ? ` · 검색 ${filteredModelOptions.length}/${allModelOptions.length}` : ''}
+                    {models.reason ? ` · ${models.reason}` : ''}
+                  </p>
+                ) : null}
+              </div>
+              <div className="admin-action-row">
+                <button className="secondary-button" type="button" onClick={() => void previewModels()}>
+                  입력한 키로 모델 목록 확인
+                </button>
+                <button type="button" onClick={() => void save()}>암호화 저장</button>
+              </div>
+              {message ? <p className="muted">{message}</p> : null}
+            </div>
+          </div>
+          <div className="panel">
+            <p className="eyebrow">Configured</p>
+            <h2>저장된 Provider</h2>
+            <div className="log-list">
+              {providers.map((provider) => (
+                <article className="log-card" key={provider.provider}>
+                  <strong>{provider.label || provider.provider}</strong>
+                  <p>{provider.configured ? provider.masked_value : '미설정'} · {provider.model || 'model -'}</p>
+                  <p className="muted">Base URL은 시스템 기본값 사용: {provider.base_url || '-'}</p>
+                  <button className="secondary-button" type="button" onClick={() => void remove(provider.provider)}>삭제</button>
+                </article>
+              ))}
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {activeSection === 'local-agent' ? <LocalAgentAdminPanel /> : null}
+      {activeSection === 'task-routing' ? <LlmTaskRoutingPanel /> : null}
+      {activeSection === 'context-firewall' ? <ContextFirewallPanel /> : null}
     </section>
   );
 }

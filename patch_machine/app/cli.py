@@ -116,6 +116,64 @@ def reset_state(
     typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
 
 
+skill_app = typer.Typer(no_args_is_help=True, help="List and run registered skills.")
+app.add_typer(skill_app, name="skill")
+
+
+@skill_app.command("list")
+def skill_list() -> None:
+    """List all registered skills."""
+    from patch_machine.app.services.skill_registry import get_skills
+
+    skills = get_skills()
+    if not skills:
+        typer.echo("등록된 스킬이 없습니다.")
+        return
+    for skill in skills.values():
+        typer.echo(f"{skill.id}\t[{skill.executor}]\t{skill.name} — {skill.description}")
+
+
+@skill_app.command("run")
+def skill_run(
+    skill_id: str = typer.Argument(..., help="Skill id to run."),
+    inputs: list[str] = typer.Option(
+        [], "--input", "-i", help="Input as key=value (repeatable)."
+    ),
+    actor: str = typer.Option("cli", help="Actor name for the audit log."),
+) -> None:
+    """Run a skill with key=value inputs."""
+    import asyncio
+
+    from patch_machine.app.api import _complete_office_task
+    from patch_machine.app.services.skill_registry import get_skill
+    from patch_machine.app.services.skill_runtime import SkillError, run_skill
+
+    parsed: dict[str, str] = {}
+    for raw in inputs:
+        if "=" not in raw:
+            raise typer.BadParameter(f"input must be key=value: {raw}")
+        key, value = raw.split("=", 1)
+        parsed[key.strip()] = value
+    container = Container.build()
+    skill = get_skill(skill_id)
+    if skill is None:
+        raise typer.BadParameter(f"unknown skill: {skill_id}")
+
+    async def _completion(prompt: str, image_parts: list[dict[str, object]] | None) -> str:
+        return await _complete_office_task(container, prompt, task=skill.task)
+
+    async def _run() -> None:
+        try:
+            result = await run_skill(
+                container, skill_id, dict(parsed), actor=actor, completion=_completion
+            )
+        except SkillError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        typer.echo(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+
+    asyncio.run(_run())
+
+
 @app.command()
 def replay(jsonl_path: Path) -> None:
     """Replay past events recorded as JSONL (one IssueEvent per line)."""

@@ -8,6 +8,7 @@ from collections.abc import Sequence
 
 import httpx
 
+from patch_machine.adapters.llm.multimodal import to_text
 from patch_machine.domain.entities import LlmRoute
 from patch_machine.domain.ports import LlmMessage, LlmProvider, LlmResponse
 from patch_machine.observability import get_logger
@@ -49,7 +50,7 @@ class VllmProvider(LlmProvider):
     ) -> LlmResponse:
         payload = {
             "model": self._model,
-            "messages": [{"role": m.role, "content": m.content} for m in messages],
+            "messages": [{"role": m.role, "content": to_text(m.content)} for m in messages],
             "temperature": temperature,
         }
         if max_tokens is not None:

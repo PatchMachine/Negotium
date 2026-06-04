@@ -10,7 +10,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 from uuid import uuid4
 
 import portalocker
@@ -75,15 +75,7 @@ class PermanentMemoryStore:
     def read_source(self, source_id: str, *, max_chars: int = 12_000) -> dict[str, object]:
         """Read one source body by archive-relative id/path."""
 
-        cleaned = source_id.strip().lstrip("/")
-        if not cleaned or "\x00" in cleaned:
-            raise ValueError("invalid source id")
-        path = (self._archive_dir / cleaned).resolve()
-        archive_root = self._archive_dir.resolve()
-        try:
-            path.relative_to(archive_root)
-        except ValueError as exc:
-            raise ValueError("source path escapes archive") from exc
+        cleaned, path = self._resolve_source_path(source_id)
         if not path.exists() or not path.is_file():
             raise FileNotFoundError(cleaned)
         kind = _kind_for(path, self._archive_dir)
@@ -92,6 +84,21 @@ class PermanentMemoryStore:
         source = _source_from_path(path, self._archive_dir, kind)
         content = _read_content(path, max_chars=max(1, max_chars))
         return {**source.to_dict(), "content": content}
+
+    def delete_source(self, source_id: str) -> dict[str, object]:
+        """Delete an archive-backed source after archive-relative validation."""
+
+        cleaned, path = self._resolve_source_path(source_id)
+        if not path.exists() or not path.is_file():
+            raise FileNotFoundError(cleaned)
+        kind = _kind_for(path, self._archive_dir)
+        if kind == "unknown":
+            raise ValueError("unsupported source kind")
+        if kind in {"audit_log", "token_usage"}:
+            raise ValueError(f"{kind} sources cannot be deleted from the memory UI")
+        source = _source_from_path(path, self._archive_dir, kind).to_dict()
+        path.unlink()
+        return source
 
     def resolve_sources(
         self,
@@ -165,15 +172,55 @@ class PermanentMemoryStore:
     def _scan_sources(self) -> list[PermanentMemorySource]:
         if not self._archive_dir.exists():
             return []
+        tombstoned = self._tombstoned_source_ids()
         sources: list[PermanentMemorySource] = []
         for path in self._archive_dir.rglob("*"):
             if not path.is_file() or path.name.startswith("."):
                 continue
+            if _is_operational_internal_file(path, self._archive_dir):
+                continue
             kind = _kind_for(path, self._archive_dir)
             if kind == "unknown":
                 continue
-            sources.append(_source_from_path(path, self._archive_dir, kind))
+            source = _source_from_path(path, self._archive_dir, kind)
+            if source.id in tombstoned or source.path in tombstoned:
+                continue
+            sources.append(source)
         return sources
+
+    def _resolve_source_path(self, source_id: str) -> tuple[str, Path]:
+        cleaned = source_id.strip().lstrip("/")
+        if not cleaned or "\x00" in cleaned:
+            raise ValueError("invalid source id")
+        path = (self._archive_dir / cleaned).resolve()
+        archive_root = self._archive_dir.resolve()
+        try:
+            path.relative_to(archive_root)
+        except ValueError as exc:
+            raise ValueError("source path escapes archive") from exc
+        return cleaned, path
+
+    def _tombstoned_source_ids(self) -> set[str]:
+        path = self._archive_dir / "memory" / "tombstones.jsonl"
+        if not path.exists():
+            return set()
+        tombstoned: set[str] = set()
+        try:
+            lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        except OSError:
+            return tombstoned
+        for line in lines:
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            for key in ("target_id", "source_path"):
+                value = str(payload.get(key) or "").strip().lstrip("/")
+                if value:
+                    tombstoned.add(value)
+        return tombstoned
 
 
 def _kind_for(path: Path, archive_dir: Path) -> SourceKind:
@@ -184,8 +231,6 @@ def _kind_for(path: Path, archive_dir: Path) -> SourceKind:
     parts = rel.parts
     if len(parts) >= 3 and parts[0].isdigit() and parts[1].isdigit() and path.suffix == ".md":
         return "patch_log"
-    if rel.as_posix() == "audit_log.jsonl":
-        return "audit_log"
     if parts and parts[0] == "conversations" and path.suffix == ".jsonl":
         return "conversation"
     if parts[:2] == ("memory", "promoted") and path.suffix == ".md":
@@ -194,11 +239,18 @@ def _kind_for(path: Path, archive_dir: Path) -> SourceKind:
         return "patch_record"
     if parts and parts[0] == "uploads" and path.suffix in {".md", ".markdown", ".txt", ".json", ".jsonl", ".yaml", ".yml"}:
         return "upload"
-    if parts and parts[0] == "token_usage" and path.suffix in {".json", ".jsonl"}:
-        return "token_usage"
     if parts and parts[0] in {"documents", "hr", "handover", "work_architecture"} and path.suffix in {".md", ".jsonl"}:
         return "document"
     return "unknown"
+
+
+def _is_operational_internal_file(path: Path, archive_dir: Path) -> bool:
+    try:
+        rel = path.relative_to(archive_dir)
+    except ValueError:
+        return True
+    parts = rel.parts
+    return rel.as_posix() == "audit_log.jsonl" or bool(parts and parts[0] in {"token_usage", "context_firewall", "mcp_hub"})
 
 
 def _source_from_path(path: Path, archive_dir: Path, kind: SourceKind) -> PermanentMemorySource:

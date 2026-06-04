@@ -67,6 +67,24 @@ const recommendedLocalModels = [
   },
 ];
 
+const recommendedTogetherModels = [
+  {
+    name: 'Llama 3.1 8B Turbo',
+    model: 'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo',
+    strength: '빠른 응답과 비용 효율이 좋은 기본 업무 자동화 후보',
+  },
+  {
+    name: 'GPT OSS 20B',
+    model: 'openai/gpt-oss-20b',
+    strength: '오픈 모델 기반 문서 생성/요약 후보',
+  },
+  {
+    name: 'Mixtral 8x7B Instruct',
+    model: 'mistralai/Mixtral-8x7B-Instruct-v0.1',
+    strength: '긴 문서와 범용 지시 처리 실험 후보',
+  },
+];
+
 type SetupDraft = {
   step: Step;
   admin: { user_id: string; display_name: string; title: string };
@@ -154,7 +172,15 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState(savedDraft?.model || '');
   const [models, setModels] = useState<ProviderModelPayload | null>(null);
-  const modelOptions = models?.models.length ? models.models : [model].filter(Boolean);
+  const [modelSearch, setModelSearch] = useState('');
+  const allModelOptions = models?.models.length ? models.models : [model].filter(Boolean);
+  const normalizedModelSearch = modelSearch.trim().toLowerCase();
+  const filteredModelOptions = normalizedModelSearch
+    ? allModelOptions.filter((option) => option.toLowerCase().includes(normalizedModelSearch))
+    : allModelOptions;
+  const modelOptions = model && !filteredModelOptions.includes(model)
+    ? [model, ...filteredModelOptions]
+    : filteredModelOptions;
   const [localModel, setLocalModel] = useState(savedDraft?.localModel || 'Qwen/Qwen3-4B');
   const [localModelQuery, setLocalModelQuery] = useState(savedDraft?.localModelQuery || 'Qwen');
   const [hfModels, setHfModels] = useState<HuggingFaceModelItem[]>([]);
@@ -222,7 +248,7 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
       try {
         const payload = await previewProviderModels(provider, '');
         setModels(payload);
-        setModel((current) => current || payload.models[0] || '');
+        setModel((current) => (current && payload.models.includes(current) ? current : payload.models[0] || ''));
       } catch {
         setModels(null);
       }
@@ -267,7 +293,10 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
           task_routes: {
             ...(runtime.task_routes || {}),
             memory_summary: { route: 'api', provider, model },
+            agent_planning: { route: 'api', provider, model },
             document_generation: { route: 'api', provider, model },
+            hiring: { route: 'api', provider, model },
+            handover: { route: 'api', provider, model },
             chat: { route: 'api', provider, model },
           },
         });
@@ -283,7 +312,10 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
           task_routes: {
             ...(runtime.task_routes || {}),
             memory_summary: { route: 'local', provider: 'vllm', model: selectedLocalModel },
+            agent_planning: { route: 'local', provider: 'vllm', model: selectedLocalModel },
             document_generation: { route: 'local', provider: 'vllm', model: selectedLocalModel },
+            hiring: { route: 'local', provider: 'vllm', model: selectedLocalModel },
+            handover: { route: 'local', provider: 'vllm', model: selectedLocalModel },
             chat: { route: 'local', provider: 'vllm', model: selectedLocalModel },
           },
         });
@@ -464,28 +496,81 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
             </label>
             {llmChoice === 'api' ? (
               <>
-                <select value={provider} onChange={(e) => setProvider(e.target.value as LlmProviderName)}>
+                <select
+                  value={provider}
+                  onChange={(e) => {
+                    setProvider(e.target.value as LlmProviderName);
+                    setModels(null);
+                    setModel('');
+                    setModelSearch('');
+                  }}
+                >
                   <option value="openai">OpenAI / GPT</option>
                   <option value="anthropic">Anthropic / Claude</option>
                   <option value="gemini">Google / Gemini</option>
+                  <option value="together">Together AI</option>
                 </select>
+                {provider === 'together' ? (
+                  <div className="local-llm-status">
+                    <div>
+                      <strong>Together API</strong>
+                      <p className="muted">
+                        Together는 OpenAI-compatible API로 호출됩니다. API key를 넣고 모델 확인을 누르면 사용 가능한
+                        hosted/open model 목록을 가져옵니다.
+                      </p>
+                    </div>
+                    <span className="status-pill">api</span>
+                  </div>
+                ) : null}
                 <input type="password" placeholder="API Key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+                {provider === 'together' ? (
+                  <div className="recommended-model-grid">
+                    {recommendedTogetherModels.map((item) => (
+                      <article className={model === item.model ? 'model-card model-card-selected' : 'model-card'} key={item.model}>
+                        <small>Together AI</small>
+                        <strong>{item.name}</strong>
+                        <p>{item.strength}</p>
+                        <code>{item.model}</code>
+                        <button className="secondary-button" type="button" onClick={() => setModel(item.model)}>
+                          선택
+                        </button>
+                      </article>
+                    ))}
+                  </div>
+                ) : null}
                 <label>
                   Model 선택
                   <div className="model-select-panel">
+                    <input
+                      type="search"
+                      placeholder={provider === 'together' ? 'Together 모델 검색: llama, qwen, mistral...' : '모델 ID 검색'}
+                      value={modelSearch}
+                      onChange={(e) => setModelSearch(e.target.value)}
+                    />
                     <select value={model} onChange={(e) => setModel(e.target.value)}>
                       {modelOptions.length ? null : <option value="">먼저 모델 목록을 확인하세요</option>}
                       {modelOptions.map((option) => (
                         <option key={option} value={option}>{option}</option>
                       ))}
                     </select>
-                    <input placeholder="목록에 없으면 모델 ID 직접 입력" value={model} onChange={(e) => setModel(e.target.value)} />
+                    <input
+                      list="initial-setup-model-options"
+                      placeholder="목록에 없으면 모델 ID 직접 입력"
+                      value={model}
+                      onChange={(e) => setModel(e.target.value)}
+                    />
+                    <datalist id="initial-setup-model-options">
+                      {allModelOptions.map((option) => (
+                        <option key={option} value={option} />
+                      ))}
+                    </datalist>
                   </div>
                 </label>
                 <button className="secondary-button" type="button" onClick={() => void loadModels()}>입력한 키로 모델 확인</button>
                 {models ? (
                   <p className="muted">
                     모델 목록: {models.source === 'live' ? '실시간 API에서 확인한 채팅 가능 모델' : '기본 추천 목록'}
+                    {normalizedModelSearch ? ` · 검색 결과 ${filteredModelOptions.length}/${allModelOptions.length}` : ''}
                     {models.reason ? ` · ${models.reason}` : ''}
                   </p>
                 ) : null}

@@ -10,13 +10,19 @@ import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 
 import portalocker
 
 SESSION_TTL = timedelta(hours=12)
 PASSWORD_ITERATIONS = 200_000
 RequestStatus = Literal["pending", "approved", "rejected"]
+
+
+class AuthPayload(TypedDict):
+    users: list[AuthUser]
+    sessions: list[SessionRecord]
+    requests: list[AccountRequest]
 
 
 @dataclass(frozen=True)
@@ -121,6 +127,18 @@ class AuthStore:
 
     def has_user(self, user_id: str) -> bool:
         return any(user.id == user_id for user in self._read_payload()["users"])
+
+    def delete_user(self, user_id: str) -> bool:
+        payload = self._read_payload()
+        before = len(payload["users"])
+        payload["users"] = [user for user in payload["users"] if user.id != user_id]
+        payload["sessions"] = [
+            session for session in payload["sessions"] if session.user_id != user_id
+        ]
+        deleted = len(payload["users"]) != before
+        if deleted:
+            self._write_payload(payload)
+        return deleted
 
     def create_user(self, *, user_id: str, display_name: str, password: str, active: bool = True) -> None:
         self.create_user_with_hash(
@@ -240,7 +258,7 @@ class AuthStore:
         self._write_payload(payload)
         return decided
 
-    def _read_payload(self) -> dict[str, list[AuthUser] | list[SessionRecord] | list[AccountRequest]]:
+    def _read_payload(self) -> AuthPayload:
         if not self._path.exists():
             return {"users": [], "sessions": [], "requests": []}
         raw = self._path.read_text(encoding="utf-8")
@@ -255,14 +273,14 @@ class AuthStore:
 
     def _write_payload(
         self,
-        payload: dict[str, list[AuthUser] | list[SessionRecord] | list[AccountRequest]],
+        payload: AuthPayload,
     ) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         rendered = {
-            "users": [user.to_dict() for user in payload["users"]],  # type: ignore[union-attr]
-            "sessions": [session.to_dict() for session in payload["sessions"]],  # type: ignore[union-attr]
+            "users": [user.to_dict() for user in payload["users"]],
+            "sessions": [session.to_dict() for session in payload["sessions"]],
             "requests": [
-                request.to_dict(include_password_hash=True) for request in payload["requests"]  # type: ignore[union-attr]
+                request.to_dict(include_password_hash=True) for request in payload["requests"]
             ],
         }
         with portalocker.Lock(self._path, "w", encoding="utf-8", timeout=5) as fh:

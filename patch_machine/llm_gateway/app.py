@@ -29,7 +29,7 @@ class GatewayMessage(BaseModel):
 
 
 class GatewayChatRequest(BaseModel):
-    provider: Literal["openai", "anthropic", "gemini", "vllm"]
+    provider: Literal["openai", "anthropic", "gemini", "together", "vllm"]
     route: Literal["cloud", "local"] = "cloud"
     messages: list[GatewayMessage]
     temperature: float = 0.0
@@ -104,6 +104,10 @@ def _provider_for(settings: Settings, secret_store: SecretStore, provider: str) 
         if not api_key:
             raise ValueError("Gemini API key is not configured")
         return GeminiProvider(api_key=api_key, model=model, base_url=base_url)
+    if provider == "together":
+        if not api_key:
+            raise ValueError("Together API key is not configured")
+        return OpenAiProvider(api_key=api_key, model=model, base_url=base_url)
     return VllmProvider(base_url=base_url, model=model, api_key=api_key or "EMPTY")
 
 
@@ -114,6 +118,8 @@ def _settings_api_key(settings: Settings, provider: str) -> str:
         return settings.llm.anthropic_api_key
     if provider == "gemini":
         return settings.llm.gemini_api_key
+    if provider == "together":
+        return settings.llm.together_api_key
     return ""
 
 
@@ -126,10 +132,14 @@ def _model(settings: Settings, provider: str, saved_model: str) -> str:
         return settings.llm.anthropic_model
     if provider == "gemini":
         return settings.llm.gemini_model
+    if provider == "together":
+        return settings.llm.together_model
     return settings.llm.vllm_model
 
 
 def _base_url(settings: Settings, provider: str, saved_base_url: str) -> str:
+    if provider == "together":
+        return (saved_base_url or settings.llm.together_base_url).rstrip("/")
     if provider == "vllm" and saved_base_url:
         return saved_base_url.rstrip("/")
     return default_base_url(provider, vllm_base_url=settings.llm.vllm_base_url)

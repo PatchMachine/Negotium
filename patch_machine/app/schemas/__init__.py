@@ -2,6 +2,7 @@
 
 from patch_machine.app.schemas.core import (
     AccountRequestPayload,
+    AdminCreateUserPayload,
     AgentPlanRequest,
     ApiKeyPayload,
     ApiStatusPayload,
@@ -12,6 +13,7 @@ from patch_machine.app.schemas.core import (
     ContextCompressRequest,
     CurrentUserPayload,
     DeletionRequestPayload,
+    DepartmentPayload,
     GeneratedDocumentPayload,
     HandoverRequest,
     HiringRequest,
@@ -30,6 +32,7 @@ from patch_machine.app.schemas.core import (
     PatchRunApprovalPayload,
     PatchRunCreatePayload,
     PatchRunPayload,
+    PositionPayload,
     ProgressPayload,
     PromoteMemoryPayload,
     ProviderModelPayload,
@@ -41,6 +44,7 @@ from patch_machine.app.schemas.core import (
     VolatileMemoryPayload,
     WorkArchitecturePayload,
     WorkArchitectureRequest,
+    WorkItemSignOffPayload,
     WorkItemsPayload,
     WorkMemoryPayload,
     WorkScheduleGenerationRequest,
@@ -58,6 +62,7 @@ from patch_machine.app.schemas.issue_memory import (
 
 __all__ = [
     "AccountRequestPayload",
+    "AdminCreateUserPayload",
     "AgentPlanRequest",
     "ApiKeyPayload",
     "ApiStatusPayload",
@@ -69,6 +74,7 @@ __all__ = [
     "ContextCompressRequest",
     "CurrentUserPayload",
     "DeletionRequestPayload",
+    "DepartmentPayload",
     "GeneratedDocumentPayload",
     "HandoverRequest",
     "HiringRequest",
@@ -91,6 +97,7 @@ __all__ = [
     "PatchRunApprovalPayload",
     "PatchRunCreatePayload",
     "PatchRunPayload",
+    "PositionPayload",
     "ProgressPayload",
     "PromoteMemoryPayload",
     "ProviderModelPayload",
@@ -104,6 +111,7 @@ __all__ = [
     "VolatileMemoryPayload",
     "WorkArchitecturePayload",
     "WorkArchitectureRequest",
+    "WorkItemSignOffPayload",
     "WorkItemsPayload",
     "WorkMemoryPayload",
     "WorkScheduleGenerationRequest",

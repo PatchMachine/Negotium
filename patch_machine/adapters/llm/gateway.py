@@ -13,7 +13,12 @@ from dataclasses import dataclass
 
 from patch_machine.archive.llm_runtime import LlmProviderName
 from patch_machine.domain.entities import LlmRoute
-from patch_machine.domain.ports import LlmMessage, LlmProvider, LlmResponse
+from patch_machine.domain.ports import (
+    LlmMessage,
+    LlmProvider,
+    LlmResponse,
+    flatten_message_text,
+)
 from patch_machine.observability import get_logger
 
 _SECRET_PATTERNS = (
@@ -97,7 +102,8 @@ class LlmGateway(LlmProvider):
     @staticmethod
     def _needs_local(messages: Sequence[LlmMessage]) -> bool:
         for message in messages:
+            text = flatten_message_text(message.content)
             for pattern in _SECRET_PATTERNS:
-                if pattern.search(message.content):
+                if pattern.search(text):
                     return True
         return False

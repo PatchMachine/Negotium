@@ -26,7 +26,12 @@ from datetime import UTC, datetime
 from typing import Any, Literal, Protocol, cast
 
 from patch_machine.domain.entities import LlmRoute
-from patch_machine.domain.ports import LlmMessage, LlmProvider, LlmResponse
+from patch_machine.domain.ports import (
+    LlmMessage,
+    LlmProvider,
+    LlmResponse,
+    flatten_message_text,
+)
 from patch_machine.observability import get_logger
 
 
@@ -188,7 +193,7 @@ class VllmEmbeddedProvider(LlmProvider):
     ) -> LlmResponse:
         bundle = await asyncio.to_thread(self._ensure_engine)
         prompt = bundle.tokenizer.apply_chat_template(
-            [{"role": m.role, "content": m.content} for m in messages],
+            [{"role": m.role, "content": flatten_message_text(m.content)} for m in messages],
             tokenize=False,
             add_generation_prompt=True,
         )

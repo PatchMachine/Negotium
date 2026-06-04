@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
+  deleteMemorySource,
   fetchConversations,
+  fetchCurrentUser,
   fetchDeletionRequests,
-  fetchMemorySchema,
   fetchOperationsMemory,
   fetchPermanentMemory,
   fetchVolatileMemories,
@@ -51,15 +52,13 @@ const emptyWork: WorkMemory = {
 };
 
 export default function WorkMemoryPage() {
-  const [section, setSection] = useState<'edit' | 'lookup' | 'summary' | 'cache'>('edit');
+  const [section, setSection] = useState<'edit' | 'lookup' | 'summary' | 'governance' | 'cache'>('edit');
   const [editMode, setEditMode] = useState<'permanent' | 'volatile'>('permanent');
   const [operations, setOperations] = useState<OperationsMemory>(emptyOperations);
   const [work, setWork] = useState<WorkMemory>(emptyWork);
   const [sources, setSources] = useState<PermanentMemorySource[]>([]);
   const [volatileMemories, setVolatileMemories] = useState<VolatileMemory[]>([]);
   const [conversations, setConversations] = useState<ConversationRecord[]>([]);
-  const [schemas, setSchemas] = useState<Array<Record<string, unknown>>>([]);
-  const [schemaProposals, setSchemaProposals] = useState<Array<Record<string, unknown>>>([]);
   const [deletionRequests, setDeletionRequests] = useState<DeletionRequest[]>([]);
   const [query, setQuery] = useState('');
   const [message, setMessage] = useState('');
@@ -67,31 +66,31 @@ export default function WorkMemoryPage() {
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
   const [selectedKind, setSelectedKind] = useState<MemoryKindFilter>('all');
   const [readableBundle, setReadableBundle] = useState<ReadableContextBundle | null>(null);
+  const [canDeleteSources, setCanDeleteSources] = useState(false);
   const queryRef = useRef(query);
   queryRef.current = query;
 
   const refreshAdminMemory = useCallback(async () => {
     const q = queryRef.current;
-    const [permanent, volatilePayload, conversationPayload, schemaPayload, deletions] = await Promise.all([
+    const [permanent, volatilePayload, conversationPayload, deletions] = await Promise.all([
       fetchPermanentMemory(q),
       fetchVolatileMemories(),
       fetchConversations(),
-      fetchMemorySchema(),
-      fetchDeletionRequests(),
+      fetchDeletionRequests().catch(() => ({ requests: [] })),
     ]);
     setSources(permanent.sources);
     setVolatileMemories(volatilePayload.memories);
     setConversations(conversationPayload.records);
-    setSchemas(schemaPayload.schemas);
-    setSchemaProposals(schemaPayload.proposals);
     setDeletionRequests(deletions.requests);
   }, []);
 
   useEffect(() => {
-    Promise.all([fetchOperationsMemory(), fetchWorkMemory(), refreshAdminMemory()])
-      .then(([nextOperations, nextWork]) => {
+    Promise.all([fetchOperationsMemory(), fetchWorkMemory(), refreshAdminMemory(), fetchCurrentUser().catch(() => null)])
+      .then(([nextOperations, nextWork, , me]) => {
         setOperations(nextOperations);
         setWork(nextWork);
+        const permissions = me?.authenticated && me.user ? me.user.permissions || [] : [];
+        setCanDeleteSources(permissions.includes('*') || permissions.includes('admin:users'));
       })
       .catch((err) => setMessage(err instanceof Error ? err.message : '메모리 로드 실패'));
   }, [refreshAdminMemory]);
@@ -101,6 +100,21 @@ export default function WorkMemoryPage() {
     setOperations(savedOperations);
     setWork(savedWork);
     setMessage('메모리를 저장했습니다.');
+  }
+
+  async function deleteSourceNow(source: Pick<PermanentMemorySource, 'id' | 'title'>) {
+    try {
+      const result = await deleteMemorySource(source.id);
+      setSelectedSourceIds((current) => current.filter((id) => id !== source.id));
+      setMessage(
+        result.physical_deleted === false
+          ? `원본 보호 항목이라 AI 메모리 목록에서 숨김 처리했습니다: ${source.title}`
+          : `즉시 삭제했습니다: ${source.title}`,
+      );
+      await refreshAdminMemory();
+    } catch (err) {
+      setMessage(err instanceof Error ? `즉시 삭제 실패: ${err.message}` : '즉시 삭제 실패');
+    }
   }
 
   function toggleSource(id: string, checked: boolean) {
@@ -115,24 +129,60 @@ export default function WorkMemoryPage() {
 
   const filteredSources = selectedKind === 'all' ? sources : sources.filter((source) => source.kind === selectedKind);
   const currentKindSourceIds = filteredSources.map((source) => source.id);
+  const pendingDeletionCount = deletionRequests.filter((request) => request.status === 'pending').length;
   const sectionItems: Array<{ id: typeof section; label: string }> = [
     { id: 'edit', label: '메모리 수정' },
     { id: 'lookup', label: '패치머신 영구메모리 조회' },
     { id: 'summary', label: 'AI 가독 정보 요약' },
-    { id: 'cache', label: '캐시·스키마' },
+    { id: 'governance', label: `삭제 요청 승인${pendingDeletionCount ? ` (${pendingDeletionCount})` : ''}` },
+    { id: 'cache', label: '캐시 관리' },
   ];
 
   return (
-    <section className="work-memory-layout">
+    <section className="page-workspace work-memory-layout">
+      <div className="workspace-hero">
+        <div className="panel">
+          <p className="eyebrow">Memory workspace</p>
+          <h2>메모리 관리</h2>
+          <p className="muted">
+            수정, 영구메모리 조회, AI 가독 요약, 삭제 요청 승인, 캐시 관리를 분리해 필요한 작업 영역만 펼쳐 봅니다.
+          </p>
+          {pendingDeletionCount ? (
+            <button type="button" className="secondary-button" onClick={() => setSection('governance')}>
+              삭제 요청 {pendingDeletionCount}건 승인하러 가기
+            </button>
+          ) : null}
+          {message ? <p className="status-pill success">{message}</p> : null}
+        </div>
+        <div className="compact-stat-strip">
+          <div className="compact-stat">
+            <strong>{sources.length}</strong>
+            <span>Permanent</span>
+          </div>
+          <div className="compact-stat">
+            <strong>{selectedSourceIds.length}</strong>
+            <span>Selected</span>
+          </div>
+          <div className="compact-stat">
+            <strong>{volatileMemories.length}</strong>
+            <span>Volatile</span>
+          </div>
+          <div className="compact-stat">
+            <strong>{pendingDeletionCount}</strong>
+            <span>Pending delete</span>
+          </div>
+        </div>
+      </div>
+
       <div className="work-memory-toolbar">
-        <div className="segmented-control memory-section-tabs" role="tablist" aria-label="패치머신 메모리 관리 메뉴">
+        <div className="workspace-tabs" role="tablist" aria-label="패치머신 메모리 관리 메뉴">
           {sectionItems.map((item) => (
             <button
               key={item.id}
               type="button"
               role="tab"
               aria-selected={section === item.id}
-              className={section === item.id ? 'segment active' : 'segment'}
+              className={section === item.id ? 'workspace-tab active' : 'workspace-tab'}
               onClick={() => setSection(item.id)}
             >
               {item.label}
@@ -144,7 +194,7 @@ export default function WorkMemoryPage() {
         </button>
       </div>
 
-      <div className="page-grid work-memory-grid">
+      <div className="work-memory-grid">
         {section === 'edit' ? (
           <WorkMemoryEditSection
             mode={editMode}
@@ -179,6 +229,8 @@ export default function WorkMemoryPage() {
                 reason: '관리자 요청',
               }).then(() => refreshAdminMemory())
             }
+            canDeleteImmediately={canDeleteSources}
+            onDeleteSource={(source) => void deleteSourceNow(source)}
           />
         ) : null}
 
@@ -200,28 +252,32 @@ export default function WorkMemoryPage() {
                   reason: '관리자 요청',
                 }).then(() => refreshAdminMemory())
               }
+              canDeleteImmediately={canDeleteSources}
+              onDeleteSource={(source) => void deleteSourceNow(source)}
             />
-            <ContextCompressPanel
-              query={query}
-              selectedSourceIds={selectedSourceIds}
-              fallbackSourceIds={currentKindSourceIds}
-              readableBundle={readableBundle}
-              onMessage={setMessage}
-              onAfterCompress={() => refreshAdminMemory()}
-            />
+            <details className="advanced-panel" open>
+              <summary>AI 요약 실행 패널</summary>
+              <ContextCompressPanel
+                query={query}
+                selectedSourceIds={selectedSourceIds}
+                fallbackSourceIds={currentKindSourceIds}
+                readableBundle={readableBundle}
+                onMessage={setMessage}
+                onAfterCompress={() => refreshAdminMemory()}
+              />
+            </details>
           </>
         ) : null}
 
+        {section === 'governance' ? (
+          <MemoryGovernancePanel
+            deletionRequests={deletionRequests}
+            onRefresh={() => void refreshAdminMemory()}
+          />
+        ) : null}
+
         {section === 'cache' ? (
-          <>
-            <VolatileMemoriesPanel memories={volatileMemories} onAfterChange={() => void refreshAdminMemory()} />
-            <MemoryGovernancePanel
-              schemas={schemas}
-              schemaProposals={schemaProposals}
-              deletionRequests={deletionRequests}
-              onRefresh={() => void refreshAdminMemory()}
-            />
-          </>
+          <VolatileMemoriesPanel memories={volatileMemories} onAfterChange={() => void refreshAdminMemory()} />
         ) : null}
       </div>
 

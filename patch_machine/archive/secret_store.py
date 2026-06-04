@@ -61,7 +61,7 @@ class SecretStore:
 
     def list_masked(self) -> list[dict[str, object]]:
         payload = self._read_payload()
-        providers = ["openai", "anthropic", "gemini", "vllm"]
+        providers = ["openai", "anthropic", "gemini", "together", "vllm"]
         return [
             {
                 "provider": provider,

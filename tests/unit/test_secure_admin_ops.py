@@ -4,8 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from patch_machine.app.reset_state import reset_system_state
-from patch_machine.archive.access_control import AccessControlStore, UserRecord
+from patch_machine.archive.access_control import (
+    AccessControlStore,
+    DepartmentRecord,
+    PositionRecord,
+    UserRecord,
+)
 from patch_machine.archive.agent_execution import AgentExecutionStore, AgentPlan
 from patch_machine.archive.audit_log import AuditLogStore
 from patch_machine.archive.auth_store import AuthStore
@@ -29,16 +36,30 @@ def test_secret_store_masks_and_round_trips(archive_tmp: Path) -> None:
     store = SecretStore(archive_tmp, master_key="test-master-key")
 
     store.upsert(ApiKeyRecord(provider="openai", api_key="sk-test-1234567890", model="gpt-x"))
+    store.upsert(
+        ApiKeyRecord(
+            provider="together",
+            api_key="tog-test-1234567890",
+            model="openai/gpt-oss-20b",
+        )
+    )
 
     listed = store.list_masked()
     openai = next(item for item in listed if item["provider"] == "openai")
+    together = next(item for item in listed if item["provider"] == "together")
     assert openai["configured"] is True
     assert openai["masked_value"] == "sk-t...7890"
+    assert together["configured"] is True
+    assert together["model"] == "openai/gpt-oss-20b"
     assert store.read("openai").api_key == "sk-test-1234567890"  # type: ignore[union-attr]
+    assert store.read("together").api_key == "tog-test-1234567890"  # type: ignore[union-attr]
 
 
 def test_access_control_blocks_viewer_from_admin_permissions(archive_tmp: Path) -> None:
     store = AccessControlStore(archive_tmp)
+    store.upsert_user(
+        UserRecord(id="owner", display_name="시스템 관리자", title="대표", role_id="owner")
+    )
     store.upsert_user(
         UserRecord(id="viewer1", display_name="Viewer", title="사원", role_id="viewer")
     )
@@ -47,6 +68,68 @@ def test_access_control_blocks_viewer_from_admin_permissions(archive_tmp: Path) 
     assert store.has_permission("owner", "admin:api_keys") is True
     assert store.has_permission("viewer1", "admin:api_keys") is False
     assert store.has_permission("viewer1", "work:read") is True
+
+
+def test_access_control_restores_owner_when_admin_lockout_was_written(archive_tmp: Path) -> None:
+    store = AccessControlStore(archive_tmp)
+    store.upsert_user(
+        UserRecord(id="owner", display_name="시스템 관리자", title="대표", role_id="staff")
+    )
+
+    payload = store.read()
+    owner = next(user for user in payload["users"] if user["id"] == "owner")
+
+    assert owner["role_id"] == "owner"
+    assert owner["active"] is True
+    assert store.has_permission("owner", "admin:users") is True
+
+
+def test_access_control_org_structure_round_trip(archive_tmp: Path) -> None:
+    store = AccessControlStore(archive_tmp)
+
+    store.upsert_department(DepartmentRecord(id="eng", name="엔지니어링"))
+    store.upsert_department(DepartmentRecord(id="backend", name="백엔드팀", parent_id="eng"))
+    store.upsert_position(PositionRecord(id="lead", name="팀장", level=80, description="팀 리드"))
+    store.upsert_user(
+        UserRecord(
+            id="dev1",
+            display_name="개발자",
+            title="시니어",
+            role_id="staff",
+            department="backend",
+            position_id="lead",
+        )
+    )
+
+    snapshot = store.read()
+    departments = {dept["id"]: dept for dept in snapshot["departments"]}
+    assert departments["backend"]["parent_id"] == "eng"
+    assert snapshot["positions"][0]["id"] == "lead"
+    user = next(item for item in snapshot["users"] if item["id"] == "dev1")
+    assert user["department"] == "backend"
+    assert user["position_id"] == "lead"
+
+    # Deleting a parent re-parents its children to the root instead of orphaning them.
+    store.delete_department("eng")
+    after = {dept["id"]: dept for dept in store.read()["departments"]}
+    assert "eng" not in after
+    assert after["backend"]["parent_id"] == ""
+
+    store.delete_position("lead")
+    assert store.read()["positions"] == []
+
+
+def test_access_control_rejects_department_cycles(archive_tmp: Path) -> None:
+    store = AccessControlStore(archive_tmp)
+    store.upsert_department(DepartmentRecord(id="a", name="A"))
+    store.upsert_department(DepartmentRecord(id="b", name="B", parent_id="a"))
+
+    with pytest.raises(ValueError):
+        store.upsert_department(DepartmentRecord(id="a", name="A", parent_id="a"))
+    with pytest.raises(ValueError):
+        store.upsert_department(DepartmentRecord(id="a", name="A", parent_id="b"))
+    with pytest.raises(ValueError):
+        store.upsert_department(DepartmentRecord(id="c", name="C", parent_id="missing"))
 
 
 def test_auth_store_setup_login_sessions_and_account_requests(archive_tmp: Path) -> None:
@@ -70,6 +153,19 @@ def test_auth_store_setup_login_sessions_and_account_requests(archive_tmp: Path)
     assert decided.status == "approved"
     store.revoke_token(token)
     assert store.resolve_token(token) is None
+
+
+def test_auth_store_delete_user_removes_login_and_sessions(archive_tmp: Path) -> None:
+    store = AuthStore(archive_tmp)
+    store.create_user(user_id="staff1", display_name="Staff", password="password-1234")
+    token = store.authenticate("staff1", "password-1234")
+
+    assert token is not None
+    assert store.has_user("staff1") is True
+    assert store.delete_user("staff1") is True
+    assert store.has_user("staff1") is False
+    assert store.resolve_token(token) is None
+    assert store.delete_user("staff1") is False
 
 
 def test_audit_log_store_appends_recent_records(archive_tmp: Path) -> None:

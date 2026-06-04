@@ -59,11 +59,6 @@ export default function WorkMemoryEditSection({
             onChange={(e) => setOperations({ ...operations, company_name: e.target.value })}
           />
           <textarea
-            placeholder="조직 구조"
-            value={operations.organization}
-            onChange={(e) => setOperations({ ...operations, organization: e.target.value })}
-          />
-          <textarea
             placeholder="핵심 업무 흐름"
             value={operations.key_workflows}
             onChange={(e) => setOperations({ ...operations, key_workflows: e.target.value })}

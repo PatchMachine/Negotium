@@ -38,8 +38,9 @@ export default function OperationsMemoryForm({ disabled, memory, onSaved }: Prop
         <p className="eyebrow">Operations Memory</p>
         <h2>패치머신 영구메모리 (대시보드)</h2>
         <p>
-          조직 구조, 역할, 업무 도구, 민감정보 정책까지 저장합니다. 이 설정은 채용,
-          인수인계, 문서 자동화, LLM 채팅의 기본 컨텍스트가 됩니다.
+          회사 이름, 진행 계획, 핵심 업무 흐름, 사용 도구, 민감정보 정책을 저장합니다. 이 설정은 채용,
+          인수인계, 문서 자동화, LLM 채팅의 기본 컨텍스트가 됩니다. 조직 구조(부서·직급·직원 배정)는
+          인사관리 화면에서 별도로 관리합니다.
         </p>
       </div>
 
@@ -71,36 +72,6 @@ export default function OperationsMemoryForm({ disabled, memory, onSaved }: Prop
             value={draft.active_plan}
             placeholder="예: 이번 달은 고객 환불 중복 처리와 운영 로그 정리를 우선한다."
             onChange={(event) => setDraft({ ...draft, active_plan: event.target.value })}
-          />
-        </label>
-
-        <label>
-          조직 구조
-          <textarea
-            disabled={disabled || saving}
-            value={draft.organization}
-            placeholder="예: 대표-관리팀-생산팀-영업팀 구조, 주요 의사결정 라인"
-            onChange={(event) => setDraft({ ...draft, organization: event.target.value })}
-          />
-        </label>
-
-        <label>
-          부서/팀
-          <textarea
-            disabled={disabled || saving}
-            value={draft.departments}
-            placeholder="예: 관리팀, 물류팀, 생산팀, 영업팀"
-            onChange={(event) => setDraft({ ...draft, departments: event.target.value })}
-          />
-        </label>
-
-        <label>
-          주요 역할/직무
-          <textarea
-            disabled={disabled || saving}
-            value={draft.roles}
-            placeholder="예: 문서 자동화 담당, 회계 담당, Discord 문서 접수 담당"
-            onChange={(event) => setDraft({ ...draft, roles: event.target.value })}
           />
         </label>
 

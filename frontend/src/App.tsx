@@ -17,12 +17,13 @@ import ContributorGuide from './components/ContributorGuide';
 import DocumentAutomationPage from './components/DocumentAutomationPage';
 import DocumentsViewerPage from './components/DocumentsViewerPage';
 import HandoverPage from './components/HandoverPage';
-import HrEvaluationPage from './components/HrEvaluationPage';
 import HiringPage from './components/HiringPage';
 import HomePage from './components/HomePage';
 import IntegrationsPage from './components/IntegrationsPage';
+import LlmChatPage from './components/LlmChatPage';
 import OperationsMemoryForm from './components/OperationsMemoryForm';
 import PatchRecordsPage from './components/PatchRecordsPage';
+import PersonnelManagementPage from './components/PersonnelManagementPage';
 import ProgressLogPage from './components/ProgressLogPage';
 import SystemStatus from './components/SystemStatus';
 import TokenLimitsPage from './components/TokenLimitsPage';
@@ -32,6 +33,8 @@ import WorkArchitecturePage from './components/WorkArchitecturePage';
 import WorkItemsPage from './components/WorkItemsPage';
 import WorkMemoryPage from './components/WorkMemoryPage';
 import WorkSchedulePage from './components/WorkSchedulePage';
+import SkillsPage from './components/SkillsPage';
+import WorkflowStatusPage from './components/WorkflowStatusPage';
 import AiAgentPage from './components/ai/AiAgentPage';
 import InitialOfficeSetupWizard, { hasIncompleteInitialSetupDraft } from './components/setup/InitialOfficeSetupWizard';
 
@@ -52,6 +55,8 @@ type Page =
   | 'profile'
   | 'dashboard'
   | 'chat'
+  | 'assistant'
+  | 'skills'
   | 'progress'
   | 'work'
   | 'work-memory'
@@ -65,33 +70,37 @@ type Page =
   | 'uploads'
   | 'admin'
   | 'access'
+  | 'workflow-status'
   | 'token-limits'
   | 'patch-records'
-  | 'hr-evaluation';
+  | 'personnel';
 
 type NavItem = { id: Page; label: string; group: string; requiredPermission?: string };
 
 const navItems: NavItem[] = [
   { id: 'home', label: '홈', group: '사이트' },
   { id: 'profile', label: '유저 프로필', group: '사이트' },
-  { id: 'dashboard', label: '회사 운영 설정', group: '회사 업무 운영' },
   { id: 'work', label: '업무 현황', group: '회사 업무 운영' },
-  { id: 'work-architecture', label: '업무 아키텍처', group: '회사 업무 운영' },
-  { id: 'work-schedule', label: '작업 스케줄', group: '회사 업무 운영' },
+  { id: 'work-architecture', label: '프로세스 설계', group: '회사 업무 운영', requiredPermission: 'memory:write' },
   { id: 'progress', label: '진행 로그', group: '회사 업무 운영' },
-  { id: 'work-memory', label: '패치머신 메모리', group: '패치머신 메모리 관리' },
-  { id: 'chat', label: 'AI 에이전트 실행계획', group: 'AI 에이전트' },
+  { id: 'work-memory', label: '패치머신 메모리', group: '패치머신 메모리 관리', requiredPermission: 'memory:write' },
+  { id: 'assistant', label: 'AI 어시스턴트', group: 'AI 에이전트', requiredPermission: 'llm:chat' },
+  { id: 'chat', label: 'AI 개발 도우미', group: 'AI 에이전트' },
+  { id: 'skills', label: '스킬 실행', group: 'AI 에이전트', requiredPermission: 'work:read' },
   { id: 'hiring', label: '채용/면접', group: '오피스워크' },
+  { id: 'work-schedule', label: '업무 배정', group: '오피스워크', requiredPermission: 'memory:write' },
   { id: 'documents', label: '문서 자동화', group: '오피스워크' },
   { id: 'documents-viewer', label: '문서 열람', group: '오피스워크', requiredPermission: 'documents:read' },
   { id: 'handover', label: '인수인계', group: '오피스워크' },
-  { id: 'patch-records', label: '코딩 패치 기록', group: '오피스워크', requiredPermission: 'patch_records:read' },
-  { id: 'uploads', label: '업로드', group: '관리', requiredPermission: 'uploads:write' },
-  { id: 'admin', label: 'API 키·로컬 에이전트', group: '관리', requiredPermission: 'admin:api_keys' },
-  { id: 'access', label: '권한 관리', group: '관리', requiredPermission: 'admin:users' },
-  { id: 'integrations', label: 'MCP 서버 연동', group: '관리', requiredPermission: 'admin:mcp' },
-  { id: 'token-limits', label: '토큰 사용량·한도', group: '관리', requiredPermission: 'admin:token_limits' },
-  { id: 'hr-evaluation', label: '인사평가', group: '관리', requiredPermission: 'admin:hr_evaluation' },
+  { id: 'patch-records', label: 'AI 개발 기록', group: '오피스워크', requiredPermission: 'patch_records:read' },
+  { id: 'dashboard', label: '회사 운영 설정', group: '조직·운영 관리', requiredPermission: 'memory:write' },
+  { id: 'personnel', label: '인사관리', group: '조직·운영 관리', requiredPermission: 'admin:users' },
+  { id: 'access', label: '권한 관리', group: '조직·운영 관리', requiredPermission: 'admin:users' },
+  { id: 'uploads', label: '업로드', group: '시스템 관리', requiredPermission: 'uploads:write' },
+  { id: 'admin', label: 'API 키·로컬 에이전트', group: '시스템 관리', requiredPermission: 'admin:api_keys' },
+  { id: 'workflow-status', label: '워크플로우 상태', group: '시스템 관리', requiredPermission: 'admin:users' },
+  { id: 'integrations', label: 'MCP 서버 연동', group: '시스템 관리', requiredPermission: 'admin:mcp' },
+  { id: 'token-limits', label: '토큰 사용량·한도', group: '시스템 관리', requiredPermission: 'admin:token_limits' },
 ];
 
 function canAccess(user: AuthUser, item: NavItem): boolean {
@@ -211,6 +220,7 @@ export default function App() {
           <ContributorGuide />
         </>
       ) : null}
+      {page === 'assistant' ? <LlmChatPage /> : null}
       {page === 'chat' ? <AiAgentPage /> : null}
       {page === 'progress' ? <ProgressLogPage /> : null}
       {page === 'work' ? <WorkItemsPage /> : null}
@@ -225,9 +235,11 @@ export default function App() {
       {page === 'uploads' ? <UploadPage /> : null}
       {page === 'admin' ? <AdminSettingsPage /> : null}
       {page === 'access' ? <AccessControlPage /> : null}
+      {page === 'workflow-status' ? <WorkflowStatusPage /> : null}
+      {page === 'skills' ? <SkillsPage /> : null}
       {page === 'token-limits' ? <TokenLimitsPage /> : null}
       {page === 'patch-records' ? <PatchRecordsPage /> : null}
-      {page === 'hr-evaluation' ? <HrEvaluationPage /> : null}
+      {page === 'personnel' ? <PersonnelManagementPage /> : null}
     </AppShell>
   );
 }

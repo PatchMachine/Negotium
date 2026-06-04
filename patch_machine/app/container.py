@@ -44,6 +44,7 @@ from patch_machine.archive.patch_execution import PatchExecutionStore
 from patch_machine.archive.patch_records import PatchRecordStore
 from patch_machine.archive.patch_runs import PatchRunStore
 from patch_machine.archive.permanent_memory import PermanentMemoryStore
+from patch_machine.archive.process_plans import ProcessPlanStore
 from patch_machine.archive.secret_store import SecretStore
 from patch_machine.archive.token_usage import TokenUsageStore
 from patch_machine.archive.uploads import UploadStore
@@ -89,6 +90,7 @@ class Container:
     volatile_memory: VolatileMemoryStore
     work_memory: WorkMemoryStore
     work_schedule: WorkScheduleStore
+    process_plans: ProcessPlanStore
     llm: LlmProvider
     graph: AgentGraph
     discord: DiscordBotAdapter
@@ -142,6 +144,7 @@ class Container:
         volatile_memory = VolatileMemoryStore(settings.archive_dir)
         work_memory = WorkMemoryStore(settings.archive_dir)
         work_schedule = WorkScheduleStore(settings.archive_dir)
+        process_plans = ProcessPlanStore(settings.archive_dir)
         repo_snapshot = RepoSnapshotService(settings.workspace_dir)
         retriever = MarkdownRetriever(
             archive_root=settings.archive_dir,
@@ -221,6 +224,7 @@ class Container:
             volatile_memory=volatile_memory,
             work_memory=work_memory,
             work_schedule=work_schedule,
+            process_plans=process_plans,
             llm=llm,
             graph=graph,
             discord=discord,
@@ -268,6 +272,12 @@ class Container:
             cloud_providers["gemini"] = GeminiProvider(
                 api_key=settings.llm.gemini_api_key,
                 model=settings.llm.gemini_model,
+            )
+        if settings.llm.together_api_key or settings.llm.provider == "together":
+            cloud_providers["together"] = OpenAiProvider(
+                api_key=settings.llm.together_api_key,
+                model=settings.llm.together_model,
+                base_url=settings.llm.together_base_url,
             )
 
         cloud = cloud_providers.get(settings.llm.provider) or cloud_providers.get("openai") or fake

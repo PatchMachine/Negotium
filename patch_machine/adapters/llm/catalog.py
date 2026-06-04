@@ -8,7 +8,7 @@ from typing import Literal
 
 import httpx
 
-ProviderName = Literal["openai", "anthropic", "gemini", "vllm"]
+ProviderName = Literal["openai", "anthropic", "gemini", "together", "vllm"]
 
 
 @dataclass(frozen=True)
@@ -62,6 +62,17 @@ PROVIDERS: dict[str, ProviderMetadata] = {
             "gemini-1.5-flash",
         ),
     ),
+    "together": ProviderMetadata(
+        id="together",
+        label="Together AI",
+        default_base_url="https://api.together.ai/v1",
+        fallback_models=(
+            "openai/gpt-oss-20b",
+            "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
+            "meta-llama/Llama-3-8b-chat-hf",
+            "mistralai/Mixtral-8x7B-Instruct-v0.1",
+        ),
+    ),
     "vllm": ProviderMetadata(
         id="vllm",
         label="vLLM / Local HTTP",
@@ -76,6 +87,54 @@ def require_provider(provider: str) -> ProviderMetadata:
         return PROVIDERS[provider]
     except KeyError as exc:
         raise ValueError(f"unsupported LLM provider: {provider}") from exc
+
+
+# Substrings (case-insensitive) that mark a model as image/vision capable.
+_VISION_MODEL_MARKERS: dict[str, tuple[str, ...]] = {
+    "openai": ("gpt-4o", "gpt-4.1", "gpt-5", "gpt-6", "o3", "o4", "vision"),
+    "anthropic": ("claude-3-5", "claude-3-7", "claude-sonnet-4", "claude-opus-4", "claude-haiku-4"),
+    "gemini": ("gemini-1.5", "gemini-2", "gemini-3", "gemini-pro-vision", "flash"),
+    "together": ("llama-3.2", "llava", "vision", "qwen2-vl", "qwen2.5-vl"),
+    "vllm": ("vl", "llava", "vision", "qwen2-vl", "qwen2.5-vl"),
+}
+
+
+def model_supports_vision(provider: str, model: str) -> bool:
+    """Best-effort check whether a provider/model accepts image input.
+
+    This is intentionally conservative: when unsure we return ``False`` so the
+    pipeline falls back to text/OCR rather than sending images a model cannot
+    read. ``vllm`` defaults to text-only unless the model name hints vision.
+    """
+
+    name = (model or "").strip().lower()
+    if not name:
+        return False
+    markers = _VISION_MODEL_MARKERS.get(provider, ())
+    return any(marker in name for marker in markers)
+
+
+# Substrings (case-insensitive) that mark a model as audio-input capable.
+_AUDIO_MODEL_MARKERS: dict[str, tuple[str, ...]] = {
+    "openai": ("gpt-4o-audio", "gpt-4o-realtime", "audio-preview", "gpt-audio"),
+    # Gemini 1.5+/2.x/3.x natively accept inline audio.
+    "gemini": ("gemini-1.5", "gemini-2", "gemini-3", "flash", "pro"),
+    "together": ("audio", "whisper"),
+    "vllm": ("audio", "qwen2-audio", "qwen2.5-omni"),
+}
+
+
+def model_supports_audio(provider: str, model: str) -> bool:
+    """Best-effort check whether a provider/model accepts audio input.
+
+    Anthropic has no audio-input support, so it always returns ``False``.
+    """
+
+    name = (model or "").strip().lower()
+    if not name:
+        return False
+    markers = _AUDIO_MODEL_MARKERS.get(provider, ())
+    return any(marker in name for marker in markers)
 
 
 def default_base_url(provider: str, *, vllm_base_url: str = "") -> str:
@@ -93,7 +152,7 @@ async def list_models(
 ) -> dict[str, object]:
     metadata = require_provider(provider)
     refreshed_at = datetime.now(UTC).isoformat()
-    requires_api_key = provider in {"openai", "anthropic", "gemini"}
+    requires_api_key = provider in {"openai", "anthropic", "gemini", "together"}
     if not api_key and requires_api_key:
         return _fallback_payload(
             metadata,
@@ -115,7 +174,7 @@ async def list_models(
             models = await _gemini_models(
                 api_key=api_key, base_url=base_url or metadata.default_base_url
             )
-        elif provider == "vllm":
+        elif provider in {"together", "vllm"}:
             models = await _openai_compatible_models(
                 base_url=base_url or metadata.default_base_url, api_key=api_key
             )

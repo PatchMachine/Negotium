@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import {
   fetchLlmRuntime,
+  fetchProviderModels,
   saveLlmRuntime,
   type LlmProviderName,
   type LlmRuntime,
@@ -9,7 +10,15 @@ import {
   type LlmTaskRoute,
 } from '../../api';
 
-const PROVIDERS: LlmProviderName[] = ['vllm', 'openai', 'anthropic', 'gemini', 'fake'];
+const PROVIDERS: LlmProviderName[] = ['vllm', 'openai', 'anthropic', 'gemini', 'together', 'fake'];
+
+const LOCAL_MODELS = [
+  'Qwen/Qwen3-4B',
+  'Qwen/Qwen3-8B',
+  'Qwen/Qwen2.5-7B-Instruct',
+  'LGAI-EXAONE/EXAONE-3.5-7.8B-Instruct',
+  'upstage/SOLAR-10.7B-Instruct-v1.0',
+];
 
 const TASKS: Array<{ id: string; label: string; description: string }> = [
   { id: 'memory_summary', label: 'AI 가독 정보 요약', description: '패치머신 영구메모리와 작업 기억을 읽기 좋게 요약' },
@@ -17,7 +26,7 @@ const TASKS: Array<{ id: string; label: string; description: string }> = [
   { id: 'document_generation', label: '문서 자동화', description: '보고서, 회의록, 업무 요청서 등 회사 문서 생성' },
   { id: 'hiring', label: '채용/면접', description: '직무 요구사항, 면접 질문, 온보딩 문서 생성' },
   { id: 'handover', label: '인수인계', description: '담당자 변경 시 업무 맥락과 다음 액션 정리' },
-  { id: 'chat', label: '테스트 채팅', description: '관리자가 LLM 응답과 연결 상태를 시험' },
+  { id: 'chat', label: 'AI 어시스턴트', description: '메모리 기반 실시간 채팅' },
 ];
 
 function defaultTaskRoute(runtime: LlmRuntime): LlmTaskRoute {
@@ -31,6 +40,7 @@ function defaultTaskRoute(runtime: LlmRuntime): LlmTaskRoute {
 export default function LlmTaskRoutingPanel() {
   const [runtime, setRuntime] = useState<LlmRuntime | null>(null);
   const [message, setMessage] = useState('');
+  const [providerModels, setProviderModels] = useState<Record<string, string[]>>({});
 
   async function refresh() {
     try {
@@ -44,23 +54,46 @@ export default function LlmTaskRoutingPanel() {
     void refresh();
   }, []);
 
+  async function ensureProviderModels(provider: LlmProviderName) {
+    if (provider === 'vllm' || providerModels[provider]?.length) return;
+    try {
+      const payload = await fetchProviderModels(provider);
+      setProviderModels((current) => ({ ...current, [provider]: payload.models }));
+    } catch {
+      setProviderModels((current) => ({ ...current, [provider]: [] }));
+    }
+  }
+
   async function updateTask(taskId: string, patch: Partial<LlmTaskRoute>) {
     if (!runtime) return;
     const current = runtime.task_routes?.[taskId] || defaultTaskRoute(runtime);
+    const nextRoute = { ...current, ...patch };
+    if (patch.provider && patch.provider !== current.provider) {
+      void ensureProviderModels(patch.provider);
+    }
     const next: LlmRuntime = {
       ...runtime,
       task_routes: {
         ...(runtime.task_routes || {}),
-        [taskId]: {
-          ...current,
-          ...patch,
-        },
+        [taskId]: nextRoute,
       },
     };
     setRuntime(next);
     const saved = await saveLlmRuntime(next);
     setRuntime(saved);
-    setMessage('작업별 LLM 설정을 저장했습니다.');
+    setMessage('작업별 LLM 설정을 저장했습니다. 선택한 모델이 실제 추론에 반영됩니다.');
+  }
+
+  const localOptions = useMemo(() => {
+    const base = runtime?.local_model ? [runtime.local_model] : [];
+    return [...base, ...LOCAL_MODELS].filter((model, index, arr) => arr.indexOf(model) === index);
+  }, [runtime?.local_model]);
+
+  function modelOptionsFor(route: LlmTaskRoute): string[] {
+    if (route.route === 'local' || route.provider === 'vllm') {
+      return localOptions;
+    }
+    return providerModels[route.provider] || [];
   }
 
   return (
@@ -68,13 +101,14 @@ export default function LlmTaskRoutingPanel() {
       <p className="eyebrow">LLM task routing</p>
       <h2>LLM 작업 설정</h2>
       <p className="muted small">
-        어떤 작업을 로컬 LLM 또는 API LLM 중 어디에 맡길지 정합니다. 회사 기밀이 들어가는 작업은 local/vLLM을 우선으로 둘 수 있습니다.
+        작업별 route·provider·모델을 지정합니다. 모델을 비우면 provider 기본값(또는 로컬 모델 설정)을 사용합니다.
       </p>
       {!runtime ? <p className="muted">설정을 불러오는 중입니다.</p> : null}
       {runtime ? (
         <div className="llm-task-table" role="table" aria-label="작업별 LLM 설정">
           {TASKS.map((task) => {
             const route = runtime.task_routes?.[task.id] || defaultTaskRoute(runtime);
+            const options = modelOptionsFor(route);
             return (
               <div className="llm-task-row" role="row" key={task.id}>
                 <div className="llm-task-copy">
@@ -95,7 +129,12 @@ export default function LlmTaskRoutingPanel() {
                   Provider
                   <select
                     value={route.provider}
-                    onChange={(e) => void updateTask(task.id, { provider: e.target.value as LlmProviderName })}
+                    onFocus={() => void ensureProviderModels(route.provider)}
+                    onChange={(e) => {
+                      const provider = e.target.value as LlmProviderName;
+                      void ensureProviderModels(provider);
+                      void updateTask(task.id, { provider, model: '' });
+                    }}
                   >
                     {PROVIDERS.map((provider) => (
                       <option key={provider} value={provider}>
@@ -105,12 +144,19 @@ export default function LlmTaskRoutingPanel() {
                   </select>
                 </label>
                 <label>
-                  Model memo
-                  <input
-                    placeholder="예: gpt-4.1-mini"
+                  Model
+                  <select
                     value={route.model || ''}
+                    onFocus={() => void ensureProviderModels(route.provider)}
                     onChange={(e) => void updateTask(task.id, { model: e.target.value })}
-                  />
+                  >
+                    <option value="">(기본값 사용)</option>
+                    {options.map((model) => (
+                      <option key={model} value={model}>
+                        {model}
+                      </option>
+                    ))}
+                  </select>
                 </label>
               </div>
             );

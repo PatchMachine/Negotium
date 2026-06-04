@@ -110,3 +110,38 @@ async def test_openai_model_catalog_filters_non_chat_models(
     assert payload["models"] == ["gpt-4.1", "gpt-4o-mini", "o4-mini"]
     assert "babbage-002" not in payload["models"]
     assert "text-embedding-3-large" not in payload["models"]
+
+
+async def test_together_model_catalog_uses_openai_compatible_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        async def __aenter__(self) -> FakeClient:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        async def get(self, url: str, *args: object, **kwargs: object) -> httpx.Response:
+            request = httpx.Request("GET", url)
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "data": [
+                        {"id": "meta-llama/Llama-3-8b-chat-hf"},
+                        {"id": "openai/gpt-oss-20b"},
+                    ]
+                },
+            )
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+
+    payload = await catalog.list_models("together", api_key="test-key")
+
+    assert payload["source"] == "live"
+    assert payload["models"] == ["meta-llama/Llama-3-8b-chat-hf", "openai/gpt-oss-20b"]
+    assert payload["configured"] is True

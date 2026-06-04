@@ -4,7 +4,7 @@
 LLM 에이전트 기반 **AI 오피스워크 / BPA(Business Process Automation) 시스템**입니다.
 
 회사의 업무, 문서, 인수인계, 채용, 진행상황을 AI가 정리하고 굴러가게 돕습니다.
-민감한 사내 내용은 로컬 LLM으로, 일반 생성 업무는 GPT/Claude/Gemini API로 라우팅할 수 있습니다.
+민감한 사내 내용은 로컬 LLM으로, 일반 생성 업무는 GPT/Claude/Gemini/Together API로 라우팅할 수 있습니다.
 모든 추론 과정과 결정 근거는 Markdown 파일로 저장되어(**MD GitOps**) 누구나 메모장으로 읽고 수정할 수 있습니다.
 
 ## 핵심 가치
@@ -82,9 +82,11 @@ PM_VLLM_GPU_MEMORY_UTILIZATION=0.9
 외부에 OpenAI 호환 vLLM 서버를 별도로 띄우고 싶다면 `PM_VLLM_MODE=http`로 두고
 `PM_VLLM_BASE_URL`을 가리키면 됩니다.
 
-GPT, Claude, Gemini API는 각각 `PM_OPENAI_API_KEY`, `PM_ANTHROPIC_API_KEY`,
-`PM_GEMINI_API_KEY`를 설정하면 프론트엔드의 LLM 채팅 탭에서 provider를 바꿔 호출할 수 있습니다.
-API 설정 화면은 OpenAI, Anthropic, Gemini의 모델 목록 API를 호출해 최신 모델을 불러옵니다.
+GPT, Claude, Gemini, Together API는 각각 `PM_OPENAI_API_KEY`, `PM_ANTHROPIC_API_KEY`,
+`PM_GEMINI_API_KEY`, `PM_TOGETHER_API_KEY`를 설정하면 프론트엔드의 LLM 채팅 탭에서 provider를 바꿔 호출할 수 있습니다.
+Together는 OpenAI-compatible 엔드포인트를 사용하며 기본값은 `PM_TOGETHER_BASE_URL=https://api.together.ai/v1`,
+기본 모델은 `PM_TOGETHER_MODEL=openai/gpt-oss-20b`입니다.
+API 설정 화면은 OpenAI, Anthropic, Gemini, Together의 모델 목록 API를 호출해 최신 모델을 불러옵니다.
 아직 키를 저장하지 않은 상태에서도 입력 중인 키로 “모델 목록 확인”을 눌러 live 목록을 확인할 수 있습니다.
 채팅은 `archive/operations_memory.json`, `archive/work_memory.json`, `archive/current_status.md`,
 최근 archive 로그를 컨텍스트로 사용합니다.
@@ -96,7 +98,7 @@ patch-machine llm-gateway --port 8090
 PM_LLM_GATEWAY_URL=http://localhost:8090 patch-machine serve
 ```
 
-게이트웨이는 GPT/Claude/Gemini/vLLM HTTP 호출, 공급자별 모델 목록 조회, API 키 저장소 조회만 담당합니다.
+게이트웨이는 GPT/Claude/Gemini/Together/vLLM HTTP 호출, 공급자별 모델 목록 조회, API 키 저장소 조회만 담당합니다.
 GitHub/Discord 이벤트 처리나 로컬 vLLM 임베드 프리로드 없이 독립적으로 실행됩니다.
 
 ### 로컬 GPU 머신에서 vLLM 임베드 실행
@@ -118,6 +120,8 @@ patch-machine serve
 ## AI 오피스 BPA 기능
 
 - **회사 메모리 엔진**: 조직 구조, 부서, 역할, 핵심 업무 흐름, 사용 도구, 민감정보 정책 저장.
+- **인사관리(조직도/직급/직원 배정)**: `인사관리` 화면에서 부서를 상위 부서(`parent_id`)와 연결한 계층형 조직도로 설계하고, 권한 역할과 분리된 직급(`PositionRecord`)을 정의해 직원에게 부서·직급을 배정합니다. 인사평가는 같은 화면의 하위 탭으로 분리되어 제공됩니다.
+- **권한과 조직의 분리**: 기능 접근 권한은 `권한 관리` 화면의 권한 역할(`RoleRecord`)로, 조직 직급/부서는 `인사관리`에서 별도로 다룹니다. `회사 운영 설정`은 매니저 등급 이상(`memory:write`)만 접근할 수 있습니다.
 - **영구 메모리 원천**: 패치 로그, 감사 로그, 생성 문서, 승격된 메모리, LLM-사용자 대화 JSONL을 검색 가능한 원천 기록으로 유지.
 - **휘발성 작업 메모리**: 영구 메모리와 현재 대화를 LLM이 요약한 전역/사용자/세션별 작업 기억을 `archive/volatile_memory/`에 저장.
 - **컨텍스트 압축**: 긴 영구 원천 기록을 원문 삭제 없이 source refs를 가진 압축 컨텍스트 캐시로 변환.
@@ -199,7 +203,7 @@ docker compose -f docker/docker-compose.yml up --build
 ```
 
 Docker 이미지에는 vLLM/CUDA 스택이 포함되지 않습니다. 컨테이너에서 백엔드를 띄우면
-`PM_VLLM_MODE=http`로 강제되고, 로컬 LLM은 사용하지 않은 채 GPT/Claude/Gemini API
+`PM_VLLM_MODE=http`로 강제되고, 로컬 LLM은 사용하지 않은 채 GPT/Claude/Gemini/Together API
 라우트만 동작합니다. 사내 비공개 모델을 vLLM으로 직접 돌려야 한다면 위의
 "로컬 GPU 머신에서 vLLM 임베드 실행" 절을 따라 호스트에서 실행하세요.
 

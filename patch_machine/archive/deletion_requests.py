@@ -77,6 +77,9 @@ class DeletionRequestStore:
     def list(self) -> list[dict[str, object]]:
         return [request.to_dict() for request in self._read()]
 
+    def get(self, request_id: str) -> DeletionRequest | None:
+        return next((request for request in self._read() if request.id == request_id), None)
+
     def decide(self, request_id: str, *, actor: str, approved: bool) -> DeletionRequest:
         requests = self._read()
         target = next((request for request in requests if request.id == request_id), None)

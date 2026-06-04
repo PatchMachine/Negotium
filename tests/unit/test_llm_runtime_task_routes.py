@@ -40,3 +40,23 @@ def test_runtime_task_routes_sanitize_invalid_values() -> None:
     assert route.route == "api"
     assert route.provider == "anthropic"
     assert route.model == "x"
+
+
+def test_runtime_task_routes_accept_together_provider() -> None:
+    loaded = LlmRuntimeConfig.from_mapping(
+        {
+            "default_route": "api",
+            "default_provider": "together",
+            "task_routes": {
+                "chat": {
+                    "route": "api",
+                    "provider": "together",
+                    "model": "openai/gpt-oss-20b",
+                },
+            },
+        },
+    )
+
+    assert loaded.default_provider == "together"
+    assert loaded.route_for("chat").provider == "together"
+    assert loaded.route_for("chat").model == "openai/gpt-oss-20b"

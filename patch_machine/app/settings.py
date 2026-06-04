@@ -28,7 +28,7 @@ class DiscordSettings(BaseSettings):
 
 class LlmSettings(BaseSettings):
     default_route: Literal["cloud", "local"] = "cloud"
-    provider: Literal["openai", "vllm", "ollama", "anthropic", "gemini", "fake"] = "openai"
+    provider: Literal["openai", "vllm", "ollama", "anthropic", "gemini", "together", "fake"] = "openai"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
     openai_base_url: str = ""
@@ -36,6 +36,9 @@ class LlmSettings(BaseSettings):
     anthropic_model: str = "claude-3-5-sonnet-latest"
     gemini_api_key: str = ""
     gemini_model: str = "gemini-1.5-flash"
+    together_api_key: str = ""
+    together_model: str = "openai/gpt-oss-20b"
+    together_base_url: str = "https://api.together.ai/v1"
     vllm_base_url: str = "http://localhost:8000/v1"
     vllm_model: str = "Qwen/Qwen3-4B"
     vllm_mode: Literal["embedded", "http"] = "embedded"

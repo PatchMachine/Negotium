@@ -137,17 +137,99 @@ def test_llm_chat_uses_operations_memory_context(tmp_path: Path) -> None:
     assert any("청우식품" in message.content for call in fake.calls for message in call)
 
 
+def test_chat_replays_history_and_supports_slash_and_stream(tmp_path: Path) -> None:
+    archive_dir = tmp_path / "archive"
+    container = Container.build(
+        Settings(env="test", archive_dir=archive_dir, workspace_dir=tmp_path / "workspaces")
+    )
+    fake = FakeLlmProvider(
+        responses=[
+            ScriptedResponse(text="첫 번째 응답입니다."),
+            ScriptedResponse(text="두 번째 응답입니다."),
+            ScriptedResponse(text="<!-- patchmachine:format=markdown -->\n슬래시 초안 본문"),
+            ScriptedResponse(text="스트리밍 응답 본문"),
+        ]
+    )
+    container.llm = fake
+    container.llm_runtime.write(
+        LlmRuntimeConfig(
+            default_route="api", default_provider="fake", local_enabled=True, api_enabled=True
+        )
+    )
+    headers = _auth_headers(container)
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/llm/chat",
+            headers=headers,
+            json={"message": "내 이름은 지호야", "route": "api", "provider": "fake"},
+        )
+        second = client.post(
+            "/api/llm/chat",
+            headers=headers,
+            json={"message": "방금 뭐라고 했지?", "route": "api", "provider": "fake"},
+        )
+        skills_help = client.post(
+            "/api/llm/chat",
+            headers=headers,
+            json={"message": "/skills", "route": "api", "provider": "fake"},
+        )
+        slash_run = client.post(
+            "/api/llm/chat",
+            headers=headers,
+            json={
+                "message": "/office.document_draft title=주간보고 이번 주 업무 정리",
+                "route": "api",
+                "provider": "fake",
+            },
+        )
+        stream = client.post(
+            "/api/llm/chat/stream",
+            headers=headers,
+            json={"message": "스트리밍 테스트", "route": "api", "provider": "fake"},
+        )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    # The second call must replay the first turn (user + assistant) into the prompt.
+    second_call_messages = fake.calls[1]
+    replayed = "\n".join(message.content for message in second_call_messages
+                         if isinstance(message.content, str))
+    assert "내 이름은 지호야" in replayed
+    assert "첫 번째 응답입니다." in replayed
+    assert second.json()["used_history"] >= 2
+
+    # /skills returns help without invoking the LLM.
+    assert skills_help.status_code == 200
+    assert "office.document_draft" in skills_help.json()["answer"]
+
+    # Slash command dispatches the skill and reports the result.
+    assert slash_run.status_code == 200
+    slash_body = slash_run.json()
+    assert slash_body["skill_id"] == "office.document_draft"
+    assert slash_body["skill_result"]["status"] == "succeeded"
+
+    # Streaming endpoint emits SSE delta + done events.
+    assert stream.status_code == 200
+    assert "text/event-stream" in stream.headers["content-type"]
+    assert "event: delta" in stream.text
+    assert "event: done" in stream.text
+    assert "스트리밍 응답 본문" in stream.text
+
+
 def test_progress_and_integrations_degrade_without_external_config(tmp_path: Path) -> None:
     container = Container.build(
         Settings(
             env="test", archive_dir=tmp_path / "archive", workspace_dir=tmp_path / "workspaces"
         )
     )
+    headers = _auth_headers(container)
     app = create_app(container)
 
     with TestClient(app) as client:
         progress = client.get("/api/progress")
-        work_items = client.get("/api/work-items")
+        work_items = client.get("/api/work-items", headers=headers)
         github = client.get("/api/integrations/github")
         discord = client.get("/api/integrations/discord")
 
@@ -307,6 +389,126 @@ def test_ai_office_generation_endpoints_write_archive_docs(tmp_path: Path) -> No
     assert document.status_code == 200
     assert document.json()["path"].startswith("documents/")
     assert (archive_dir / hiring.json()["path"]).exists()
+
+
+def test_office_document_generation_falls_back_when_llm_returns_empty(tmp_path: Path) -> None:
+    container = Container.build(
+        Settings(
+            env="test", archive_dir=tmp_path / "archive", workspace_dir=tmp_path / "workspaces"
+        )
+    )
+    container.llm = FakeLlmProvider(responses=[ScriptedResponse(text="", completion_tokens=1600)])
+    container.llm_runtime.write(
+        LlmRuntimeConfig(
+            default_route="api", default_provider="fake", local_enabled=True, api_enabled=True
+        )
+    )
+    headers = _auth_headers(container)
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/documents/generate",
+            headers=headers,
+            json={
+                "document_type": "meeting_minutes",
+                "title": "5월 프로젝트 진행 계획 회의",
+                "source_text": "패치머신 원문 개발 문서 자동화",
+                "audience": "담당자",
+            },
+        )
+
+    assert response.status_code == 200
+    markdown = response.json()["markdown"]
+    assert "LLM 응답 없음" not in markdown
+    assert "로컬 fallback 초안" in markdown
+    assert "패치머신 원문 개발 문서 자동화" in markdown
+
+
+def test_document_generation_honors_format_directive_and_attachment(tmp_path: Path) -> None:
+    archive_dir = tmp_path / "archive"
+    container = Container.build(
+        Settings(env="test", archive_dir=archive_dir, workspace_dir=tmp_path / "workspaces")
+    )
+    container.llm = FakeLlmProvider(
+        responses=[ScriptedResponse(text="<!-- patchmachine:format=csv -->\nname,role\nA,dev")]
+    )
+    container.llm_runtime.write(
+        LlmRuntimeConfig(
+            default_route="api", default_provider="fake", local_enabled=True, api_enabled=True
+        )
+    )
+    headers = _auth_headers(container)
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        upload = client.post(
+            "/api/uploads",
+            headers=headers,
+            files={"file": ("notes.md", b"# memo\nsome content", "text/markdown")},
+            data={"work_title": "attachment test"},
+        )
+        assert upload.status_code == 200
+        upload_id = upload.json()["upload"]["id"]
+
+        response = client.post(
+            "/api/documents/generate",
+            headers=headers,
+            json={
+                "document_type": "report_draft",
+                "title": "표 형식 보고",
+                "source_text": "표로 정리",
+                "audience": "관리팀",
+                "attachment_ids": [upload_id],
+                "output_format": "auto",
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["output_format"] == "csv"
+    assert body["path"].endswith(".csv")
+    assert "name,role" in body["markdown"]
+    assert (archive_dir / body["path"]).exists()
+
+
+def test_skills_endpoints_list_and_run(tmp_path: Path) -> None:
+    container = Container.build(
+        Settings(
+            env="test", archive_dir=tmp_path / "archive", workspace_dir=tmp_path / "workspaces"
+        )
+    )
+    container.llm = FakeLlmProvider(
+        responses=[ScriptedResponse(text="<!-- patchmachine:format=markdown -->\n초안 본문")]
+    )
+    container.llm_runtime.write(
+        LlmRuntimeConfig(
+            default_route="api", default_provider="fake", local_enabled=True, api_enabled=True
+        )
+    )
+    headers = _auth_headers(container)
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        listing = client.get("/api/skills", headers=headers)
+        assert listing.status_code == 200
+        skill_ids = {item["id"] for item in listing.json()["skills"]}
+        assert "office.document_draft" in skill_ids
+
+        run = client.post(
+            "/api/skills/office.document_draft/run",
+            headers=headers,
+            json={"inputs": {"title": "주간 보고", "source_text": "이번 주 진행"}},
+        )
+        assert run.status_code == 200
+        result = run.json()["result"]
+        assert result["status"] == "succeeded"
+        assert result["output_path"]
+
+        missing = client.post(
+            "/api/skills/does.not.exist/run", headers=headers, json={"inputs": {}}
+        )
+        assert missing.status_code == 404
 
 
 def test_work_memory_architecture_and_schedule_endpoints(tmp_path: Path) -> None:
@@ -486,7 +688,38 @@ def test_secure_admin_and_upload_endpoints(tmp_path: Path) -> None:
             headers=headers,
             json={"provider": "openai", "api_key": "sk-test-1234567890", "model": "gpt-test"},
         )
+        together_models = client.get("/api/llm/providers/together/models")
+        saved_together_key = client.put(
+            "/api/admin/api-keys/together",
+            headers=headers,
+            json={
+                "provider": "together",
+                "api_key": "tog-test-1234567890",
+                "model": "openai/gpt-oss-20b",
+            },
+        )
+        saved_parent_dept = client.post(
+            "/api/admin/departments",
+            headers=headers,
+            json={"id": "eng", "name": "엔지니어링"},
+        )
+        saved_child_dept = client.post(
+            "/api/admin/departments",
+            headers=headers,
+            json={"id": "backend", "name": "백엔드팀", "parent_id": "eng"},
+        )
+        cyclic_dept = client.post(
+            "/api/admin/departments",
+            headers=headers,
+            json={"id": "eng", "name": "엔지니어링", "parent_id": "backend"},
+        )
+        saved_position = client.post(
+            "/api/admin/positions",
+            headers=headers,
+            json={"id": "lead", "name": "팀장", "level": 80},
+        )
         acl = client.get("/api/admin/access-control", headers=headers)
+        deleted_position = client.delete("/api/admin/positions/lead", headers=headers)
         uploaded = client.post(
             "/api/uploads",
             headers=headers,
@@ -499,8 +732,26 @@ def test_secure_admin_and_upload_endpoints(tmp_path: Path) -> None:
     assert denied.status_code == 401
     assert saved_key.status_code == 200
     assert saved_key.json()["providers"][0]["masked_value"] == "sk-t...7890"
+    assert together_models.status_code == 200
+    assert together_models.json()["provider"] == "together"
+    assert together_models.json()["source"] == "fallback"
+    assert saved_together_key.status_code == 200
+    assert any(
+        provider["provider"] == "together" and provider["configured"]
+        for provider in saved_together_key.json()["providers"]
+    )
+    assert saved_parent_dept.status_code == 200
+    assert saved_child_dept.status_code == 200
+    assert cyclic_dept.status_code == 400
+    assert saved_position.status_code == 200
     assert acl.status_code == 200
     assert "owner" in {user["id"] for user in acl.json()["users"]}
+    acl_payload = acl.json()
+    departments_by_id = {dept["id"]: dept for dept in acl_payload["departments"]}
+    assert departments_by_id["backend"]["parent_id"] == "eng"
+    assert "lead" in {position["id"] for position in acl_payload["positions"]}
+    assert deleted_position.status_code == 200
+    assert "lead" not in {position["id"] for position in deleted_position.json()["positions"]}
     assert uploaded.status_code == 200
     assert uploads.json()["uploads"][0]["filename"] == "hello.txt"
     assert audit.status_code == 200

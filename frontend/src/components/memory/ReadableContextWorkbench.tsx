@@ -16,6 +16,8 @@ type Props = {
   onSelectedIdsChange: (ids: string[]) => void;
   onBundlePreview?: (bundle: ReadableContextBundle) => void;
   onRequestDeletion?: (source: ReadableContextSource) => void | Promise<void>;
+  canDeleteImmediately?: boolean;
+  onDeleteSource?: (source: ReadableContextSource) => void | Promise<void>;
 };
 
 const KIND_FILTERS = [
@@ -26,7 +28,6 @@ const KIND_FILTERS = [
   'promoted_memory',
   'patch_record',
   'upload',
-  'token_usage',
 ] as const;
 
 type KindFilter = (typeof KIND_FILTERS)[number];
@@ -39,8 +40,18 @@ const KIND_LABELS: Record<KindFilter, string> = {
   promoted_memory: '승격 메모리',
   patch_record: '패치 기록',
   upload: '업로드',
-  token_usage: '토큰 사용량',
 };
+
+function isUserFacingSource(source: ReadableContextSource): boolean {
+  const path = source.path || source.id || '';
+  if (source.kind === 'audit_log' || source.kind === 'token_usage') return false;
+  return !(
+    path === 'audit_log.jsonl' ||
+    path.startsWith('token_usage/') ||
+    path.startsWith('context_firewall/') ||
+    path.startsWith('mcp_hub/')
+  );
+}
 
 export default function ReadableContextWorkbench({
   query,
@@ -49,6 +60,8 @@ export default function ReadableContextWorkbench({
   onSelectedIdsChange,
   onBundlePreview,
   onRequestDeletion,
+  canDeleteImmediately = false,
+  onDeleteSource,
 }: Props) {
   const [sources, setSources] = useState<ReadableContextSource[]>([]);
   const [selectedKind, setSelectedKind] = useState<KindFilter>('all');
@@ -76,16 +89,17 @@ export default function ReadableContextWorkbench({
     void refresh();
   }, []);
 
+  const userFacingSources = useMemo(() => sources.filter(isUserFacingSource), [sources]);
   const visibleSources = useMemo(
-    () => sources.filter((source) => selectedKind === 'all' || source.kind === selectedKind),
-    [sources, selectedKind],
+    () => userFacingSources.filter((source) => selectedKind === 'all' || source.kind === selectedKind),
+    [userFacingSources, selectedKind],
   );
   const idToLabel = useMemo(
-    () => Object.fromEntries(sources.map((source) => [source.id, source.title || source.path])),
-    [sources],
+    () => Object.fromEntries(userFacingSources.map((source) => [source.id, source.title || source.path])),
+    [userFacingSources],
   );
   const selectedSources = selectedIds
-    .map((id) => sources.find((source) => source.id === id))
+    .map((id) => userFacingSources.find((source) => source.id === id))
     .filter((source): source is ReadableContextSource => Boolean(source));
 
   function toggleSource(source: ReadableContextSource, checked: boolean) {
@@ -187,6 +201,11 @@ export default function ReadableContextWorkbench({
                   {onRequestDeletion ? (
                     <button className="secondary-button" type="button" onClick={() => void onRequestDeletion(source)}>
                       삭제 요청
+                    </button>
+                  ) : null}
+                  {canDeleteImmediately && onDeleteSource ? (
+                    <button className="danger" type="button" onClick={() => void onDeleteSource(source)}>
+                      즉시 삭제
                     </button>
                   ) : null}
                 </div>

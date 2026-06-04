@@ -18,7 +18,15 @@ Sensitivity = Literal["S0", "S1", "S2", "S3", "S4", "S5"]
 FirewallDecision = Literal["allow", "allow_redacted", "local_only", "approval_required", "block"]
 
 SENSITIVITY_RANK: dict[str, int] = {"S0": 0, "S1": 1, "S2": 2, "S3": 3, "S4": 4, "S5": 5}
-FRONTIER_DESTINATIONS = {"frontier_llm", "cloud_llm", "api_llm", "openai", "anthropic", "gemini"}
+FRONTIER_DESTINATIONS = {
+    "frontier_llm",
+    "cloud_llm",
+    "api_llm",
+    "openai",
+    "anthropic",
+    "gemini",
+    "together",
+}
 LOCAL_DESTINATIONS = {"local_llm", "vllm", "fake", "local"}
 CONTEXT_HEADER = (
     "You are receiving a redacted and abstracted technical context. "
@@ -216,6 +224,14 @@ def sanitize_text(
     return str(result.sanitized)
 
 
+def _coerce_message_content(value: Any) -> str | list[dict[str, Any]]:
+    """Preserve multimodal list content; otherwise normalize to a string."""
+
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    return str(value or "")
+
+
 def sanitize_llm_messages(
     messages: list[LlmMessage],
     *,
@@ -227,7 +243,7 @@ def sanitize_llm_messages(
     result = sanitize_context(payload, destination=destination, task_type=task_type, policy=policy)
     sanitized_payload = result.sanitized if isinstance(result.sanitized, list) else []
     sanitized_messages = [
-        LlmMessage(str(item.get("role") or "user"), str(item.get("content") or ""))
+        LlmMessage(str(item.get("role") or "user"), _coerce_message_content(item.get("content")))
         for item in sanitized_payload
         if isinstance(item, dict)
     ]
@@ -353,6 +369,9 @@ def _sanitize_value(value: Any) -> tuple[Any, list[FirewallFinding]]:
             findings.extend(item_findings)
         return sanitized_items, findings
     if isinstance(value, dict):
+        # Multimodal image parts carry opaque base64; never scan/redact the bytes.
+        if value.get("type") == "image" and "data" in value:
+            return value, []
         findings = []
         sanitized: dict[str, Any] = {}
         for key, item in value.items():
@@ -448,6 +467,10 @@ def _abstract_for_frontier(value: Any, *, task_type: str, source_uri: str) -> An
             for item in value
         ]
     if isinstance(value, dict):
+        # Preserve multimodal image parts verbatim: base64 payloads must not be
+        # truncated or they become invalid for the vision model.
+        if value.get("type") == "image" and "data" in value:
+            return value
         return {
             key: _abstract_for_frontier(item, task_type=task_type, source_uri=source_uri)
             for key, item in value.items()

@@ -4,7 +4,7 @@ import type { PermanentMemorySource } from '../../api';
 
 import SortableSourceOrder from './SortableSourceOrder';
 
-export type MemoryKindFilter = 'all' | 'patch_log' | 'document' | 'conversation' | 'promoted_memory' | 'audit_log';
+export type MemoryKindFilter = 'all' | 'patch_log' | 'document' | 'conversation' | 'promoted_memory';
 
 const KIND_LABELS: Record<MemoryKindFilter, string> = {
   all: '전체',
@@ -12,8 +12,18 @@ const KIND_LABELS: Record<MemoryKindFilter, string> = {
   document: '문서',
   conversation: '대화 기록',
   promoted_memory: '승격 메모리',
-  audit_log: '감사 로그',
 };
+
+function isUserFacingSource(source: PermanentMemorySource): boolean {
+  const path = source.path || source.id || '';
+  if (source.kind === 'audit_log' || source.kind === 'token_usage') return false;
+  return !(
+    path === 'audit_log.jsonl' ||
+    path.startsWith('token_usage/') ||
+    path.startsWith('context_firewall/') ||
+    path.startsWith('mcp_hub/')
+  );
+}
 
 type Props = {
   sources: PermanentMemorySource[];
@@ -26,6 +36,8 @@ type Props = {
   onToggleSource: (id: string, checked: boolean) => void;
   onReorderSelected: (ids: string[]) => void;
   onRequestDeletion: (source: PermanentMemorySource) => void | Promise<void>;
+  canDeleteImmediately?: boolean;
+  onDeleteSource?: (source: PermanentMemorySource) => void | Promise<void>;
 };
 
 export default function PermanentSourcesList({
@@ -39,28 +51,31 @@ export default function PermanentSourcesList({
   onToggleSource,
   onReorderSelected,
   onRequestDeletion,
+  canDeleteImmediately = false,
+  onDeleteSource,
 }: Props) {
+  const userFacingSources = useMemo(() => sources.filter(isUserFacingSource), [sources]);
   const idToLabel = useMemo(
-    () => Object.fromEntries(sources.map((s) => [s.id, s.title || s.path])),
-    [sources],
+    () => Object.fromEntries(userFacingSources.map((s) => [s.id, s.title || s.path])),
+    [userFacingSources],
   );
   const counts = useMemo(() => {
     const next: Record<MemoryKindFilter, number> = {
-      all: sources.length,
+      all: userFacingSources.length,
       patch_log: 0,
       document: 0,
       conversation: 0,
       promoted_memory: 0,
-      audit_log: 0,
     };
-    for (const source of sources) {
+    for (const source of userFacingSources) {
       if (source.kind in next) {
         next[source.kind as MemoryKindFilter] += 1;
       }
     }
     return next;
-  }, [sources]);
-  const visibleSources = selectedKind === 'all' ? sources : sources.filter((source) => source.kind === selectedKind);
+  }, [userFacingSources]);
+  const visibleSources =
+    selectedKind === 'all' ? userFacingSources : userFacingSources.filter((source) => source.kind === selectedKind);
 
   return (
     <div className="panel memory-sources-panel">
@@ -112,6 +127,15 @@ export default function PermanentSourcesList({
               >
                 삭제 요청
               </button>
+              {canDeleteImmediately && onDeleteSource ? (
+                <button
+                  className="danger source-row-action"
+                  type="button"
+                  onClick={() => void onDeleteSource(source)}
+                >
+                  즉시 삭제
+                </button>
+              ) : null}
             </div>
           );
         })}

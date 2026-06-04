@@ -27,6 +27,7 @@ class AgentPlan:
     status: PlanStatus = "draft"
     created_by: str = ""
     approved_by: str = ""
+    plan_markdown_path: str = ""
     created_at: str = ""
     updated_at: str = ""
 
@@ -44,6 +45,7 @@ class AgentPlan:
             status=_status(payload.get("status")),
             created_by=str(payload.get("created_by") or ""),
             approved_by=str(payload.get("approved_by") or ""),
+            plan_markdown_path=str(payload.get("plan_markdown_path") or ""),
             created_at=str(payload.get("created_at") or now),
             updated_at=now,
         )
@@ -60,6 +62,7 @@ class AgentPlan:
             "status": self.status,
             "created_by": self.created_by,
             "approved_by": self.approved_by,
+            "plan_markdown_path": self.plan_markdown_path,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -106,7 +109,7 @@ class AgentExecutionStore:
 
     def append_run(self, plan_id: str, *, actor: str, event: str, details: dict[str, object] | None = None) -> dict[str, object]:
         self._runs.mkdir(parents=True, exist_ok=True)
-        payload = {
+        payload: dict[str, object] = {
             "id": str(uuid4()),
             "plan_id": plan_id,
             "actor": actor,

@@ -30,9 +30,12 @@ dependencies = [
     "detect-secrets>=1.4",
     "python-multipart>=0.0.9",
     "openpyxl>=3.1",
+    "pypdf>=4.0",
 ]
 
 [project.optional-dependencies]
+# Optional OCR stack for image attachments when no vision-capable model is set.
+ocr = ["pytesseract>=0.3.10", "Pillow>=10.0"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -103,6 +106,11 @@ module = [
     "openai",
     "openai.*",
     "openpyxl",
+    "pypdf",
+    "pypdf.*",
+    "pytesseract",
+    "PIL",
+    "PIL.*",
 ]
 ignore_missing_imports = true
 

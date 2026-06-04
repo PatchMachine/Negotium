@@ -14,7 +14,8 @@ def build_chat_messages(
 ) -> list[LlmMessage]:
     from patch_machine.app.api import _build_chat_messages
 
-    return _build_chat_messages(container, user_message, user_id=user_id)
+    messages, _ = _build_chat_messages(container, user_message, user_id=user_id)
+    return messages
 
 
 def update_user_volatile_memory_after_chat(

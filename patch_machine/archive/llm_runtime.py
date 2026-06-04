@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 import portalocker
 
-LlmProviderName = Literal["vllm", "openai", "anthropic", "gemini", "fake"]
+LlmProviderName = Literal["vllm", "openai", "anthropic", "gemini", "together", "fake"]
 LlmRuntimeRoute = Literal["local", "api"]
 LlmTaskName = Literal[
     "memory_summary",
@@ -34,7 +34,7 @@ class LlmTaskRoute:
         provider = payload.get("provider") or (fallback.default_provider if fallback else "vllm")
         if route not in {"local", "api"}:
             route = fallback.default_route if fallback else "local"
-        if provider not in {"vllm", "openai", "anthropic", "gemini", "fake"}:
+        if provider not in {"vllm", "openai", "anthropic", "gemini", "together", "fake"}:
             provider = fallback.default_provider if fallback else "vllm"
         return cls(route=route, provider=provider, model=str(payload.get("model") or ""))
 
@@ -61,7 +61,7 @@ class LlmRuntimeConfig:
         provider = payload.get("default_provider") or "vllm"
         if route not in {"local", "api"}:
             route = "local"
-        if provider not in {"vllm", "openai", "anthropic", "gemini", "fake"}:
+        if provider not in {"vllm", "openai", "anthropic", "gemini", "together", "fake"}:
             provider = "vllm"
         base = cls(
             local_enabled=bool(payload.get("local_enabled", True)),

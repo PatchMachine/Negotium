@@ -44,10 +44,11 @@ def test_existing_owner_role_user_suppresses_synthetic_local_owner(tmp_path: Pat
     assert "Local Owner" not in display_names
 
 
-def test_default_owner_display_name_is_not_local_owner(tmp_path: Path) -> None:
+def test_fresh_store_has_no_default_owner_account(tmp_path: Path) -> None:
+    # No phantom owner account is fabricated; only the initial setup designer
+    # should exist as administrator.
     payload = AccessControlStore(tmp_path).read()
-    owner = next(user for user in payload["users"] if user["id"] == "owner")
-    assert owner["display_name"] == "시스템 관리자"
+    assert payload["users"] == []
 
 
 def test_persisted_local_owner_is_normalized(tmp_path: Path) -> None:

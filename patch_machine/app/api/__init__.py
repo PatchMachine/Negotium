@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+import re
+from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
@@ -19,6 +20,8 @@ from patch_machine.adapters.llm.anthropic_adapter import AnthropicProvider
 from patch_machine.adapters.llm.catalog import (
     default_base_url,
     list_models,
+    model_supports_audio,
+    model_supports_vision,
     provider_payload,
     require_provider,
     search_huggingface_models,
@@ -33,6 +36,7 @@ from patch_machine.app.container import Container
 from patch_machine.app.initial_setup import ParsedSetupFile, parse_setup_uploads
 from patch_machine.app.schemas.core import (
     AccountRequestPayload,
+    AdminCreateUserPayload,
     AgentPlanRequest,
     AiJobStatusPayload,
     ApiKeyPayload,
@@ -44,6 +48,7 @@ from patch_machine.app.schemas.core import (
     ContextCompressRequest,
     CurrentUserPayload,
     DeletionRequestPayload,
+    DepartmentPayload,
     DiscordChannelBindingPayload,
     DiscordConnectorPayload,
     DocumentReadPayload,
@@ -72,6 +77,13 @@ from patch_machine.app.schemas.core import (
     PatchRunApprovalPayload,
     PatchRunCreatePayload,
     PatchRunPayload,
+    PositionPayload,
+    ProcessPlanListPayload,
+    ProcessPlanModeRequest,
+    ProcessPlanPayload,
+    ProcessStepCreatePayload,
+    ProcessStepEditPayload,
+    ProcessStepReorderRequest,
     ProgressPayload,
     PromoteMemoryPayload,
     ProviderModelPayload,
@@ -82,6 +94,8 @@ from patch_machine.app.schemas.core import (
     RolePayload,
     SetupAdminPayload,
     SetupStatusPayload,
+    SkillCreateRequest,
+    SkillRunRequest,
     TokenLimitPayload,
     TokenLimitStatusPayload,
     TokenUsageEntryPayload,
@@ -90,6 +104,7 @@ from patch_machine.app.schemas.core import (
     VolatileMemoryPayload,
     WorkArchitecturePayload,
     WorkArchitectureRequest,
+    WorkItemSignOffPayload,
     WorkItemsPayload,
     WorkMemoryPayload,
     WorkScheduleGenerationRequest,
@@ -98,6 +113,7 @@ from patch_machine.app.schemas.core import (
 from patch_machine.app.schemas.issue_memory import (
     McpToolCallPayload,
 )
+from patch_machine.app.services.attachment_service import extract_attachment
 from patch_machine.app.services.context_firewall_service import (
     default_policy_payload,
     load_context_firewall_policy,
@@ -105,6 +121,10 @@ from patch_machine.app.services.context_firewall_service import (
     sanitize_context,
     sanitize_llm_messages,
     sanitize_llm_response,
+)
+from patch_machine.app.services.document_output import (
+    resolve_output_format,
+    write_generated_doc,
 )
 from patch_machine.app.services.mcp_hub_service import (
     call_tool,
@@ -126,6 +146,14 @@ from patch_machine.app.services.setup_catalog import (
     recommend_patchnote_setup,
     render_recommendation_markdown,
 )
+from patch_machine.app.services.skill_registry import (
+    Skill,
+    SkillInput,
+    get_skill,
+    get_skills,
+    register_skill,
+)
+from patch_machine.app.services.skill_runtime import SkillError, run_skill
 from patch_machine.archive.access_control import ALL_PERMISSIONS, UserRecord
 from patch_machine.archive.agent_execution import AgentPlan
 from patch_machine.archive.ai_jobs import AiJobRecord
@@ -141,6 +169,7 @@ from patch_machine.archive.integration_config import (
 from patch_machine.archive.llm_runtime import LlmProviderName, LlmRuntimeConfig, LlmTaskRoute
 from patch_machine.archive.patch_records import PatchRecord
 from patch_machine.archive.patch_runs import PatchRun
+from patch_machine.archive.process_plans import ProcessPlan
 from patch_machine.archive.schema import parse_front_matter
 from patch_machine.archive.secret_store import ApiKeyRecord
 from patch_machine.archive.token_usage import (
@@ -150,7 +179,14 @@ from patch_machine.archive.token_usage import (
 from patch_machine.archive.volatile_memory import MemoryScope, VolatileMemory
 from patch_machine.archive.work_memory import WorkMemory, WorkScheduleItem
 from patch_machine.domain.entities import LlmRoute
-from patch_machine.domain.ports import LlmMessage, LlmResponse
+from patch_machine.domain.ports import (
+    LlmMessage,
+    LlmResponse,
+    audio_part,
+    flatten_message_text,
+    image_part,
+    text_part,
+)
 from patch_machine.prompts import render as render_prompt
 
 _PRELOAD_TASKS: set[asyncio.Task[None]] = set()
@@ -396,6 +432,65 @@ def create_operations_api_router(container: Container) -> APIRouter:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         return _readable_source_payload(source, selected=True, order=0)
 
+    def _delete_memory_source_by_id(source_id: str, actor: str) -> dict[str, object]:
+        physical_deleted = True
+        try:
+            deleted = container.permanent_memory.delete_source(source_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="source not found") from exc
+        except ValueError as exc:
+            if "cannot be deleted from the memory UI" not in str(exc):
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+            try:
+                deleted = container.permanent_memory.read_source(source_id, max_chars=1)
+            except FileNotFoundError as read_exc:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, detail="source not found") from read_exc
+            except ValueError as read_exc:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(read_exc)) from read_exc
+            physical_deleted = False
+        request = container.deletion_requests.create(
+            DeletionRequest.create(
+                requester=actor,
+                target_type=str(deleted.get("kind") or "source"),
+                target_id=str(deleted.get("id") or source_id),
+                summary=str(deleted.get("title") or source_id),
+                source_path=str(deleted.get("path") or source_id),
+                sensitivity="internal",
+                reason="관리자 즉시 삭제" if physical_deleted else "관리자 즉시 숨김",
+            )
+        )
+        decided = container.deletion_requests.decide(request.id, actor=actor, approved=True)
+        _audit(
+            container,
+            actor=actor,
+            action="memory.source.delete",
+            target=str(deleted.get("kind") or "source"),
+            target_id=str(deleted.get("id") or source_id),
+            details={"physical_deleted": physical_deleted},
+        )
+        return {
+            "ok": True,
+            "source": deleted,
+            "request": decided.to_dict(),
+            "physical_deleted": physical_deleted,
+        }
+
+    @router.delete("/memory/sources")
+    async def delete_memory_source_query(
+        source_id: str,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        actor = _require(container, x_pm_user, "admin:users")
+        return _delete_memory_source_by_id(source_id, actor)
+
+    @router.delete("/memory/sources/{source_id:path}")
+    async def delete_memory_source_path(
+        source_id: str,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        actor = _require(container, x_pm_user, "admin:users")
+        return _delete_memory_source_by_id(source_id, actor)
+
     @router.post("/memory/readable-context/preview")
     async def preview_readable_context(
         payload: ReadableContextPreviewRequest,
@@ -575,7 +670,11 @@ def create_operations_api_router(container: Container) -> APIRouter:
             target="compressed_context",
             target_id=f"{payload.scope}:{key}",
         )
-        volatile_refs = [f"{item['scope']}:{item['key']}" for item in container.volatile_memory.list()] if payload.include_volatile else []
+        volatile_refs = (
+            [f"{item['scope']}:{item['key']}" for item in container.volatile_memory.list()]
+            if payload.include_volatile
+            else []
+        )
         return {
             "context": saved.to_dict(),
             "used_sources": sources,
@@ -724,6 +823,21 @@ def create_operations_api_router(container: Container) -> APIRouter:
         x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
     ) -> dict[str, object]:
         actor = _require(container, x_pm_user, "admin:users")
+        pending = container.deletion_requests.get(request_id)
+        if pending is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="deletion request not found")
+        if pending.status != "pending":
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="deletion request already decided")
+        source_id = pending.source_path or pending.target_id
+        try:
+            container.permanent_memory.delete_source(source_id)
+        except FileNotFoundError:
+            # Some older requests point to record ids or already-removed files.
+            # Keep the approval/tombstone trail so scans stop surfacing them.
+            pass
+        except ValueError as exc:
+            if "cannot be deleted from the memory UI" not in str(exc):
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         request = container.deletion_requests.decide(request_id, actor=actor, approved=True)
         _audit(
             container,
@@ -762,16 +876,36 @@ def create_operations_api_router(container: Container) -> APIRouter:
         schedule_refs = payload.schedule_refs or [
             str(item["id"]) for item in container.work_schedule.list()[:10]
         ]
-        steps = _agent_plan_steps(payload.objective, schedule_refs, memory_refs)
+        steps = await _generate_agent_plan_steps(
+            container,
+            objective=payload.objective,
+            context=payload.context,
+            schedule_refs=schedule_refs,
+            memory_refs=memory_refs,
+        )
+        plan_title = payload.title or payload.objective
+        markdown = _render_agent_plan_markdown(
+            title=plan_title,
+            objective=payload.objective,
+            steps=steps,
+            context=payload.context,
+        )
+        markdown_path = _write_generated_doc(
+            container.settings.archive_dir,
+            folder="plans",
+            slug=f"plan_{plan_title}",
+            markdown=markdown,
+        )
         plan = container.agent_execution.save_plan(
             AgentPlan.create(
-                title=payload.title or payload.objective,
+                title=plan_title,
                 objective=payload.objective,
                 mode=payload.mode,
                 schedule_refs=schedule_refs,
                 memory_refs=memory_refs,
                 steps=steps,
                 created_by=actor,
+                plan_markdown_path=markdown_path,
             )
         )
         _audit(
@@ -1245,9 +1379,7 @@ def create_operations_api_router(container: Container) -> APIRouter:
             metadata = require_provider(provider)
             saved = container.secret_store.read(provider)
             api_key = saved.api_key if saved else _settings_api_key(container, provider)
-            base_url = default_base_url(
-                provider, vllm_base_url=container.settings.llm.vllm_base_url
-            )
+            base_url = _default_base_url(container, provider)
             if provider == "vllm":
                 base_url = (saved.base_url if saved and saved.base_url else base_url).rstrip("/")
             payload = await list_models(provider, api_key=api_key, base_url=base_url)
@@ -1272,10 +1404,7 @@ def create_operations_api_router(container: Container) -> APIRouter:
     ) -> ProviderModelPayload:
         try:
             metadata = require_provider(provider)
-            base_url = payload.base_url.strip() or default_base_url(
-                provider,
-                vllm_base_url=container.settings.llm.vllm_base_url,
-            )
+            base_url = payload.base_url.strip() or _default_base_url(container, provider)
             result = await list_models(provider, api_key=payload.api_key.strip(), base_url=base_url)
         except ValueError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -1440,66 +1569,42 @@ def create_operations_api_router(container: Container) -> APIRouter:
         x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
     ) -> ChatResponse:
         actor = _require(container, x_pm_user, "llm:chat")
-        runtime = container.llm_runtime.read()
-        task_route = runtime.route_for(payload.task or "chat")
-        route = payload.route or task_route.route
-        provider = payload.provider or task_route.provider
-        if route == "local" and not runtime.local_enabled:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="local LLM route is disabled")
-        if route == "local":
-            _sync_local_llm_state(container, enabled=True)
-        if route == "api" and not runtime.api_enabled:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="API LLM route is disabled")
-        llm_route: LlmRoute = "local" if route == "local" else "cloud"
-        messages = _build_chat_messages(container, payload.message, user_id=actor)
-        job = _start_ai_job(
-            container,
-            task=payload.task or "chat",
-            actor=actor,
-            input_summary=payload.message,
-        )
-        try:
-            response = await _complete_with_provider(
-                container,
-                messages,
-                provider=provider,
-                route=llm_route,
-                temperature=0.2,
-                max_tokens=1024,
-                task=payload.task or "chat",
-                actor=actor,
+        return await _chat_complete(container, payload, actor)
+
+    @router.post("/llm/chat/stream")
+    async def chat_stream(
+        payload: ChatRequest,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> StreamingResponse:
+        actor = _require(container, x_pm_user, "llm:chat")
+
+        async def events() -> AsyncIterator[str]:
+            try:
+                result = await _chat_complete(container, payload, actor)
+            except HTTPException as exc:
+                yield _sse_event("error", {"detail": str(exc.detail), "status": exc.status_code})
+                return
+            except Exception as exc:
+                yield _sse_event("error", {"detail": str(exc)})
+                return
+            yield _sse_event(
+                "meta",
+                {
+                    "route": result.route,
+                    "provider": result.provider,
+                    "model": result.model,
+                    "skill_id": result.skill_id,
+                },
             )
-            job = _finish_ai_job(container, job, status="succeeded")
-        except Exception as exc:
-            _finish_ai_job(container, job, status="failed", error=str(exc))
-            raise
-        container.metrics.record(
-            agent="chat",
-            route=response.route,
-            tokens_in=response.prompt_tokens,
-            tokens_out=response.completion_tokens,
-            latency_ms=0,
-        )
-        container.conversations.append_pair(
-            user_id=actor,
-            user_message=payload.message,
-            assistant_message=response.text,
-            provider=provider,
-            model=response.model,
-            route=route,
-            source_refs=[],
-        )
-        _update_user_volatile_memory_after_chat(
-            container, actor=actor, user_message=payload.message, answer=response.text
-        )
-        return ChatResponse(
-            answer=response.text,
-            route=route,
-            provider=provider,
-            model=response.model,
-            prompt_tokens=response.prompt_tokens,
-            completion_tokens=response.completion_tokens,
-            ai_job=_ai_job_payload(job).model_dump(),
+            for chunk in _chunk_text(result.answer):
+                yield _sse_event("delta", {"text": chunk})
+                await asyncio.sleep(0.02)
+            yield _sse_event("done", result.model_dump())
+
+        return StreamingResponse(
+            events(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
     @router.get("/progress")
@@ -1512,13 +1617,384 @@ def create_operations_api_router(container: Container) -> APIRouter:
         )
 
     @router.get("/work-items")
-    async def read_work_items() -> WorkItemsPayload:
-        items = _recent_logs(container.settings.archive_dir, limit=20)
-        for item in items:
+    async def read_work_items(
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> WorkItemsPayload:
+        _require(container, x_pm_user, "work:read")
+        schedule = container.work_schedule.list()
+        queue_items = _schedule_to_work_items(
+            schedule, plan_status_by_step=_plan_status_by_step(container)
+        )
+        logs = _recent_logs(container.settings.archive_dir, limit=20)
+        for item in logs:
             item["kind"] = item.get("source") or "archive"
             item["summary"] = f"{item.get('repo', 'unknown')} #{item.get('external_id', '-')}"
-        summary = _summarize_bottlenecks(items)
+        items = queue_items + logs
+        summary = _summarize_queue(queue_items) or _summarize_bottlenecks(logs)
         return WorkItemsPayload(items=items, bottleneck_summary=summary)
+
+    @router.post("/work-schedule/items/{item_id}/run")
+    async def run_work_schedule_item(
+        item_id: str,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        actor = _require(container, x_pm_user, "memory:write")
+        item = container.work_schedule.get(item_id)
+        if item is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="해당 작업을 찾을 수 없습니다.")
+        if item.status == "done":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="이미 완료된 단계입니다.")
+        owning_plan = container.process_plans.find_by_architecture(item.source_architecture_id)
+        if owning_plan is not None and owning_plan.status not in {"approved", "running"}:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="프로세스 계획이 아직 승인되지 않았습니다. 프로세스 설계에서 먼저 승인하세요.",
+            )
+        statuses = {entry["id"]: entry.get("status") for entry in container.work_schedule.list()}
+        blocking = [dep for dep in item.dependencies if statuses.get(dep) != "done"]
+        if blocking:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="이전 단계가 완료되지 않아 이 단계를 실행할 수 없습니다. 순서대로 진행하세요.",
+            )
+        skill_id = _extract_step_skill_id(item.notes)
+        prompt = render_prompt(
+            "office/work_process_step.md.j2",
+            context=_office_context(container),
+            title=item.title,
+            notes=item.notes,
+            source=item.source_architecture_id,
+        ).strip()
+        job = _start_ai_job(
+            container,
+            task="work_process_step",
+            actor=actor,
+            input_summary=item.title,
+            used_sources=[item.source_architecture_id] if item.source_architecture_id else None,
+        )
+        try:
+            if skill_id:
+                result_path, markdown = await _run_step_skill(
+                    container, skill_id, item=item, actor=actor
+                )
+            else:
+                markdown = await _complete_office_task(
+                    container, prompt, task="document_generation"
+                )
+                result_path = _write_generated_doc(
+                    container.settings.archive_dir,
+                    folder="work_architecture",
+                    slug=f"step_{item.title}",
+                    markdown=markdown,
+                )
+            job = _finish_ai_job(container, job, status="succeeded", result_path=result_path)
+        except SkillError as exc:
+            _finish_ai_job(container, job, status="failed", error=str(exc))
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except Exception as exc:
+            _finish_ai_job(container, job, status="failed", error=str(exc))
+            raise
+        notes = item.notes
+        if result_path not in notes:
+            notes = f"{notes} / 실행 결과: {result_path}" if notes else f"실행 결과: {result_path}"
+        updated = container.work_schedule.upsert(
+            WorkScheduleItem.create(
+                **{**item.to_dict(), "status": "done", "notes": notes}
+            )
+        )
+        plan_payload: dict[str, Any] = {}
+        if owning_plan is not None:
+            statuses_after = {
+                entry["id"]: entry.get("status") for entry in container.work_schedule.list()
+            }
+            all_done = all(
+                statuses_after.get(step_id) == "done" for step_id in owning_plan.step_ids
+            )
+            next_status = "completed" if all_done else "running"
+            owning_plan = container.process_plans.upsert(owning_plan.with_status(next_status))
+            plan_payload = _process_plan_payload(container, owning_plan).model_dump()
+        _audit(
+            container,
+            actor=actor,
+            action="work_schedule.run",
+            target="work_schedule",
+            target_id=updated.id,
+            details={"result_path": result_path},
+        )
+        return {
+            "ok": True,
+            "item": updated.to_dict(),
+            "items": _schedule_to_work_items(
+                container.work_schedule.list(),
+                plan_status_by_step=_plan_status_by_step(container),
+            ),
+            "result_path": result_path,
+            "ai_job": _ai_job_payload(job).model_dump(),
+            "plan": plan_payload,
+        }
+
+    @router.post("/work-schedule/items/{item_id}/sign-off")
+    async def sign_off_work_item(
+        item_id: str,
+        payload: WorkItemSignOffPayload | None = None,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        actor = _require(container, x_pm_user, "work:read")
+        item = container.work_schedule.get(item_id)
+        if item is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="해당 단계를 찾을 수 없습니다.")
+        signer = _user_display_name(container, actor)
+        note = (payload.note if payload else "").strip()
+        # Attach a completion record file: prefer the assignee's note, else any
+        # existing AI result path already referenced in the notes.
+        record_path = item.completion_record
+        if note:
+            record_md = "\n".join(
+                [
+                    f"# 업무 완료 기록: {item.title}",
+                    "",
+                    f"- 담당자: {item.owner_name or '(미지정)'}",
+                    f"- 완료 확인: {signer}",
+                    f"- 확인 시각: {datetime.now(UTC).isoformat()}",
+                    "",
+                    "## 처리 내용",
+                    note,
+                ]
+            )
+            record_path = _write_generated_doc(
+                container.settings.archive_dir,
+                folder="work_records",
+                slug=f"done_{item.title}",
+                markdown=record_md,
+            )
+        updated = container.work_schedule.upsert(
+            WorkScheduleItem.create(
+                **{
+                    **item.to_dict(),
+                    "status": "done",
+                    "signed_off_by": signer,
+                    "signed_off_at": datetime.now(UTC).isoformat(),
+                    "completion_record": record_path,
+                }
+            )
+        )
+        plan_payload: dict[str, Any] = {}
+        owning_plan = container.process_plans.find_by_architecture(item.source_architecture_id)
+        if owning_plan is not None:
+            statuses_after = {
+                entry["id"]: entry.get("status") for entry in container.work_schedule.list()
+            }
+            all_done = all(
+                statuses_after.get(step_id) == "done" for step_id in owning_plan.step_ids
+            )
+            owning_plan = container.process_plans.upsert(
+                owning_plan.with_status("completed" if all_done else owning_plan.status)
+            )
+            plan_payload = _process_plan_payload(container, owning_plan).model_dump()
+        _audit(
+            container,
+            actor=actor,
+            action="work_schedule.sign_off",
+            target="work_schedule",
+            target_id=updated.id,
+        )
+        return {
+            "ok": True,
+            "item": updated.to_dict(),
+            "items": _schedule_to_work_items(
+                container.work_schedule.list(),
+                plan_status_by_step=_plan_status_by_step(container),
+            ),
+            "plan": plan_payload,
+        }
+
+    @router.get("/process-plans")
+    async def list_process_plans(
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> ProcessPlanListPayload:
+        _require(container, x_pm_user, "work:read")
+        items = [
+            _process_plan_payload(container, ProcessPlan.from_mapping(raw))
+            for raw in container.process_plans.list()
+        ]
+        return ProcessPlanListPayload(items=items)
+
+    @router.get("/process-plans/{plan_id}")
+    async def read_process_plan(
+        plan_id: str,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> ProcessPlanPayload:
+        _require(container, x_pm_user, "work:read")
+        plan = container.process_plans.get(plan_id)
+        if plan is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계획을 찾을 수 없습니다.")
+        return _process_plan_payload(container, plan, include_markdown=True)
+
+    @router.post("/process-plans/{plan_id}/approve")
+    async def approve_process_plan(
+        plan_id: str,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> ProcessPlanPayload:
+        actor = _require(container, x_pm_user, "memory:write")
+        plan = _require_plan(container, plan_id)
+        if plan.status not in {"draft", "paused"}:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="초안 또는 일시정지 상태의 계획만 승인할 수 있습니다.",
+            )
+        updated = container.process_plans.upsert(plan.with_status("approved", approved_by=actor))
+        _audit(container, actor=actor, action="process_plan.approve", target="process_plan", target_id=plan_id)
+        return _process_plan_payload(container, updated, include_markdown=True)
+
+    @router.post("/process-plans/{plan_id}/mode")
+    async def set_process_plan_mode(
+        plan_id: str,
+        payload: ProcessPlanModeRequest,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> ProcessPlanPayload:
+        actor = _require(container, x_pm_user, "memory:write")
+        plan = _require_plan(container, plan_id)
+        if payload.mode not in {"manual", "auto"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="mode는 manual 또는 auto여야 합니다.")
+        updated = container.process_plans.upsert(plan.with_mode(payload.mode))
+        _audit(
+            container,
+            actor=actor,
+            action="process_plan.mode",
+            target="process_plan",
+            target_id=plan_id,
+            details={"mode": payload.mode},
+        )
+        return _process_plan_payload(container, updated, include_markdown=True)
+
+    @router.post("/process-plans/{plan_id}/pause")
+    async def pause_process_plan(
+        plan_id: str,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> ProcessPlanPayload:
+        actor = _require(container, x_pm_user, "memory:write")
+        plan = _require_plan(container, plan_id)
+        updated = container.process_plans.upsert(plan.with_status("paused"))
+        _audit(container, actor=actor, action="process_plan.pause", target="process_plan", target_id=plan_id)
+        return _process_plan_payload(container, updated, include_markdown=True)
+
+    @router.post("/process-plans/{plan_id}/resume")
+    async def resume_process_plan(
+        plan_id: str,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> ProcessPlanPayload:
+        actor = _require(container, x_pm_user, "memory:write")
+        plan = _require_plan(container, plan_id)
+        if plan.status != "paused":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="일시정지 상태의 계획만 재개할 수 있습니다.")
+        updated = container.process_plans.upsert(plan.with_status("running"))
+        _audit(container, actor=actor, action="process_plan.resume", target="process_plan", target_id=plan_id)
+        return _process_plan_payload(container, updated, include_markdown=True)
+
+    @router.post("/process-plans/{plan_id}/steps")
+    async def add_process_step(
+        plan_id: str,
+        payload: ProcessStepCreatePayload,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> ProcessPlanPayload:
+        actor = _require(container, x_pm_user, "memory:write")
+        plan = _require_editable_plan(container, plan_id)
+        item = container.work_schedule.upsert(
+            WorkScheduleItem.create(
+                title=payload.title,
+                notes=payload.notes,
+                owner_name=payload.owner_name,
+                priority=payload.priority,
+                assignee_kind=payload.assignee_kind,
+                source_architecture_id=plan.architecture_path,
+            )
+        )
+        updated = _resequence_plan(container, plan, [*plan.step_ids, item.id])
+        _audit(
+            container,
+            actor=actor,
+            action="process_plan.step.add",
+            target="process_plan",
+            target_id=plan_id,
+            details={"step_id": item.id},
+        )
+        return _process_plan_payload(container, updated, include_markdown=True)
+
+    @router.put("/process-plans/{plan_id}/steps/{step_id}")
+    async def update_process_step(
+        plan_id: str,
+        step_id: str,
+        payload: ProcessStepEditPayload,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> ProcessPlanPayload:
+        actor = _require(container, x_pm_user, "memory:write")
+        plan = _require_editable_plan(container, plan_id)
+        if step_id not in plan.step_ids:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="단계를 찾을 수 없습니다.")
+        item = container.work_schedule.get(step_id)
+        if item is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="단계를 찾을 수 없습니다.")
+        if item.status == "done":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="완료된 단계는 수정할 수 없습니다.")
+        overrides = item.to_dict()
+        if payload.title is not None:
+            overrides["title"] = payload.title
+        if payload.notes is not None:
+            overrides["notes"] = payload.notes
+        if payload.owner_name is not None:
+            overrides["owner_name"] = payload.owner_name
+        if payload.priority is not None:
+            overrides["priority"] = payload.priority
+        if payload.assignee_kind is not None:
+            overrides["assignee_kind"] = payload.assignee_kind
+        container.work_schedule.upsert(WorkScheduleItem.create(**overrides))
+        plan = _require_plan(container, plan_id)
+        _audit(
+            container,
+            actor=actor,
+            action="process_plan.step.update",
+            target="process_plan",
+            target_id=plan_id,
+            details={"step_id": step_id},
+        )
+        return _process_plan_payload(container, plan, include_markdown=True)
+
+    @router.delete("/process-plans/{plan_id}/steps/{step_id}")
+    async def delete_process_step(
+        plan_id: str,
+        step_id: str,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> ProcessPlanPayload:
+        actor = _require(container, x_pm_user, "memory:write")
+        plan = _require_editable_plan(container, plan_id)
+        container.work_schedule.delete(step_id)
+        remaining = [sid for sid in plan.step_ids if sid != step_id]
+        updated = _resequence_plan(container, plan, remaining)
+        _audit(
+            container,
+            actor=actor,
+            action="process_plan.step.delete",
+            target="process_plan",
+            target_id=plan_id,
+            details={"step_id": step_id},
+        )
+        return _process_plan_payload(container, updated, include_markdown=True)
+
+    @router.post("/process-plans/{plan_id}/reorder")
+    async def reorder_process_steps(
+        plan_id: str,
+        payload: ProcessStepReorderRequest,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> ProcessPlanPayload:
+        actor = _require(container, x_pm_user, "memory:write")
+        plan = _require_editable_plan(container, plan_id)
+        existing = set(plan.step_ids)
+        ordered = [sid for sid in payload.ordered_ids if sid in existing]
+        # Keep any steps the client omitted at the tail to avoid accidental loss.
+        ordered.extend(sid for sid in plan.step_ids if sid not in ordered)
+        updated = _resequence_plan(container, plan, ordered)
+        _audit(container, actor=actor, action="process_plan.reorder", target="process_plan", target_id=plan_id)
+        return _process_plan_payload(container, updated, include_markdown=True)
 
     @router.post("/work-architecture/generate")
     async def generate_work_architecture(
@@ -1543,7 +2019,14 @@ def create_operations_api_router(container: Container) -> APIRouter:
             input_summary=payload.objective,
         )
         try:
-            markdown = await _complete_office_task(container, prompt, task="document_generation")
+            raw_markdown = await _complete_office_task(container, prompt, task="document_generation")
+            markdown, _ = _extract_process_steps(raw_markdown)
+            steps = await _generate_process_steps(
+                container,
+                objective=payload.objective,
+                scope=payload.scope,
+                markdown=markdown,
+            )
             path = _write_generated_doc(
                 container.settings.archive_dir,
                 folder="work_architecture",
@@ -1554,6 +2037,22 @@ def create_operations_api_router(container: Container) -> APIRouter:
         except Exception as exc:
             _finish_ai_job(container, job, status="failed", error=str(exc))
             raise
+        queue = _enqueue_process_steps(
+            container,
+            architecture_id=path,
+            objective=payload.objective,
+            participants=payload.participants,
+            steps=steps,
+        )
+        plan = container.process_plans.upsert(
+            ProcessPlan.create(
+                objective=payload.objective,
+                architecture_path=path,
+                status="draft",
+                mode="manual",
+                step_ids=[str(item.get("id")) for item in queue],
+            )
+        )
         architecture = {
             "objective": payload.objective,
             "scope": payload.scope,
@@ -1561,8 +2060,13 @@ def create_operations_api_router(container: Container) -> APIRouter:
             "participants": payload.participants,
             "constraints": payload.constraints,
             "path": path,
+            "step_count": len(queue),
         }
         work_memory = container.work_memory.read()
+        if queue:
+            next_action = f"AI 설계 검토/수정 후 승인 필요: {len(queue)}단계 (프로세스 설계에서 승인)"
+        else:
+            next_action = f"업무 프로세스 설계 검토: {path}"
         container.work_memory.write(
             WorkMemory(
                 goals=work_memory.goals or payload.objective,
@@ -1571,7 +2075,7 @@ def create_operations_api_router(container: Container) -> APIRouter:
                 blockers=work_memory.blockers,
                 decisions=work_memory.decisions,
                 risks=payload.constraints or work_memory.risks,
-                next_actions=f"업무 아키텍처 검토: {path}",
+                next_actions=next_action,
             )
         )
         _audit(
@@ -1580,12 +2084,15 @@ def create_operations_api_router(container: Container) -> APIRouter:
             action="work_architecture.generate",
             target="work_architecture",
             target_id=path,
+            details={"step_count": len(queue)},
         )
         return WorkArchitecturePayload(
             title=payload.objective,
             markdown=markdown,
             path=path,
             architecture=architecture,
+            queue=queue,
+            plan=_process_plan_payload(container, plan, include_markdown=False).model_dump(),
             ai_job=_ai_job_payload(job).model_dump(),
         )
 
@@ -1596,12 +2103,32 @@ def create_operations_api_router(container: Container) -> APIRouter:
         _require(container, x_pm_user, "work:read")
         return {"items": container.work_schedule.list()}
 
+    @router.get("/work-schedule/assignment-scope")
+    async def work_schedule_assignment_scope(
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        actor = _require(container, x_pm_user, "work:read")
+        return _assignment_scope(container, actor)
+
+    @router.get("/org/roster")
+    async def read_org_roster(
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        _require(container, x_pm_user, "work:read")
+        acl = container.access_control.read()
+        return {
+            "users": [user for user in acl["users"] if user.get("active", True)],
+            "departments": acl["departments"],
+            "positions": acl["positions"],
+        }
+
     @router.post("/work-schedule/items")
     async def create_work_schedule_item(
         payload: WorkScheduleItemPayload,
         x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
     ) -> dict[str, object]:
         actor = _require(container, x_pm_user, "memory:write")
+        _ensure_owner_in_scope(container, actor, payload.owner_id)
         item = container.work_schedule.upsert(payload.to_record())
         _audit(
             container,
@@ -1619,6 +2146,7 @@ def create_operations_api_router(container: Container) -> APIRouter:
         x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
     ) -> dict[str, object]:
         actor = _require(container, x_pm_user, "memory:write")
+        _ensure_owner_in_scope(container, actor, payload.owner_id)
         item = container.work_schedule.upsert(payload.to_record(item_id=item_id))
         _audit(
             container,
@@ -1725,19 +2253,11 @@ def create_operations_api_router(container: Container) -> APIRouter:
         config = container.integration_config.update_github(
             GitHubConnectorConfig(
                 enabled=payload.enabled,
-                allowed_repos=[
-                    repo.strip()
-                    for repo in payload.allowed_repos
-                    if repo.strip()
-                ],
+                allowed_repos=[repo.strip() for repo in payload.allowed_repos if repo.strip()],
                 trigger_label=payload.trigger_label.strip() or "patch-machine",
                 webhook_secret_present=container.secret_store.has_secret("github_webhook"),
                 app_token_present=container.secret_store.has_secret("github_app"),
-                event_forms=[
-                    item.strip()
-                    for item in payload.event_forms
-                    if item.strip()
-                ]
+                event_forms=[item.strip() for item in payload.event_forms if item.strip()]
                 or ["issue", "pull_request", "repository", "push"],
             )
         )
@@ -1774,17 +2294,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
             DiscordConnectorConfig(
                 enabled=payload.enabled,
                 bot_token_present=container.secret_store.has_secret("discord_bot"),
-                guild_allowlist=[
-                    item.strip()
-                    for item in payload.guild_allowlist
-                    if item.strip()
-                ],
+                guild_allowlist=[item.strip() for item in payload.guild_allowlist if item.strip()],
                 channel_bindings=bindings,
-                command_forms=[
-                    item.strip()
-                    for item in payload.command_forms
-                    if item.strip()
-                ]
+                command_forms=[item.strip() for item in payload.command_forms if item.strip()]
                 or ["bug_report", "thread_digest", "slash_command"],
             )
         )
@@ -1809,6 +2321,15 @@ def create_operations_api_router(container: Container) -> APIRouter:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @router.get("/archive/document-index")
+    async def list_archive_document_index(
+        q: str = "",
+        limit: int = 200,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        _require(container, x_pm_user, "documents:read")
+        return {"documents": _archive_document_index(container, q=q, limit=max(1, min(limit, 500)))}
 
     @router.get("/llm/token-limits")
     async def read_token_limits(
@@ -1967,6 +2488,7 @@ def create_operations_api_router(container: Container) -> APIRouter:
     ) -> GeneratedDocumentPayload:
         actor = _require(container, x_pm_user, "documents:write")
         context = _office_context(container)
+        activity_log = _collect_owner_activity(container, payload.outgoing_owner)
         prompt = render_prompt(
             "office/handover.md.j2",
             context=context,
@@ -1974,6 +2496,7 @@ def create_operations_api_router(container: Container) -> APIRouter:
             outgoing_owner=payload.outgoing_owner,
             incoming_owner=payload.incoming_owner,
             notes=payload.notes,
+            activity_log=activity_log,
         ).strip()
         job = _start_ai_job(
             container,
@@ -1993,7 +2516,24 @@ def create_operations_api_router(container: Container) -> APIRouter:
         except Exception as exc:
             _finish_ai_job(container, job, status="failed", error=str(exc))
             raise
-        result = GeneratedDocumentPayload(title=payload.work_title, markdown=markdown, path=path, ai_job=_ai_job_payload(job).model_dump())
+        if payload.generate_tasks:
+            created = await _create_handover_tasks(
+                container,
+                work_title=payload.work_title,
+                incoming_owner=payload.incoming_owner,
+                handover_markdown=markdown,
+                activity_log=activity_log,
+                source_path=path,
+            )
+            if created:
+                bullets = "\n".join(f"- {title}" for title in created)
+                markdown = f"{markdown}\n\n## 신규 담당자 인수 업무 (작업 스케줄 등록됨)\n{bullets}\n"
+        result = GeneratedDocumentPayload(
+            title=payload.work_title,
+            markdown=markdown,
+            path=path,
+            ai_job=_ai_job_payload(job).model_dump(),
+        )
         _audit(container, actor=actor, action="document.create", target="document", target_id=path)
         return result
 
@@ -2009,35 +2549,168 @@ def create_operations_api_router(container: Container) -> APIRouter:
             "work_request": "업무 요청서",
             "ppt_outline": "PPT 초안",
         }
+        readable_bundle: ReadableContextBundlePayload | None = None
+        if payload.source_ids or payload.query.strip():
+            readable_bundle = _readable_context_bundle(
+                container,
+                ReadableContextPreviewRequest(
+                    query=payload.query or payload.title,
+                    source_ids=payload.source_ids,
+                    source_limit=payload.source_limit,
+                    include_volatile=payload.include_volatile,
+                    token_budget=payload.token_budget,
+                ),
+            )
+        readable_context = readable_bundle.markdown if readable_bundle else ""
+        used_sources = [source.id for source in readable_bundle.used_sources] if readable_bundle else []
+
+        provider, route = _resolve_runtime_task(container, "document_generation")
+        model = _resolve_task_model(container, "document_generation", provider, route)
+        vision = model_supports_vision(provider, model)
+        audio = model_supports_audio(provider, model)
+        attachment_context, image_parts, attachment_notes = _resolve_document_attachments(
+            container, payload.attachment_ids, vision_enabled=vision, audio_enabled=audio
+        )
+
         prompt = render_prompt(
             "office/document_generation.md.j2",
             context=_office_context(container),
+            readable_context=readable_context,
+            attachment_context=attachment_context,
             document_label=labels[payload.document_type],
             title=payload.title,
             audience=payload.audience,
             source_text=payload.source_text,
+            output_format=payload.output_format,
         ).strip()
         job = _start_ai_job(
             container,
             task="document_generation",
             actor=actor,
             input_summary=f"{payload.document_type}: {payload.title}",
+            used_sources=used_sources,
         )
         try:
-            markdown = await _complete_office_task(container, prompt, task="document_generation")
+            raw = await _complete_office_task(
+                container, prompt, task="document_generation", image_parts=image_parts or None
+            )
+            resolved_format, body = _resolve_output_format(raw, requested=payload.output_format)
             path = _write_generated_doc(
                 container.settings.archive_dir,
                 folder="documents",
                 slug=f"{payload.document_type}_{payload.title}",
-                markdown=markdown,
+                markdown=body,
+                output_format=resolved_format,
             )
-            job = _finish_ai_job(container, job, status="succeeded", result_path=path)
+            job = _finish_ai_job(container, job, status="succeeded", result_path=path, used_sources=used_sources)
         except Exception as exc:
             _finish_ai_job(container, job, status="failed", error=str(exc))
             raise
-        result = GeneratedDocumentPayload(title=payload.title, markdown=markdown, path=path, ai_job=_ai_job_payload(job).model_dump())
+        result = GeneratedDocumentPayload(
+            title=payload.title,
+            markdown=body,
+            path=path,
+            ai_job=_ai_job_payload(job).model_dump(),
+            output_format=resolved_format,
+            attachment_notes=attachment_notes,
+        )
         _audit(container, actor=actor, action="document.create", target="document", target_id=path)
         return result
+
+    @router.get("/skills")
+    async def list_skills(
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        _require(container, x_pm_user, "work:read")
+        return {"skills": [skill.to_descriptor() for skill in get_skills().values()]}
+
+    @router.post("/skills")
+    async def create_skill(
+        payload: SkillCreateRequest,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        actor = _require(container, x_pm_user, "admin:users")
+        skill = Skill(
+            id=payload.id.strip(),
+            name=payload.name.strip(),
+            description=payload.description.strip(),
+            executor=payload.executor,
+            category=payload.category.strip() or "general",
+            required_permission=payload.required_permission.strip(),
+            risk=payload.risk.strip() or "low",
+            tool=payload.tool.strip(),
+            output_format=payload.output_format.strip() or "auto",
+            output_folder=payload.output_folder.strip() or "documents",
+            task=payload.task.strip() or "document_generation",
+            inputs=[
+                SkillInput(
+                    name=item.name.strip(),
+                    type=item.type.strip() or "string",
+                    required=item.required,
+                    description=item.description.strip(),
+                )
+                for item in payload.inputs
+                if item.name.strip()
+            ],
+            instructions=payload.instructions.strip(),
+        )
+        if skill.executor == "prompt" and not skill.instructions:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail="prompt 스킬은 본문(instructions)이 필요합니다.",
+            )
+        if skill.executor == "tool" and not skill.tool:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, detail="tool 스킬은 tool 이름이 필요합니다."
+            )
+        try:
+            register_skill(skill)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        _audit(
+            container,
+            actor=actor,
+            action="skill.create",
+            target="skill",
+            target_id=skill.id,
+        )
+        return {
+            "ok": True,
+            "skill": skill.to_descriptor(),
+            "skills": [item.to_descriptor() for item in get_skills().values()],
+        }
+
+    @router.post("/skills/{skill_id}/run")
+    async def run_skill_endpoint(
+        skill_id: str,
+        payload: SkillRunRequest,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        skill = get_skill(skill_id)
+        if skill is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="해당 스킬을 찾을 수 없습니다.")
+        actor = _require(container, x_pm_user, skill.required_permission or "work:read")
+
+        async def _completion(prompt: str, image_parts: list[dict[str, Any]] | None) -> str:
+            return await _complete_office_task(
+                container, prompt, task=skill.task, image_parts=image_parts
+            )
+
+        try:
+            result = await run_skill(
+                container, skill_id, dict(payload.inputs), actor=actor, completion=_completion
+            )
+        except SkillError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        _audit(
+            container,
+            actor=actor,
+            action="skill.run",
+            target="skill",
+            target_id=skill_id,
+            details={"status": result.status},
+        )
+        return {"ok": result.status == "succeeded", "result": result.to_dict()}
 
     @router.get("/admin/api-keys")
     async def list_api_keys(
@@ -2064,10 +2737,7 @@ def create_operations_api_router(container: Container) -> APIRouter:
                     provider=provider,
                     api_key=payload.api_key.strip(),
                     model=payload.model.strip(),
-                    base_url=default_base_url(
-                        provider,
-                        vllm_base_url=container.settings.llm.vllm_base_url,
-                    ),
+                    base_url=_default_base_url(container, provider),
                 )
             )
             _audit(
@@ -2110,7 +2780,12 @@ def create_operations_api_router(container: Container) -> APIRouter:
         x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
     ) -> dict[str, Any]:
         actor = _require(container, x_pm_user, "admin:users")
-        container.access_control.upsert_role(payload.to_record())
+        role = payload.to_record()
+        _ensure_acl_keeps_admin_access(
+            container.access_control.read(),
+            roles_override=[role.to_dict()],
+        )
+        container.access_control.upsert_role(role)
         _audit(
             container,
             actor=actor,
@@ -2126,6 +2801,10 @@ def create_operations_api_router(container: Container) -> APIRouter:
         x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
     ) -> dict[str, Any]:
         actor = _require(container, x_pm_user, "admin:users")
+        _ensure_acl_keeps_admin_access(
+            container.access_control.read(),
+            delete_role_id=role_id,
+        )
         try:
             container.access_control.delete_role(role_id)
         except ValueError as exc:
@@ -2139,7 +2818,12 @@ def create_operations_api_router(container: Container) -> APIRouter:
         x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
     ) -> dict[str, Any]:
         actor = _require(container, x_pm_user, "admin:users")
-        container.access_control.upsert_user(payload.to_record())
+        user = payload.to_record()
+        _ensure_acl_keeps_admin_access(
+            container.access_control.read(),
+            users_override=[user.to_dict()],
+        )
+        container.access_control.upsert_user(user)
         _audit(
             container,
             actor=actor,
@@ -2149,14 +2833,132 @@ def create_operations_api_router(container: Container) -> APIRouter:
         )
         return container.access_control.read()
 
+    @router.post("/admin/users/create-login")
+    async def create_login_user(
+        payload: AdminCreateUserPayload,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, Any]:
+        actor = _require(container, x_pm_user, "admin:users")
+        user = payload.to_record()
+        _ensure_acl_keeps_admin_access(
+            container.access_control.read(),
+            users_override=[user.to_dict()],
+        )
+        try:
+            acl_user_exists = any(
+                str(entry.get("id") or "") == user.id
+                for entry in container.access_control.read().get("users", [])
+            )
+            if container.auth_store.has_user(user.id) and acl_user_exists:
+                raise ValueError("login user id already exists")
+            if container.auth_store.has_user(user.id):
+                container.auth_store.delete_user(user.id)
+            container.auth_store.create_user(
+                user_id=user.id,
+                display_name=user.display_name,
+                password=payload.password,
+                active=user.active,
+            )
+            container.access_control.upsert_user(user)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        _audit(
+            container,
+            actor=actor,
+            action="user.create_login",
+            target="user",
+            target_id=user.id,
+            details={
+                "role_id": user.role_id,
+                "department": user.department,
+                "position_id": user.position_id,
+            },
+        )
+        return {"ok": True, "access_control": container.access_control.read()}
+
     @router.delete("/admin/users/{user_id}")
     async def delete_user(
         user_id: str,
         x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
     ) -> dict[str, Any]:
         actor = _require(container, x_pm_user, "admin:users")
+        _ensure_acl_keeps_admin_access(
+            container.access_control.read(),
+            delete_user_id=user_id,
+        )
         container.access_control.delete_user(user_id)
+        container.auth_store.delete_user(user_id)
         _audit(container, actor=actor, action="user.delete", target="user", target_id=user_id)
+        return container.access_control.read()
+
+    @router.post("/admin/departments")
+    async def upsert_department(
+        payload: DepartmentPayload,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, Any]:
+        actor = _require(container, x_pm_user, "admin:users")
+        try:
+            container.access_control.upsert_department(payload.to_record())
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        _audit(
+            container,
+            actor=actor,
+            action="department.upsert",
+            target="department",
+            target_id=payload.id.strip(),
+        )
+        return container.access_control.read()
+
+    @router.delete("/admin/departments/{department_id}")
+    async def delete_department(
+        department_id: str,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, Any]:
+        actor = _require(container, x_pm_user, "admin:users")
+        container.access_control.delete_department(department_id)
+        _audit(
+            container,
+            actor=actor,
+            action="department.delete",
+            target="department",
+            target_id=department_id,
+        )
+        return container.access_control.read()
+
+    @router.post("/admin/positions")
+    async def upsert_position(
+        payload: PositionPayload,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, Any]:
+        actor = _require(container, x_pm_user, "admin:users")
+        try:
+            container.access_control.upsert_position(payload.to_record())
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        _audit(
+            container,
+            actor=actor,
+            action="position.upsert",
+            target="position",
+            target_id=payload.id.strip(),
+        )
+        return container.access_control.read()
+
+    @router.delete("/admin/positions/{position_id}")
+    async def delete_position(
+        position_id: str,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, Any]:
+        actor = _require(container, x_pm_user, "admin:users")
+        container.access_control.delete_position(position_id)
+        _audit(
+            container,
+            actor=actor,
+            action="position.delete",
+            target="position",
+            target_id=position_id,
+        )
         return container.access_control.read()
 
     @router.get("/admin/account-requests")
@@ -2538,9 +3340,35 @@ def _role_for_title(title: str) -> str:
     return "staff"
 
 
+def _recent_chat_turns(container: Container, user_id: str, *, limit: int) -> list[LlmMessage]:
+    """Return the most recent persisted chat turns (chronological) for ``user_id``."""
+
+    if limit <= 0:
+        return []
+    records = container.conversations.list_recent(user_id=user_id, limit=limit)
+    turns: list[LlmMessage] = []
+    for record in reversed(records):  # list_recent is newest-first; replay oldest-first
+        role = str(record.get("role") or "")
+        content = str(record.get("content") or "").strip()
+        if role not in {"user", "assistant"} or not content:
+            continue
+        turns.append(LlmMessage(role, content))
+    return turns
+
+
 def _build_chat_messages(
-    container: Container, user_message: str, *, user_id: str = "default"
-) -> list[LlmMessage]:
+    container: Container,
+    user_message: str,
+    *,
+    user_id: str = "default",
+    history_limit: int = 8,
+    media_parts: list[dict[str, Any]] | None = None,
+) -> tuple[list[LlmMessage], int]:
+    """Build chat messages with persistent memory, recent history, and media.
+
+    Returns ``(messages, used_history_turns)``.
+    """
+
     memory = container.operations_memory.read().to_markdown()
     work_memory = container.work_memory.read().to_markdown()
     volatile_user = container.volatile_memory.read(scope="user", key=user_id).to_markdown()
@@ -2570,10 +3398,271 @@ def _build_chat_messages(
         status_md=status_md,
         recent_md=recent_md,
     ).strip()
-    return [
+    history = _recent_chat_turns(container, user_id, limit=history_limit)
+    if media_parts:
+        user_content: str | list[dict[str, Any]] = [text_part(user_message.strip()), *media_parts]
+    else:
+        user_content = user_message.strip()
+    messages: list[LlmMessage] = [
         LlmMessage("system", system),
-        LlmMessage("user", f"{context}\n\n질문:\n{user_message.strip()}"),
+        LlmMessage("system", context),
+        *history,
+        LlmMessage("user", user_content),
     ]
+    return messages, len(history)
+
+
+_SLASH_KV_RE = re.compile(r"(\w+)=(\"[^\"]*\"|'[^']*'|\S+)")
+
+
+def _is_slash_command(message: str) -> bool:
+    return message.lstrip().startswith("/")
+
+
+def _chat_slash_help(container: Container) -> str:
+    """Markdown help listing slash-invokable skills."""
+
+    skills = get_skills()
+    lines = ["사용 가능한 슬래시 스킬:", ""]
+    if not skills:
+        lines.append("- (등록된 스킬이 없습니다)")
+    for skill in skills.values():
+        input_names = ", ".join(item.name for item in skill.inputs) or "(없음)"
+        lines.append(f"- `/{skill.id}` — {skill.description} · 입력: {input_names}")
+    lines.append("")
+    lines.append("예: `/office.document_draft title=주간보고 회의 내용을 정리해줘`")
+    return "\n".join(lines)
+
+
+def _parse_chat_slash(message: str) -> tuple[str, dict[str, Any]]:
+    """Parse ``/skill_id key=value ... free text`` into ``(skill_id, inputs)``.
+
+    Free (non key=value) text is exposed under several common input names so that
+    both prompt and tool skills receive it regardless of their schema.
+    """
+
+    body = message.lstrip()[1:].strip()
+    if not body:
+        return "", {}
+    head, _, rest = body.partition(" ")
+    skill_id = head.strip()
+    rest = rest.strip()
+    inputs: dict[str, Any] = {}
+    consumed_spans: list[tuple[int, int]] = []
+    for match in _SLASH_KV_RE.finditer(rest):
+        key = match.group(1)
+        raw = match.group(2).strip("\"'")
+        inputs[key] = raw
+        consumed_spans.append(match.span())
+    free_text = rest
+    for start, end in reversed(consumed_spans):
+        free_text = free_text[:start] + free_text[end:]
+    free_text = free_text.strip()
+    if free_text:
+        for default_key in ("text", "title", "source_text", "query", "message"):
+            inputs.setdefault(default_key, free_text)
+    return skill_id, inputs
+
+
+def _format_skill_answer(skill_id: str, result: Any) -> str:
+    parts = [f"`/{skill_id}` 실행 완료 ({result.status})."]
+    if str(result.output_text or "").strip():
+        parts.append(str(result.output_text).strip())
+    if result.output_path:
+        parts.append(f"저장 위치: {result.output_path}")
+    if result.tool_result:
+        parts.append(
+            "```json\n" + json.dumps(result.tool_result, ensure_ascii=False, indent=2) + "\n```"
+        )
+    for note in result.notes:
+        parts.append(f"- {note}")
+    return "\n\n".join(parts)
+
+
+async def _chat_run_slash(
+    container: Container,
+    payload: ChatRequest,
+    actor: str,
+    *,
+    route: Literal["local", "api"],
+    provider: LlmProviderName,
+) -> ChatResponse:
+    message = payload.message.strip()
+    skill_id, inputs = _parse_chat_slash(message)
+    if skill_id in {"", "skills", "help", "?"}:
+        answer = _chat_slash_help(container)
+        container.conversations.append_pair(
+            user_id=actor,
+            user_message=message,
+            assistant_message=answer,
+            provider=provider,
+            model="slash",
+            route=route,
+            source_refs=[],
+        )
+        return ChatResponse(
+            answer=answer,
+            route=route,
+            provider=provider,
+            model="slash",
+            prompt_tokens=0,
+            completion_tokens=0,
+        )
+    skill = get_skill(skill_id)
+    if skill is None:
+        answer = f"`/{skill_id}` 스킬을 찾을 수 없습니다. `/skills`로 목록을 확인하세요."
+        container.conversations.append_pair(
+            user_id=actor,
+            user_message=message,
+            assistant_message=answer,
+            provider=provider,
+            model="slash",
+            route=route,
+            source_refs=[],
+        )
+        return ChatResponse(
+            answer=answer,
+            route=route,
+            provider=provider,
+            model="slash",
+            prompt_tokens=0,
+            completion_tokens=0,
+        )
+    if not container.access_control.has_permission(actor, skill.required_permission or "work:read"):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail=f"permission required: {skill.required_permission or 'work:read'}",
+        )
+
+    async def _completion(prompt: str, image_parts: list[dict[str, Any]] | None) -> str:
+        return await _complete_office_task(
+            container, prompt, task=skill.task, image_parts=image_parts
+        )
+
+    job = _start_ai_job(container, task=f"skill:{skill_id}", actor=actor, input_summary=message)
+    try:
+        result = await run_skill(
+            container, skill_id, inputs, actor=actor, completion=_completion
+        )
+        job = _finish_ai_job(container, job, status="succeeded")
+    except SkillError as exc:
+        _finish_ai_job(container, job, status="failed", error=str(exc))
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:
+        _finish_ai_job(container, job, status="failed", error=str(exc))
+        raise
+    answer = _format_skill_answer(skill_id, result)
+    container.conversations.append_pair(
+        user_id=actor,
+        user_message=message,
+        assistant_message=answer,
+        provider=provider,
+        model=f"skill:{skill_id}",
+        route=route,
+        source_refs=[],
+    )
+    return ChatResponse(
+        answer=answer,
+        route=route,
+        provider=provider,
+        model=f"skill:{skill_id}",
+        prompt_tokens=0,
+        completion_tokens=0,
+        ai_job=_ai_job_payload(job).model_dump(),
+        skill_id=skill_id,
+        skill_result=result.to_dict(),
+    )
+
+
+async def _chat_complete(container: Container, payload: ChatRequest, actor: str) -> ChatResponse:
+    """Shared chat pipeline used by both the JSON and streaming endpoints."""
+
+    runtime = container.llm_runtime.read()
+    task_route = runtime.route_for(payload.task or "chat")
+    route = payload.route or task_route.route
+    provider = payload.provider or task_route.provider
+    if route == "local" and not runtime.local_enabled:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="local LLM route is disabled")
+    if route == "local":
+        _sync_local_llm_state(container, enabled=True)
+    if route == "api" and not runtime.api_enabled:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="API LLM route is disabled")
+    llm_route: LlmRoute = "local" if route == "local" else "cloud"
+    if _is_slash_command(payload.message):
+        return await _chat_run_slash(container, payload, actor, route=route, provider=provider)
+    model = _resolve_task_model(container, payload.task or "chat", provider, llm_route)
+    vision = model_supports_vision(provider, model)
+    audio = model_supports_audio(provider, model)
+    attachment_context, media_parts, attachment_notes = _resolve_document_attachments(
+        container, payload.attachment_ids, vision_enabled=vision, audio_enabled=audio
+    )
+    user_message = payload.message
+    if attachment_context:
+        user_message = f"{payload.message}\n\n[첨부 자료]\n{attachment_context}"
+    messages, used_history = _build_chat_messages(
+        container,
+        user_message,
+        user_id=actor,
+        history_limit=payload.history_limit,
+        media_parts=media_parts,
+    )
+    job = _start_ai_job(
+        container, task=payload.task or "chat", actor=actor, input_summary=payload.message
+    )
+    try:
+        response = await _complete_with_provider(
+            container,
+            messages,
+            provider=provider,
+            route=llm_route,
+            temperature=0.2,
+            max_tokens=1024,
+            task=payload.task or "chat",
+            actor=actor,
+            model=model,
+        )
+        job = _finish_ai_job(container, job, status="succeeded")
+    except Exception as exc:
+        _finish_ai_job(container, job, status="failed", error=str(exc))
+        raise
+    container.metrics.record(
+        agent="chat",
+        route=response.route,
+        tokens_in=response.prompt_tokens,
+        tokens_out=response.completion_tokens,
+        latency_ms=0,
+    )
+    container.conversations.append_pair(
+        user_id=actor,
+        user_message=payload.message,
+        assistant_message=response.text,
+        provider=provider,
+        model=response.model,
+        route=route,
+        source_refs=[],
+    )
+    _update_user_volatile_memory_after_chat(
+        container, actor=actor, user_message=payload.message, answer=response.text
+    )
+    return ChatResponse(
+        answer=response.text,
+        route=route,
+        provider=provider,
+        model=response.model,
+        prompt_tokens=response.prompt_tokens,
+        completion_tokens=response.completion_tokens,
+        ai_job=_ai_job_payload(job).model_dump(),
+        attachment_notes=attachment_notes,
+        used_history=used_history,
+    )
+
+
+def _sse_event(event: str, data: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _chunk_text(text: str, size: int = 24) -> list[str]:
+    return [text[i : i + size] for i in range(0, len(text), size)] or [""]
 
 
 def _require(container: Container, credential: str | None, permission: str) -> str:
@@ -2586,6 +3675,47 @@ def _require(container: Container, credential: str | None, permission: str) -> s
             detail=f"permission required: {permission}",
         )
     return user_id
+
+
+def _ensure_acl_keeps_admin_access(
+    acl: dict[str, Any],
+    *,
+    users_override: list[dict[str, object]] | None = None,
+    roles_override: list[dict[str, object]] | None = None,
+    delete_user_id: str = "",
+    delete_role_id: str = "",
+) -> None:
+    users = [dict(user) for user in acl.get("users", []) if isinstance(user, dict)]
+    roles = [dict(role) for role in acl.get("roles", []) if isinstance(role, dict)]
+    if users_override:
+        for override in users_override:
+            user_id = str(override.get("id") or "")
+            users = [user for user in users if str(user.get("id") or "") != user_id]
+            users.append(dict(override))
+    if roles_override:
+        for override in roles_override:
+            role_id = str(override.get("id") or "")
+            roles = [role for role in roles if str(role.get("id") or "") != role_id]
+            roles.append(dict(override))
+    if delete_user_id:
+        users = [user for user in users if str(user.get("id") or "") != delete_user_id]
+    if delete_role_id:
+        roles = [role for role in roles if str(role.get("id") or "") != delete_role_id]
+    admin_role_ids = {
+        str(role.get("id") or "")
+        for role in roles
+        if "*" in [str(permission) for permission in role.get("permissions", [])]
+        or "admin:users" in [str(permission) for permission in role.get("permissions", [])]
+    }
+    has_admin = any(
+        bool(user.get("active", True)) and str(user.get("role_id") or "") in admin_role_ids
+        for user in users
+    )
+    if not has_admin:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="At least one active administrator with admin:users permission is required.",
+        )
 
 
 def _resolve_authenticated_user(container: Container, credential: str | None) -> str | None:
@@ -2602,6 +3732,185 @@ def _extract_token(credential: str | None) -> str:
     if value.lower().startswith("bearer "):
         return value[7:].strip()
     return value
+
+
+def _user_display_name(container: Container, user_id: str) -> str:
+    acl = container.access_control.read()
+    user = next((entry for entry in acl["users"] if entry["id"] == user_id), None)
+    if user is None:
+        return user_id
+    return str(user.get("display_name") or user_id)
+
+
+# Grade thresholds that divide how far a user can assign work across departments.
+_ASSIGN_ALL_LEVEL = 90  # owner/대표급: 모든 부서에 배정 가능
+_ASSIGN_DEPARTMENT_LEVEL = 70  # 매니저급: 본인 부서(하위 포함)에 배정 가능
+
+
+def _role_level(container: Container, user_id: str | None) -> int:
+    if not user_id:
+        return 0
+    acl = container.access_control.read()
+    user = next((entry for entry in acl["users"] if entry["id"] == user_id), None)
+    if user is None:
+        return 0
+    role = next((entry for entry in acl["roles"] if entry["id"] == user.get("role_id")), None)
+    if role is None:
+        return 0
+    raw_perms = role.get("permissions", [])
+    permissions = [str(item) for item in raw_perms] if isinstance(raw_perms, list) else []
+    raw_level = role.get("level")
+    level = raw_level if isinstance(raw_level, int) else 0
+    if "*" in permissions:
+        return max(level, _ASSIGN_ALL_LEVEL)
+    return level
+
+
+def _descendant_department_ids(
+    departments: list[dict[str, object]], roots: set[str]
+) -> set[str]:
+    children: dict[str, list[str]] = {}
+    for dept in departments:
+        parent = str(dept.get("parent_id") or "")
+        if parent:
+            children.setdefault(parent, []).append(str(dept.get("id") or ""))
+    result: set[str] = set()
+    queue = list(roots)
+    while queue:
+        current = queue.pop()
+        if not current or current in result:
+            continue
+        result.add(current)
+        queue.extend(children.get(current, []))
+    return result
+
+
+def _assignment_scope(container: Container, user_id: str | None) -> dict[str, Any]:
+    acl = container.access_control.read()
+    departments = acl["departments"]
+    users = acl["users"]
+    level = _role_level(container, user_id)
+    actor = next((entry for entry in users if entry["id"] == user_id), None)
+    actor_dept = str(actor.get("department") or "") if actor else ""
+    if level >= _ASSIGN_ALL_LEVEL:
+        scope = "all"
+        dept_ids = [str(dept.get("id")) for dept in departments]
+        assignable = [user for user in users if user.get("active", True)]
+        scoped_departments = list(departments)
+    elif level >= _ASSIGN_DEPARTMENT_LEVEL and actor_dept:
+        scope = "department"
+        allowed = _descendant_department_ids(departments, {actor_dept})
+        dept_ids = sorted(allowed)
+        assignable = [
+            user
+            for user in users
+            if user.get("active", True) and str(user.get("department") or "") in allowed
+        ]
+        scoped_departments = [dept for dept in departments if str(dept.get("id")) in allowed]
+    else:
+        scope = "none"
+        dept_ids = []
+        assignable = []
+        scoped_departments = []
+    return {
+        "can_assign": scope != "none",
+        "scope": scope,
+        "level": level,
+        "department_ids": dept_ids,
+        "departments": scoped_departments,
+        "assignable_users": assignable,
+    }
+
+
+def _resolve_user_ref(container: Container, ref: str) -> tuple[str, str]:
+    """Resolve a user id-or-display-name into a (user_id, display_name) pair."""
+
+    ref = (ref or "").strip()
+    if not ref:
+        return "", ""
+    acl = container.access_control.read()
+    match = next(
+        (
+            user
+            for user in acl["users"]
+            if str(user.get("id") or "").lower() == ref.lower()
+            or str(user.get("display_name") or "").lower() == ref.lower()
+        ),
+        None,
+    )
+    if match is not None:
+        return str(match.get("id")), str(match.get("display_name") or match.get("id"))
+    return "", ref
+
+
+def _collect_owner_activity(container: Container, owner: str, *, limit: int = 30) -> str:
+    """Gather what a departing owner did so the handover LLM can build tasks."""
+
+    owner_id, owner_name = _resolve_user_ref(container, owner)
+    if not owner_name:
+        return ""
+    keys = {key.lower() for key in {owner_id, owner_name} if key}
+    lines: list[str] = []
+
+    items = [
+        entry
+        for entry in container.work_schedule.list()
+        if str(entry.get("owner_id") or "").lower() in keys
+        or str(entry.get("owner_name") or "").lower() in keys
+    ]
+    if items:
+        lines.append("### 담당 작업/스케줄")
+        for entry in items[:limit]:
+            suffix = f" (마감 {entry.get('due_date')})" if entry.get("due_date") else ""
+            note = f" — 메모: {entry.get('notes')}" if entry.get("notes") else ""
+            lines.append(f"- [{entry.get('status')}] {entry.get('title')}{suffix}{note}")
+
+    try:
+        jobs = [
+            _ai_job_payload(record).model_dump()
+            for record in container.ai_jobs.recent(limit=200)
+        ]
+    except Exception:
+        jobs = []
+    owner_jobs = [job for job in jobs if str(job.get("actor") or "").lower() in keys]
+    if owner_jobs:
+        lines.append("\n### 최근 AI 작업 실행")
+        for job in owner_jobs[:limit]:
+            lines.append(
+                f"- [{job.get('status')}] {job.get('task')}: {job.get('input_summary')} "
+                f"({job.get('created_at')})"
+            )
+
+    try:
+        audits = container.audit_log.list_recent(limit=500)
+    except Exception:
+        audits = []
+    owner_audits = [entry for entry in audits if str(entry.get("actor") or "").lower() in keys]
+    if owner_audits:
+        lines.append("\n### 최근 활동 로그")
+        for entry in owner_audits[:limit]:
+            lines.append(
+                f"- {entry.get('created_at')} · {entry.get('action')} "
+                f"→ {entry.get('target')}/{entry.get('target_id')}"
+            )
+
+    if not lines:
+        return ""
+    return f"기존 담당자({owner_name}) 활동 요약:\n" + "\n".join(lines)
+
+
+def _ensure_owner_in_scope(container: Container, actor: str, owner_id: str) -> None:
+    if not owner_id:
+        return
+    scope = _assignment_scope(container, actor)
+    if scope["scope"] == "all":
+        return
+    assignable_ids = {str(user.get("id")) for user in scope["assignable_users"]}
+    if owner_id not in assignable_ids:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail="이 사원에게 업무를 배정할 권한이 없습니다. 담당 부서 범위를 벗어났습니다.",
+        )
 
 
 def _user_payload(container: Container, user_id: str) -> dict[str, object]:
@@ -2776,6 +4085,8 @@ def _settings_api_key(container: Container, provider: str) -> str:
         return container.settings.llm.anthropic_api_key
     if provider == "gemini":
         return container.settings.llm.gemini_api_key
+    if provider == "together":
+        return container.settings.llm.together_api_key
     return ""
 
 
@@ -2909,12 +4220,15 @@ def _masked_provider_payload(container: Container) -> list[dict[str, object]]:
     for provider in providers:
         provider_id = str(provider["provider"])
         provider["label"] = metadata.get(provider_id, {}).get("label", provider_id)
-        provider["base_url"] = default_base_url(
-            provider_id,
-            vllm_base_url=container.settings.llm.vllm_base_url,
-        )
+        provider["base_url"] = _default_base_url(container, provider_id)
         provider["base_url_source"] = "system"
     return providers
+
+
+def _default_base_url(container: Container, provider: str) -> str:
+    if provider == "together":
+        return container.settings.llm.together_base_url.rstrip("/")
+    return default_base_url(provider, vllm_base_url=container.settings.llm.vllm_base_url)
 
 
 def _sync_local_llm_state(container: Container, *, enabled: bool) -> None:
@@ -2986,12 +4300,19 @@ async def _generate_hiring_document(
     kind: str,
     instruction: str,
 ) -> GeneratedDocumentPayload:
+    target_context = _hiring_target_context(container, payload)
+    workload_context = _hiring_workload_context(container, payload) if payload.include_workload else "업무량 컨텍스트 제외"
     prompt = render_prompt(
         "office/hiring_document.md.j2",
         context=_office_context(container),
         role_title=payload.role_title,
         business_need=payload.business_need,
         priority=payload.priority,
+        target_context=target_context,
+        workload_context=workload_context,
+        candidate_name=payload.candidate_name,
+        candidate_profile=payload.candidate_profile,
+        interview_stage=payload.interview_stage,
         instruction=instruction,
     ).strip()
     job = _start_ai_job(
@@ -3020,6 +4341,69 @@ async def _generate_hiring_document(
     )
 
 
+def _hiring_target_context(container: Container, payload: HiringRequest) -> str:
+    acl = container.access_control.read()
+    dept = next((item for item in acl.get("departments", []) if str(item.get("id")) == payload.department_id), None)
+    position = next((item for item in acl.get("positions", []) if str(item.get("id")) == payload.position_id), None)
+    lines = [
+        f"- 대상 부서: {dept.get('name') if dept else '(미지정)'}",
+        f"- 대상 직급/등급: {position.get('name') if position else '(미지정)'}",
+    ]
+    if dept and dept.get("description"):
+        lines.append(f"- 부서 업무 범위: {dept.get('description')}")
+    if position and position.get("description"):
+        lines.append(f"- 직급 설명: {position.get('description')}")
+    if payload.candidate_name:
+        lines.append(f"- 후보자/신입 이름: {payload.candidate_name}")
+    if payload.interview_stage:
+        lines.append(f"- 채용 단계: {payload.interview_stage}")
+    if payload.candidate_profile:
+        lines.append(f"- 후보자 신원/경력 메모: {payload.candidate_profile}")
+    return "\n".join(lines)
+
+
+def _hiring_workload_context(container: Container, payload: HiringRequest) -> str:
+    acl = container.access_control.read()
+    dept = next((item for item in acl.get("departments", []) if str(item.get("id")) == payload.department_id), None)
+    dept_name = str(dept.get("name") or "") if dept else ""
+    dept_user_ids = {
+        str(user.get("id"))
+        for user in acl.get("users", [])
+        if payload.department_id and str(user.get("department") or "") == payload.department_id
+    }
+    items = container.work_schedule.list()
+    if payload.department_id:
+        items = [
+            item
+            for item in items
+            if str(item.get("owner_id") or "") in dept_user_ids
+            or payload.department_id.lower()
+            in f"{item.get('title') or ''} {item.get('notes') or ''}".lower()
+            or (dept_name and dept_name.lower() in f"{item.get('title') or ''} {item.get('notes') or ''}".lower())
+        ]
+    if not items:
+        return "- 현재 연결된 업무 스케줄 항목이 없습니다. work_memory와 조직 메모리를 기준으로 판단하세요."
+    priority_rank = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
+    ordered = sorted(
+        items,
+        key=lambda item: (
+            priority_rank.get(str(item.get("priority") or "normal"), 2),
+            str(item.get("due_date") or ""),
+        ),
+    )
+    lines = ["현재 업무량/스케줄 신호:"]
+    for item in ordered[:20]:
+        lines.append(
+            "- "
+            f"{item.get('title')} · owner={item.get('owner_name') or item.get('owner_id') or '미지정'} "
+            f"· status={item.get('status') or '-'} · priority={item.get('priority') or '-'} "
+            f"· due={item.get('due_date') or '-'}"
+        )
+        if item.get("notes"):
+            lines.append(f"  - notes: {str(item.get('notes'))[:220]}")
+    return "\n".join(lines)
+
+
 def _resolve_runtime_task(container: Container, task: str) -> tuple[LlmProviderName, LlmRoute]:
     runtime = container.llm_runtime.read()
     task_route = runtime.route_for(task)
@@ -3031,16 +4415,96 @@ def _resolve_runtime_task(container: Container, task: str) -> tuple[LlmProviderN
     return task_route.provider, route
 
 
+def _resolve_runtime_model(
+    container: Container, provider: LlmProviderName, route: LlmRoute
+) -> str:
+    """Default model for a provider/route when no per-task override is set."""
+
+    runtime = container.llm_runtime.read()
+    llm = container.settings.llm
+    defaults: dict[str, str] = {
+        "openai": llm.openai_model,
+        "anthropic": llm.anthropic_model,
+        "gemini": llm.gemini_model,
+        "together": llm.together_model,
+        "vllm": llm.vllm_model,
+    }
+    if route == "local" or provider == "vllm":
+        return (runtime.local_model or llm.vllm_model or defaults.get("vllm", "")).strip()
+    saved = container.secret_store.read(provider)
+    if saved and saved.model:
+        return saved.model.strip()
+    return defaults.get(provider, "")
+
+
+def _resolve_task_model(
+    container: Container,
+    task: str,
+    provider: LlmProviderName,
+    route: LlmRoute,
+) -> str:
+    """Effective model for a task: per-task override first, then provider defaults."""
+
+    runtime = container.llm_runtime.read()
+    routes = runtime.task_routes or {}
+    task_route = routes.get(task)
+    if task_route and str(task_route.model or "").strip():
+        # Only honor the per-task model override when it matches the provider/route
+        # actually used. Otherwise (e.g. the chat route is overridden to api/openai
+        # in the UI while the task is configured for a local model) the local model
+        # name would be sent to a cloud provider, producing "invalid model ID".
+        same_provider = str(task_route.provider) == str(provider)
+        task_is_local = str(task_route.route) == "local"
+        if same_provider and task_is_local == (route == "local"):
+            return str(task_route.model).strip()
+    return _resolve_runtime_model(container, provider, route)
+
+
+def _effective_provider_model(
+    container: Container,
+    provider: LlmProviderName,
+    *,
+    model: str,
+    route: LlmRoute,
+) -> str:
+    """Resolve the model string passed to a provider adapter."""
+
+    chosen = (model or "").strip()
+    if chosen:
+        return chosen
+    return _resolve_runtime_model(container, provider, route)
+
+
+def _sync_embedded_model(container: Container, model: str) -> None:
+    """Ensure the in-process vLLM engine matches the requested model."""
+
+    embedded = container.embedded_vllm()
+    if embedded is None:
+        return
+    effective = (model or "").strip()
+    if effective:
+        embedded.configure_model(effective)
+
+
 async def _complete_office_task(
-    container: Container, prompt: str, *, task: str = "document_generation"
+    container: Container,
+    prompt: str,
+    *,
+    task: str = "document_generation",
+    image_parts: list[dict[str, Any]] | None = None,
 ) -> str:
     provider, route = _resolve_runtime_task(container, task)
+    model = _resolve_task_model(container, task, provider, route)
+    if image_parts:
+        user_content: str | list[dict[str, Any]] = [text_part(prompt), *image_parts]
+    else:
+        user_content = prompt
     messages = [
         LlmMessage(
             "system",
             render_prompt("office/office_task_system.md.j2").strip(),
         ),
-        LlmMessage("user", prompt),
+        LlmMessage("user", user_content),
     ]
     response = await _complete_with_provider(
         container,
@@ -3050,14 +4514,78 @@ async def _complete_office_task(
         temperature=0.2,
         max_tokens=1600,
         task=task,
+        model=model,
     )
-    return response.text.strip() or "_(LLM 응답 없음)_"
+    text = response.text.strip()
+    if text:
+        return text
+    try:
+        retry = await _complete_with_provider(
+            container,
+            messages,
+            provider=provider,
+            route=route,
+            temperature=0.2,
+            max_tokens=6000,
+            task=task,
+            model=model,
+        )
+        retry_text = retry.text.strip()
+        if retry_text:
+            return retry_text
+        diagnostic = (
+            f"provider={provider}, route={route}, model={retry.model or response.model}, "
+            f"prompt_tokens={response.prompt_tokens}+{retry.prompt_tokens}, "
+            f"completion_tokens={response.completion_tokens}+{retry.completion_tokens}"
+        )
+    except HTTPException as exc:
+        if exc.status_code != status.HTTP_429_TOO_MANY_REQUESTS:
+            raise
+        diagnostic = (
+            f"provider={provider}, route={route}, model={response.model}, "
+            f"first_completion_tokens={response.completion_tokens}, retry=rate_limited"
+        )
+    return _fallback_office_task_markdown(prompt, task=task, diagnostic=diagnostic)
+
+
+async def _run_step_skill(
+    container: Container, skill_id: str, *, item: Any, actor: str
+) -> tuple[str, str]:
+    """Run a skill bound to a work-schedule step; return ``(result_path, markdown)``."""
+
+    async def _completion(prompt: str, image_parts: list[dict[str, Any]] | None) -> str:
+        return await _complete_office_task(
+            container, prompt, task="document_generation", image_parts=image_parts
+        )
+
+    inputs: dict[str, Any] = {
+        "title": item.title,
+        "source_text": item.notes,
+        "audience": item.owner_name,
+        "query": item.title,
+    }
+    run_result = await run_skill(
+        container, skill_id, inputs, actor=actor, completion=_completion
+    )
+    markdown = run_result.output_text or json.dumps(
+        run_result.tool_result, ensure_ascii=False, indent=2
+    )
+    result_path = run_result.output_path
+    if not result_path:
+        result_path = _write_generated_doc(
+            container.settings.archive_dir,
+            folder="work_architecture",
+            slug=f"skill_{skill_id}_{item.title}",
+            markdown=markdown,
+        )
+    return result_path, markdown
 
 
 async def _complete_patchops_task(
     container: Container, prompt: str, *, task: str = "patch_planning"
 ) -> str:
     provider, route = _resolve_runtime_task(container, task)
+    model = _resolve_task_model(container, task, provider, route)
     messages = [
         LlmMessage(
             "system",
@@ -3077,6 +4605,7 @@ async def _complete_patchops_task(
         temperature=0.1,
         max_tokens=2200,
         task=task,
+        model=model,
     )
     return response.text.strip()
 
@@ -3091,7 +4620,11 @@ async def _complete_with_provider(
     max_tokens: int,
     task: str = "chat",
     actor: str = "",
+    model: str = "",
 ) -> LlmResponse:
+    effective_model = _effective_provider_model(container, provider, model=model, route=route)
+    if route == "local" and provider == "vllm":
+        _sync_embedded_model(container, effective_model)
     destination = _firewall_destination(provider=provider, route=route)
     policy = load_context_firewall_policy(container.settings.workspace_dir)
     messages, firewall_result = sanitize_llm_messages(
@@ -3132,6 +4665,7 @@ async def _complete_with_provider(
                 route=route,
                 temperature=temperature,
                 max_tokens=max_tokens,
+                model=effective_model,
             )
             sanitized = sanitize_llm_response(
                 response, destination=destination, task_type=str(provider)
@@ -3149,7 +4683,7 @@ async def _complete_with_provider(
         if saved and saved.api_key and provider == "openai" and route != "local":
             response = await OpenAiProvider(
                 api_key=saved.api_key,
-                model=saved.model or container.settings.llm.openai_model,
+                model=effective_model or saved.model or container.settings.llm.openai_model,
                 base_url=default_base_url("openai"),
             ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
             sanitized = sanitize_llm_response(
@@ -3167,7 +4701,7 @@ async def _complete_with_provider(
         if saved and saved.api_key and provider == "anthropic" and route != "local":
             response = await AnthropicProvider(
                 api_key=saved.api_key,
-                model=saved.model or container.settings.llm.anthropic_model,
+                model=effective_model or saved.model or container.settings.llm.anthropic_model,
                 base_url=default_base_url("anthropic"),
             ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
             sanitized = sanitize_llm_response(
@@ -3185,8 +4719,26 @@ async def _complete_with_provider(
         if saved and saved.api_key and provider == "gemini" and route != "local":
             response = await GeminiProvider(
                 api_key=saved.api_key,
-                model=saved.model or container.settings.llm.gemini_model,
+                model=effective_model or saved.model or container.settings.llm.gemini_model,
                 base_url=default_base_url("gemini"),
+            ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
+            sanitized = sanitize_llm_response(
+                response, destination=destination, task_type=str(provider)
+            )
+            _record_token_usage(
+                container,
+                provider=provider,
+                model=sanitized.model,
+                task=task,
+                actor=actor,
+                response=sanitized,
+            )
+            return sanitized
+        if saved and saved.api_key and provider == "together" and route != "local":
+            response = await OpenAiProvider(
+                api_key=saved.api_key,
+                model=effective_model or saved.model or container.settings.llm.together_model,
+                base_url=saved.base_url or container.settings.llm.together_base_url,
             ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
             sanitized = sanitize_llm_response(
                 response, destination=destination, task_type=str(provider)
@@ -3203,7 +4755,7 @@ async def _complete_with_provider(
         if saved and provider == "vllm" and container.settings.llm.vllm_mode != "embedded":
             response = await VllmProvider(
                 base_url=saved.base_url or container.settings.llm.vllm_base_url,
-                model=saved.model or container.settings.llm.vllm_model,
+                model=effective_model or saved.model or container.settings.llm.vllm_model,
                 api_key=saved.api_key or "EMPTY",
             ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
             sanitized = sanitize_llm_response(
@@ -3244,7 +4796,9 @@ async def _complete_with_provider(
             temperature=temperature,
             max_tokens=max_tokens,
         )
-        sanitized = sanitize_llm_response(response, destination=destination, task_type=str(provider))
+        sanitized = sanitize_llm_response(
+            response, destination=destination, task_type=str(provider)
+        )
         _record_token_usage(
             container,
             provider=provider,
@@ -3299,9 +4853,18 @@ def _llm_provider_http_error(provider: LlmProviderName, exc: Exception) -> HTTPE
     detail = str(exc) or exc.__class__.__name__
     if isinstance(status_code, int):
         if status_code in {400, 401, 403, 404, 422}:
+            hint = ""
+            low = detail.lower()
+            if "model" in low and ("invalid" in low or "not found" in low or "does not exist" in low):
+                hint = (
+                    " — 설정된 모델 ID가 올바르지 않습니다. 'API 키·로컬 에이전트' 관리에서"
+                    " 해당 제공자의 모델을 유효한 값으로 변경하세요."
+                )
+            elif status_code in {401, 403}:
+                hint = " — API 키를 확인하세요."
             return HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                detail=f"{provider} 요청이 거절되었습니다: {detail}",
+                detail=f"{provider} 요청이 거절되었습니다: {detail}{hint}",
             )
         if status_code in {408, 429, 500, 502, 503, 504}:
             return HTTPException(
@@ -3317,9 +4880,57 @@ def _llm_provider_http_error(provider: LlmProviderName, exc: Exception) -> HTTPE
 def _firewall_destination(*, provider: LlmProviderName, route: LlmRoute) -> str:
     if route == "local" or provider in {"vllm", "fake"}:
         return "local_llm"
-    if provider in {"openai", "anthropic", "gemini"}:
+    if provider in {"openai", "anthropic", "gemini", "together"}:
         return "frontier_llm"
     return "cloud_llm"
+
+
+def _fallback_office_task_markdown(prompt: str, *, task: str, diagnostic: str = "") -> str:
+    title = (
+        _extract_prompt_field(prompt, ("제목", "목표", "Objective", "Title")) or "자동 생성 초안"
+    )
+    source = (
+        _extract_prompt_field(prompt, ("원문/메모", "원문", "메모", "Source", "source_text"))
+        or prompt[:600]
+    )
+    return "\n".join(
+        [
+            f"# {title}",
+            "",
+            "> 외부 LLM이 빈 응답을 반환해 로컬 fallback 초안을 생성했습니다.",
+            f"> task: `{task}`",
+            *( [f"> diagnostic: `{diagnostic}`"] if diagnostic else [] ),
+            "",
+            "## 핵심 요약",
+            f"- 입력 주제: {title}",
+            f"- 참고 내용: {source[:240]}",
+            "",
+            "## 초안",
+            "- 배경과 목적을 확인합니다.",
+            "- 현재 입력된 원문/메모를 기준으로 주요 논점을 정리합니다.",
+            "- 담당자와 다음 액션을 분리해 후속 작업으로 넘깁니다.",
+            "",
+            "## 다음 액션",
+            "- 담당자는 초안을 검토하고 누락된 결정사항을 보완합니다.",
+            "- 필요한 경우 LLM 설정의 출력 토큰 예산 또는 모델을 조정한 뒤 다시 생성합니다.",
+        ]
+    )
+
+
+def _extract_prompt_field(prompt: str, labels: tuple[str, ...]) -> str:
+    lines = prompt.splitlines()
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        for label in labels:
+            if stripped.startswith(f"{label}:"):
+                inline = stripped.split(":", 1)[-1].strip()
+                if inline:
+                    return inline[:120]
+                if index + 1 < len(lines):
+                    return lines[index + 1].strip()[:120]
+            if stripped.rstrip(":") == label and index + 1 < len(lines):
+                return lines[index + 1].strip()[:120]
+    return ""
 
 
 async def _complete_via_gateway(
@@ -3330,14 +4941,20 @@ async def _complete_via_gateway(
     route: LlmRoute,
     temperature: float,
     max_tokens: int,
+    model: str = "",
 ) -> LlmResponse:
-    payload = {
+    payload: dict[str, Any] = {
         "provider": provider,
         "route": route,
-        "messages": [{"role": message.role, "content": message.content} for message in messages],
+        "messages": [
+            {"role": message.role, "content": flatten_message_text(message.content)}
+            for message in messages
+        ],
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
+    if model.strip():
+        payload["model"] = model.strip()
     async with httpx.AsyncClient(timeout=120) as client:
         response = await client.post(
             f"{container.settings.llm.gateway_url.rstrip('/')}/v1/chat/completions",
@@ -3354,6 +4971,84 @@ async def _complete_via_gateway(
     )
 
 
+def _as_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(float(str(value)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _org_roster_markdown(container: Container) -> str:
+    acl = container.access_control.read()
+    users = acl.get("users", [])
+    departments = acl.get("departments", [])
+    roles_by_id = {str(role.get("id")): str(role.get("name") or role.get("id")) for role in acl.get("roles", [])}
+    positions = acl.get("positions", [])
+    positions_by_id = {
+        str(position.get("id")): str(position.get("name") or position.get("id"))
+        for position in positions
+    }
+    lines: list[str] = []
+    if departments:
+        children_by_parent: dict[str, list[dict[str, Any]]] = {}
+        dept_ids = {str(dept.get("id")) for dept in departments}
+        for dept in departments:
+            parent_id = str(dept.get("parent_id") or "")
+            # Treat references to missing parents as roots.
+            key = parent_id if parent_id in dept_ids else ""
+            children_by_parent.setdefault(key, []).append(dept)
+
+        def _render(dept: dict[str, Any], depth: int) -> None:
+            dept_id = str(dept.get("id"))
+            members = [
+                str(user.get("display_name") or user.get("id"))
+                for user in users
+                if str(user.get("department") or "") == dept_id
+            ]
+            lead_id = str(dept.get("lead_user_id") or "")
+            lead = next(
+                (str(user.get("display_name") or user.get("id")) for user in users if str(user.get("id")) == lead_id),
+                "",
+            )
+            member_text = ", ".join(members) if members else "구성원 미지정"
+            lead_text = f" · 리드 {lead}" if lead else ""
+            indent = "  " * depth
+            lines.append(f"{indent}- {dept.get('name')}{lead_text}: {member_text}")
+            for child in children_by_parent.get(dept_id, []):
+                _render(child, depth + 1)
+
+        lines.append("부서(조직도):")
+        for root in children_by_parent.get("", []):
+            _render(root, 0)
+    else:
+        lines.append("부서: 등록된 부서 없음")
+    if positions:
+        ordered = sorted(positions, key=lambda item: _as_int(item.get("level")), reverse=True)
+        lines.append("직급:")
+        for position in ordered:
+            lines.append(f"- {position.get('name')} (level {_as_int(position.get('level'))})")
+    active_users = [user for user in users if user.get("active", True)]
+    lines.append("사원:")
+    if active_users:
+        for user in active_users:
+            dept_id = str(user.get("department") or "")
+            dept_name = next(
+                (str(dept.get("name")) for dept in departments if str(dept.get("id")) == dept_id),
+                "부서 미배정",
+            )
+            role_name = roles_by_id.get(str(user.get("role_id") or ""), str(user.get("role_id") or ""))
+            position_name = positions_by_id.get(str(user.get("position_id") or ""), "")
+            position_text = f" · 직급 {position_name}" if position_name else ""
+            title = str(user.get("title") or "")
+            title_text = f" ({title})" if title else ""
+            lines.append(
+                f"- {user.get('display_name')}{title_text} · {dept_name}{position_text} · 권한 {role_name}"
+            )
+    else:
+        lines.append("- 등록된 사원 없음")
+    return "\n".join(lines)
+
+
 def _office_context(container: Container) -> str:
     recent = _recent_logs(container.settings.archive_dir, limit=8)
     permanent = container.permanent_memory.recent(limit=8)
@@ -3367,9 +5062,13 @@ def _office_context(container: Container) -> str:
         f"- {entry.get('repo', '')} #{entry.get('external_id', '')} status={entry.get('status', '')} path={entry.get('path', '')}"
         for entry in recent
     )
+    org_md = _org_roster_markdown(container)
     return f"""
 회사 메모리:
 {container.operations_memory.read().to_markdown()}
+
+조직/인사 체계:
+{org_md}
 
 현재 작업 메모리:
 {container.work_memory.read().to_markdown()}
@@ -3391,17 +5090,448 @@ def _office_context(container: Container) -> str:
 """.strip()
 
 
-def _write_generated_doc(archive_dir: Path, *, folder: str, slug: str, markdown: str) -> str:
-    safe_slug = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in slug).strip("_")
-    safe_slug = safe_slug[:80] or "generated"
-    created = datetime.now(UTC)
-    relative = Path(folder) / f"{created.strftime('%Y%m%d_%H%M%S')}_{safe_slug}.md"
-    path = archive_dir / relative
-    path.parent.mkdir(parents=True, exist_ok=True)
-    body = f"# {slug}\n\n_생성: {created.isoformat()}_\n\n{markdown.strip()}\n"
-    with portalocker.Lock(path, "w", encoding="utf-8", timeout=5) as fh:
-        fh.write(body)
-    return relative.as_posix()
+def _resolve_document_attachments(
+    container: Container,
+    attachment_ids: list[str],
+    *,
+    vision_enabled: bool,
+    audio_enabled: bool = False,
+) -> tuple[str, list[dict[str, Any]], list[str]]:
+    """Resolve upload ids into prompt text, media parts, and human-readable notes.
+
+    Returns ``(attachment_context_markdown, media_parts, notes)``. Text-extractable
+    attachments are flattened into ``attachment_context``; images/audio are passed
+    through as multimodal parts only when a capable model is active, otherwise text
+    (OCR for images) is used and a note explains the fallback.
+    """
+
+    if not attachment_ids:
+        return "", [], []
+    records = {record["id"]: record for record in container.uploads.list()}
+    archive_dir = container.settings.archive_dir
+    blocks: list[str] = []
+    media_parts: list[dict[str, Any]] = []
+    notes: list[str] = []
+    for attachment_id in attachment_ids:
+        record = records.get(attachment_id)
+        if record is None:
+            notes.append(f"첨부 {attachment_id}: 업로드를 찾을 수 없습니다.")
+            continue
+        path = archive_dir / str(record.get("path") or "")
+        extracted = extract_attachment(path, archive_root=archive_dir)
+        if extracted.has_audio:
+            if audio_enabled:
+                media_parts.append(
+                    audio_part(
+                        mime=extracted.mime,
+                        data=extracted.audio_b64,
+                        fmt=extracted.audio_format,
+                    )
+                )
+                notes.append(f"{extracted.filename}: 오디오 지원 모델에 오디오로 전달했습니다.")
+            else:
+                notes.append(
+                    f"{extracted.filename}: 오디오 지원 모델이 없어 오디오 첨부를 건너뛰었습니다."
+                )
+            continue
+        if extracted.has_image and vision_enabled:
+            media_parts.append(image_part(mime=extracted.mime, data=extracted.image_b64))
+            notes.append(f"{extracted.filename}: 비전 모델에 이미지로 전달했습니다.")
+            if extracted.has_text:
+                blocks.append(extracted.to_prompt_block())
+            continue
+        if extracted.has_image and not vision_enabled:
+            if extracted.has_text:
+                blocks.append(extracted.to_prompt_block())
+                notes.append(f"{extracted.filename}: 비전 모델이 없어 OCR 텍스트로 처리했습니다.")
+            else:
+                notes.append(
+                    f"{extracted.filename}: 비전 모델이 없고 OCR 텍스트도 없어 이미지를 건너뛰었습니다."
+                )
+            continue
+        if extracted.has_text:
+            blocks.append(extracted.to_prompt_block())
+        if extracted.note:
+            notes.append(f"{extracted.filename}: {extracted.note}")
+    return "\n\n".join(blocks), media_parts, notes
+
+
+_resolve_output_format = resolve_output_format
+_write_generated_doc = write_generated_doc
+
+
+_STEPS_JSON_RE = re.compile(r"```json\s*(\{.*?\"steps\".*?\})\s*```", re.DOTALL)
+
+
+def _extract_process_steps(markdown: str) -> tuple[str, list[dict[str, str]]]:
+    """Split the trailing machine-readable JSON steps block from the human markdown.
+
+    Returns the markdown with the JSON block removed and the ordered step list.
+    Falls back to an empty list when no parseable block is present.
+    """
+
+    matches = list(_STEPS_JSON_RE.finditer(markdown))
+    if not matches:
+        return markdown.strip(), []
+    match = matches[-1]
+    steps: list[dict[str, str]] = []
+    try:
+        parsed = json.loads(match.group(1))
+        raw_steps = parsed.get("steps") if isinstance(parsed, dict) else None
+        if isinstance(raw_steps, list):
+            for entry in raw_steps:
+                if not isinstance(entry, dict):
+                    continue
+                name = str(entry.get("name") or "").strip()
+                if not name:
+                    continue
+                steps.append(
+                    {
+                        "name": name,
+                        "automation": str(entry.get("automation") or "").strip(),
+                        "reviewer": str(entry.get("reviewer") or "").strip(),
+                        "output": str(entry.get("output") or "").strip(),
+                    }
+                )
+    except (json.JSONDecodeError, AttributeError):
+        return markdown.strip(), []
+    clean = (markdown[: match.start()] + markdown[match.end() :]).strip()
+    return clean, steps
+
+
+def _coerce_steps(raw_steps: object) -> list[dict[str, str]]:
+    steps: list[dict[str, str]] = []
+    if not isinstance(raw_steps, list):
+        return steps
+    for entry in raw_steps:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name") or "").strip()
+        if not name:
+            continue
+        steps.append(
+            {
+                "name": name,
+                "automation": str(entry.get("automation") or "").strip(),
+                "reviewer": str(entry.get("reviewer") or "").strip(),
+                "output": str(entry.get("output") or "").strip(),
+            }
+        )
+    return steps
+
+
+def _parse_steps_payload(text: str) -> list[dict[str, str]]:
+    """Robustly extract a steps array from a (possibly noisy) LLM JSON response."""
+
+    candidate = text.strip()
+    if not candidate:
+        return []
+    fenced = re.search(r"```(?:json)?\s*(.*?)```", candidate, re.DOTALL)
+    if fenced:
+        candidate = fenced.group(1).strip()
+    start = candidate.find("{")
+    end = candidate.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidate = candidate[start : end + 1]
+    try:
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError:
+        return []
+    if isinstance(parsed, dict):
+        return _coerce_steps(parsed.get("steps"))
+    if isinstance(parsed, list):
+        return _coerce_steps(parsed)
+    return []
+
+
+async def _create_handover_tasks(
+    container: Container,
+    *,
+    work_title: str,
+    incoming_owner: str,
+    handover_markdown: str,
+    activity_log: str,
+    source_path: str,
+) -> list[str]:
+    """Derive follow-up tasks from the handover brief and register them for the
+    incoming owner as work-schedule items."""
+
+    owner_id, owner_name = _resolve_user_ref(container, incoming_owner)
+    basis = handover_markdown
+    if activity_log:
+        basis = f"{handover_markdown}\n\n{activity_log}"
+    try:
+        steps = await _generate_process_steps(
+            container,
+            objective=f"{work_title} 인수인계 후속 업무",
+            scope=owner_name or incoming_owner,
+            markdown=basis,
+        )
+    except HTTPException:
+        steps = []
+    created: list[str] = []
+    for step in steps:
+        title = str(step.get("name") or step.get("title") or "").strip()
+        if not title:
+            continue
+        note_parts = [
+            str(step.get("automation") or "").strip(),
+            str(step.get("output") or "").strip(),
+        ]
+        notes = " / ".join(part for part in note_parts if part)
+        notes = f"{notes}\n인수인계 출처: {source_path}" if notes else f"인수인계 출처: {source_path}"
+        item = container.work_schedule.upsert(
+            WorkScheduleItem.create(
+                title=title,
+                owner_id=owner_id,
+                owner_name=owner_name,
+                priority="normal",
+                notes=notes,
+                assignee_kind="human",
+                source_architecture_id=source_path,
+            )
+        )
+        created.append(item.title)
+    return created
+
+
+async def _generate_process_steps(
+    container: Container,
+    *,
+    objective: str,
+    scope: str,
+    markdown: str,
+) -> list[dict[str, str]]:
+    """Generate ordered process steps via a dedicated structured LLM call.
+
+    Falls back to heuristic markdown parsing and finally a single review step so
+    the queue is never left empty when a process design exists.
+    """
+
+    provider, route = _resolve_runtime_task(container, "document_generation")
+    model = _resolve_task_model(container, "document_generation", provider, route)
+    base_prompt = render_prompt(
+        "office/work_process_steps_json.md.j2",
+        objective=objective,
+        scope=scope,
+        markdown=markdown,
+    ).strip()
+    system = LlmMessage(
+        "system",
+        "당신은 업무 프로세스를 실행 가능한 단계로 분해하는 분석가입니다. "
+        "반드시 순수 JSON만 출력하고, 설명이나 코드펜스를 추가하지 마세요.",
+    )
+    attempts = [
+        base_prompt,
+        base_prompt + "\n\n중요: 직전 출력이 형식에 맞지 않았습니다. 오직 JSON 객체 하나만 출력하세요.",
+    ]
+    for prompt in attempts:
+        try:
+            response = await _complete_with_provider(
+                container,
+                [system, LlmMessage("user", prompt)],
+                provider=provider,
+                route=route,
+                temperature=0.1,
+                max_tokens=1400,
+                task="document_generation",
+                model=model,
+            )
+        except HTTPException:
+            break
+        steps = _parse_steps_payload(response.text)
+        if steps:
+            return steps
+    # Heuristic fallback: any inline JSON block left in the human markdown.
+    _, heuristic_steps = _extract_process_steps(markdown)
+    if heuristic_steps:
+        return heuristic_steps
+    objective_label = objective.strip() or "프로세스"
+    return [
+        {
+            "name": f"{objective_label} 설계 검토 및 실행 준비",
+            "automation": "설계 문서 요약 및 실행 항목 도출",
+            "reviewer": "",
+            "output": "검토 결과 및 다음 단계 정의",
+        }
+    ]
+
+
+def _coerce_agent_steps(raw_steps: object) -> list[dict[str, object]]:
+    steps: list[dict[str, object]] = []
+    if not isinstance(raw_steps, list):
+        return steps
+    for index, entry in enumerate(raw_steps):
+        if not isinstance(entry, dict):
+            continue
+        title = str(entry.get("title") or entry.get("name") or "").strip()
+        if not title:
+            continue
+        steps.append(
+            {
+                "id": f"step-{index + 1}",
+                "title": title,
+                "detail": str(entry.get("detail") or "").strip(),
+                "requires_approval": bool(entry.get("requires_approval", False)),
+            }
+        )
+    return steps
+
+
+def _parse_agent_steps_payload(text: str) -> list[dict[str, object]]:
+    candidate = text.strip()
+    if not candidate:
+        return []
+    fenced = re.search(r"```(?:json)?\s*(.*?)```", candidate, re.DOTALL)
+    if fenced:
+        candidate = fenced.group(1).strip()
+    start = candidate.find("{")
+    end = candidate.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidate = candidate[start : end + 1]
+    try:
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError:
+        return []
+    if isinstance(parsed, dict):
+        return _coerce_agent_steps(parsed.get("steps"))
+    if isinstance(parsed, list):
+        return _coerce_agent_steps(parsed)
+    return []
+
+
+async def _generate_agent_plan_steps(
+    container: Container,
+    *,
+    objective: str,
+    context: str,
+    schedule_refs: list[str],
+    memory_refs: list[str],
+) -> list[dict[str, object]]:
+    """Plan execution steps from the conversation context via a structured LLM call.
+
+    Falls back to the static template when no context is provided or the model
+    fails to return usable JSON, so the plan is never left empty.
+    """
+
+    if not context.strip():
+        return _agent_plan_steps(objective, schedule_refs, memory_refs)
+    provider, route = _resolve_runtime_task(container, "chat")
+    model = _resolve_task_model(container, "chat", provider, route)
+    base_prompt = render_prompt(
+        "office/agent_plan_steps_json.md.j2",
+        objective=objective,
+        context=context,
+        schedule_refs=", ".join(schedule_refs),
+        memory_refs=", ".join(memory_refs),
+    ).strip()
+    system = LlmMessage(
+        "system",
+        "당신은 대화 맥락을 실행 가능한 에이전트 계획 단계로 분해하는 분석가입니다. "
+        "반드시 순수 JSON만 출력하고, 설명이나 코드펜스를 추가하지 마세요.",
+    )
+    attempts = [
+        base_prompt,
+        base_prompt + "\n\n중요: 직전 출력이 형식에 맞지 않았습니다. 오직 JSON 객체 하나만 출력하세요.",
+    ]
+    for prompt in attempts:
+        try:
+            response = await _complete_with_provider(
+                container,
+                [system, LlmMessage("user", prompt)],
+                provider=provider,
+                route=route,
+                temperature=0.2,
+                max_tokens=1200,
+                task="chat",
+                model=model,
+            )
+        except HTTPException:
+            break
+        steps = _parse_agent_steps_payload(response.text)
+        if steps:
+            return steps
+    return _agent_plan_steps(objective, schedule_refs, memory_refs)
+
+
+def _render_agent_plan_markdown(
+    *,
+    title: str,
+    objective: str,
+    steps: list[dict[str, object]],
+    context: str,
+) -> str:
+    """Render an agent plan as a Cursor-style plan.md document."""
+
+    lines = [f"# 계획: {title or objective or '제목 없음'}", ""]
+    if objective:
+        lines += ["## 목표", objective, ""]
+    lines += ["## 실행 단계", ""]
+    if steps:
+        for index, step in enumerate(steps, start=1):
+            step_title = str(step.get("title") or step.get("name") or f"단계 {index}")
+            approval = " · 승인 필요" if step.get("requires_approval") else ""
+            lines.append(f"{index}. [ ] {step_title}{approval}")
+            detail = str(step.get("detail") or "").strip()
+            if detail:
+                lines.append(f"   - {detail}")
+    else:
+        lines.append("(단계 없음)")
+    lines.append("")
+    if context.strip():
+        lines += ["## 대화 맥락 요약", "", "```", context.strip(), "```", ""]
+    return "\n".join(lines).strip() + "\n"
+
+
+_SKILL_DIRECTIVE_RE = re.compile(r"skill:\s*([A-Za-z0-9_.\-]+)")
+
+
+def _extract_step_skill_id(notes: str) -> str:
+    """Return a ``skill:<id>`` referenced in a step's notes, if it is registered."""
+
+    match = _SKILL_DIRECTIVE_RE.search(notes or "")
+    if not match:
+        return ""
+    candidate = match.group(1)
+    return candidate if get_skill(candidate) is not None else ""
+
+
+def _enqueue_process_steps(
+    container: Container,
+    *,
+    architecture_id: str,
+    objective: str,
+    participants: str,
+    steps: list[dict[str, str]],
+) -> list[dict[str, object]]:
+    """Create ordered, sequentially-dependent schedule items for each step."""
+
+    created: list[dict[str, object]] = []
+    previous_id = ""
+    for index, step in enumerate(steps, start=1):
+        notes_parts = []
+        if step.get("automation"):
+            notes_parts.append(f"AI 자동화: {step['automation']}")
+        if step.get("reviewer"):
+            notes_parts.append(f"검토자: {step['reviewer']}")
+        if step.get("output"):
+            notes_parts.append(f"결과물: {step['output']}")
+        notes_parts.append(f"설계 문서: {architecture_id}")
+        item = container.work_schedule.upsert(
+            WorkScheduleItem.create(
+                title=f"[{index}단계] {step['name']}",
+                owner_name=participants,
+                status="todo",
+                priority="high" if index == 1 else "normal",
+                dependencies=[previous_id] if previous_id else [],
+                notes=" / ".join(notes_parts),
+                source_architecture_id=architecture_id,
+                queue_order=index,
+            )
+        )
+        previous_id = item.id
+        created.append(item.to_dict())
+    return created
 
 
 def _recent_logs(archive_dir: Path, *, limit: int) -> list[dict[str, Any]]:
@@ -3428,6 +5558,163 @@ def _recent_logs(archive_dir: Path, *, limit: int) -> list[dict[str, Any]]:
             }
         )
     return logs
+
+
+def _schedule_to_work_items(
+    schedule: list[dict[str, Any]],
+    *,
+    plan_status_by_step: Mapping[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """Render schedule queue entries as work-item rows with runnable ordering flags."""
+
+    plan_status_by_step = plan_status_by_step or {}
+    statuses = {str(entry.get("id")): entry.get("status") for entry in schedule}
+    items: list[dict[str, Any]] = []
+    for entry in schedule:
+        step_id = str(entry.get("id"))
+        deps = [str(dep) for dep in entry.get("dependencies", []) if str(dep)]
+        blocking = [dep for dep in deps if statuses.get(dep) != "done"]
+        item_status = str(entry.get("status") or "todo")
+        plan_status = plan_status_by_step.get(step_id)
+        gated = step_id in plan_status_by_step and plan_status not in {"approved", "running"}
+        if item_status == "done":
+            stage_state = "완료"
+            runnable = False
+        elif gated:
+            stage_state = "승인 대기" if plan_status in {None, "draft"} else f"대기({plan_status})"
+            runnable = False
+        elif blocking:
+            stage_state = "대기(이전 단계 진행 중)"
+            runnable = False
+        else:
+            stage_state = "실행 대기(다음 차례)"
+            runnable = True
+        items.append(
+            {
+                "path": step_id,
+                "id": step_id,
+                "title": entry.get("title"),
+                "summary": entry.get("title"),
+                "status": item_status,
+                "stage_state": stage_state,
+                "runnable": runnable,
+                "queue_order": entry.get("queue_order", 0),
+                "kind": "프로세스 단계" if entry.get("source_architecture_id") else "스케줄",
+                "source": "queue",
+                "source_architecture_id": entry.get("source_architecture_id", ""),
+                "notes": entry.get("notes", ""),
+                "owner_id": entry.get("owner_id", ""),
+                "owner_name": entry.get("owner_name", ""),
+                "assignee_kind": entry.get("assignee_kind", "unassigned"),
+                "signed_off_by": entry.get("signed_off_by", ""),
+                "signed_off_at": entry.get("signed_off_at", ""),
+                "completion_record": entry.get("completion_record", ""),
+                "priority": entry.get("priority", "normal"),
+            }
+        )
+    return items
+
+
+def _resequence_plan(container: Container, plan: ProcessPlan, ordered_ids: list[str]) -> ProcessPlan:
+    """Reassign queue_order + linear dependencies for a plan's steps and persist."""
+
+    by_id = {str(entry.get("id")): entry for entry in container.work_schedule.list()}
+    valid_ids = [sid for sid in ordered_ids if sid in by_id]
+    previous_id = ""
+    for index, sid in enumerate(valid_ids, start=1):
+        entry = by_id[sid]
+        container.work_schedule.upsert(
+            WorkScheduleItem.create(
+                **{
+                    **entry,
+                    "queue_order": index,
+                    "dependencies": [previous_id] if previous_id else [],
+                    "source_architecture_id": plan.architecture_path,
+                }
+            )
+        )
+        previous_id = sid
+    return container.process_plans.upsert(plan.with_steps(valid_ids))
+
+
+def _require_plan(container: Container, plan_id: str) -> ProcessPlan:
+    plan = container.process_plans.get(plan_id)
+    if plan is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계획을 찾을 수 없습니다.")
+    return plan
+
+
+def _require_editable_plan(container: Container, plan_id: str) -> ProcessPlan:
+    plan = _require_plan(container, plan_id)
+    if plan.status not in {"draft", "approved", "paused"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="완료/취소된 계획은 단계를 편집할 수 없습니다.",
+        )
+    return plan
+
+
+def _plan_status_by_step(container: Container) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for plan in container.process_plans.list():
+        status = str(plan.get("status") or "draft")
+        step_ids = plan.get("step_ids", [])
+        if not isinstance(step_ids, list):
+            continue
+        for step_id in step_ids:
+            mapping[str(step_id)] = status
+    return mapping
+
+
+def _process_plan_payload(
+    container: Container,
+    plan: ProcessPlan,
+    *,
+    include_markdown: bool = False,
+) -> ProcessPlanPayload:
+    schedule = container.work_schedule.list()
+    by_id = {str(entry.get("id")): entry for entry in schedule}
+    gate = dict.fromkeys(plan.step_ids, plan.status)
+    ordered = [by_id[sid] for sid in plan.step_ids if sid in by_id]
+    steps = _schedule_to_work_items(ordered, plan_status_by_step=gate)
+    step_done = len([row for row in steps if row.get("status") == "done"])
+    plan_markdown = ""
+    if include_markdown and plan.architecture_path:
+        try:
+            plan_markdown = _read_archive_document(container, plan.architecture_path).markdown
+        except HTTPException:
+            plan_markdown = ""
+    return ProcessPlanPayload(
+        id=plan.id,
+        objective=plan.objective,
+        architecture_path=plan.architecture_path,
+        status=plan.status,
+        mode=plan.mode,
+        approved_by=plan.approved_by,
+        approved_at=plan.approved_at,
+        created_at=plan.created_at,
+        updated_at=plan.updated_at,
+        step_total=len(steps),
+        step_done=step_done,
+        steps=steps,
+        plan_markdown=plan_markdown,
+    )
+
+
+def _summarize_queue(queue_items: list[dict[str, Any]]) -> str:
+    if not queue_items:
+        return ""
+    total = len(queue_items)
+    done = len([item for item in queue_items if item.get("status") == "done"])
+    runnable = [item for item in queue_items if item.get("runnable")]
+    lines = [f"프로세스 단계 큐 {total}건 중 완료 {done}건, 남은 단계 {total - done}건입니다."]
+    if runnable:
+        lines.append(f"다음 실행 차례: {runnable[0].get('title')}")
+    elif done < total:
+        lines.append("실행 가능한 다음 단계가 없습니다. 진행 중인 단계 완료를 기다리세요.")
+    else:
+        lines.append("모든 프로세스 단계가 완료되었습니다.")
+    return "\n".join(lines)
 
 
 def _summarize_bottlenecks(items: list[dict[str, Any]]) -> str:
@@ -3550,7 +5837,15 @@ def _read_archive_document(container: Container, raw_path: str) -> DocumentReadP
         raise ValueError("archive 외부 경로는 열람할 수 없습니다.") from exc
     if not candidate.exists() or not candidate.is_file():
         raise FileNotFoundError(f"문서를 찾을 수 없습니다: {cleaned}")
-    if candidate.suffix.lower() not in {".md", ".markdown", ".txt", ".json", ".jsonl", ".yaml", ".yml"}:
+    if candidate.suffix.lower() not in {
+        ".md",
+        ".markdown",
+        ".txt",
+        ".json",
+        ".jsonl",
+        ".yaml",
+        ".yml",
+    }:
         raise ValueError("열람 지원 파일 형식이 아닙니다.")
     text = candidate.read_text(encoding="utf-8")
     stat = candidate.stat()
@@ -3561,6 +5856,83 @@ def _read_archive_document(container: Container, raw_path: str) -> DocumentReadP
         bytes=stat.st_size,
         modified_at=modified,
     )
+
+
+def _archive_document_index(container: Container, *, q: str, limit: int) -> list[dict[str, object]]:
+    archive_root = container.settings.archive_dir.resolve()
+    if not archive_root.exists():
+        return []
+    query = q.strip().lower()
+    docs: list[dict[str, object]] = []
+    for path in archive_root.rglob("*"):
+        if not path.is_file() or path.name.startswith("."):
+            continue
+        if path.suffix.lower() not in {".md", ".markdown", ".txt", ".json", ".yaml", ".yml"}:
+            continue
+        try:
+            rel = path.relative_to(archive_root).as_posix()
+        except ValueError:
+            continue
+        if _is_internal_archive_document(rel):
+            continue
+        title, excerpt = _archive_document_title_excerpt(path)
+        kind = _archive_document_kind(rel)
+        haystack = f"{title} {excerpt} {rel} {kind}".lower()
+        if query and query not in haystack:
+            continue
+        stat = path.stat()
+        docs.append(
+            {
+                "path": rel,
+                "title": title,
+                "kind": kind,
+                "excerpt": excerpt[:220],
+                "bytes": stat.st_size,
+                "modified_at": datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
+            }
+        )
+    docs.sort(key=lambda item: str(item.get("modified_at") or ""), reverse=True)
+    return docs[:limit]
+
+
+def _is_internal_archive_document(rel: str) -> bool:
+    return (
+        rel == "audit_log.jsonl"
+        or rel.startswith("token_usage/")
+        or rel.startswith("context_firewall/")
+        or rel.startswith("mcp_hub/")
+        or rel.startswith("ai_jobs/")
+        or rel.startswith("patch_ops/events/")
+        or rel.startswith("patch_ops/runs/")
+        or rel.startswith("memory/deletion_requests")
+        or rel.startswith("memory/tombstones")
+    )
+
+
+def _archive_document_kind(rel: str) -> str:
+    first = rel.split("/", 1)[0]
+    labels = {
+        "documents": "문서 자동화",
+        "work_architecture": "업무 아키텍처",
+        "hr": "채용/면접",
+        "handover": "인수인계",
+        "patch_records": "코딩 패치 기록",
+        "uploads": "업로드",
+        "memory": "승격 메모리",
+    }
+    return labels.get(first, "문서")
+
+
+def _archive_document_title_excerpt(path: Path) -> tuple[str, str]:
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")[:2000]
+    except OSError:
+        return path.stem, ""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            return stripped.lstrip("#").strip() or path.stem, text[:500]
+    return path.stem.replace("_", " "), text[:500]
 
 
 def _token_limit_status(container: Container) -> TokenLimitStatusPayload:

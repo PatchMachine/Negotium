@@ -7,6 +7,7 @@ import time
 from collections.abc import Sequence
 from typing import Any
 
+from patch_machine.adapters.llm.multimodal import to_openai_content
 from patch_machine.domain.entities import LlmRoute
 from patch_machine.domain.ports import LlmMessage, LlmProvider, LlmResponse
 from patch_machine.observability import get_logger
@@ -81,7 +82,7 @@ class OpenAiProvider(LlmProvider):
         max_tokens: int | None = None,
     ) -> LlmResponse:
         client = self._resolve_client()
-        payload = [{"role": m.role, "content": m.content} for m in messages]
+        payload = [{"role": m.role, "content": to_openai_content(m.content)} for m in messages]
         kwargs: dict[str, Any] = {
             "model": self._model,
             "messages": payload,
