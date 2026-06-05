@@ -239,6 +239,8 @@ def _kind_for(path: Path, archive_dir: Path) -> SourceKind:
         return "patch_record"
     if parts and parts[0] == "uploads" and path.suffix in {".md", ".markdown", ".txt", ".json", ".jsonl", ".yaml", ".yml"}:
         return "upload"
+    if parts[:2] == ("patch_ops", "workspaces") and path.suffix in {".md", ".patch", ".txt", ".json"}:
+        return "document"
     if parts and parts[0] in {"documents", "hr", "handover", "work_architecture"} and path.suffix in {".md", ".jsonl"}:
         return "document"
     return "unknown"

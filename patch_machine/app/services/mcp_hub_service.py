@@ -8,6 +8,9 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
+
+from patch_machine.adapters.llm.catalog import search_huggingface_models
 from patch_machine.app.services.context_firewall_service import (
     load_context_firewall_policy,
     record_firewall_audit,
@@ -37,6 +40,7 @@ from patch_machine.app.services.test_writer_service import (
 )
 from patch_machine.archive.agent_execution import AgentPlan
 from patch_machine.archive.issue_memory import PatchCandidate, TestRequirement
+from patch_machine.archive.llm_runtime import LlmRuntimeConfig
 from patch_machine.archive.patch_runs import PatchRun
 from patch_machine.prompts import render as render_prompt
 
@@ -55,6 +59,11 @@ READ_TOOLS = {
     "test.analyze_failure",
     "git.diff",
     "skills.list",
+    "hf.search_models",
+    "hf.get_model_info",
+    "hf.list_recommended_models",
+    "public_reference.search_cases",
+    "public_reference.summarize_case",
 }
 
 TOOL_POLICIES: dict[str, dict[str, Any]] = {
@@ -101,6 +110,25 @@ TOOL_POLICIES: dict[str, dict[str, Any]] = {
     "patch.apply_diff": {"permission": "memory:write", "scopes": ["patch:write"], "risk": "high"},
     "patch.run_tests": {"permission": "memory:write", "scopes": ["test:run"], "risk": "medium"},
     "patch.draft_pr": {"permission": "memory:write", "scopes": ["github:write"], "risk": "medium"},
+    "hf.search_models": {"permission": "work:read", "scopes": ["hf:read"], "risk": "low"},
+    "hf.get_model_info": {"permission": "work:read", "scopes": ["hf:read"], "risk": "low"},
+    "hf.list_recommended_models": {"permission": "work:read", "scopes": ["hf:read"], "risk": "low"},
+    "hf.set_local_model": {"permission": "admin:local_llm", "scopes": ["hf:write"], "risk": "medium"},
+    "public_reference.search_cases": {
+        "permission": "work:read",
+        "scopes": ["public_reference:read"],
+        "risk": "low",
+    },
+    "public_reference.capture_case": {
+        "permission": "memory:write",
+        "scopes": ["public_reference:write"],
+        "risk": "medium",
+    },
+    "public_reference.summarize_case": {
+        "permission": "work:read",
+        "scopes": ["public_reference:read"],
+        "risk": "low",
+    },
 }
 
 PROMPT_INJECTION_PATTERNS = [
@@ -245,6 +273,62 @@ def list_tool_descriptors() -> list[dict[str, Any]]:
                 {"skill_id": "string", "inputs": "object"},
                 "memory:write",
                 "skills",
+            ),
+            _tool(
+                "hf.search_models",
+                "Search Hugging Face text-generation models.",
+                {"query": "string", "limit": "number"},
+                "work:read",
+                "hf",
+            ),
+            _tool(
+                "hf.get_model_info",
+                "Fetch Hugging Face model metadata and card summary.",
+                {"model_id": "string"},
+                "work:read",
+                "hf",
+            ),
+            _tool(
+                "hf.list_recommended_models",
+                "List recommended local LLM candidates and current runtime selection.",
+                {},
+                "work:read",
+                "hf",
+            ),
+            _tool(
+                "hf.set_local_model",
+                "Set the admin-selected local model for runtime inference.",
+                {"model_id": "string"},
+                "admin:local_llm",
+                "hf",
+            ),
+            _tool(
+                "public_reference.search_cases",
+                "Search curated public company/reference cases.",
+                {"query": "string", "limit": "number"},
+                "work:read",
+                "public_reference",
+            ),
+            _tool(
+                "public_reference.capture_case",
+                "Capture a reviewed public reference case into archive.",
+                {
+                    "title": "string",
+                    "url": "string",
+                    "content": "string",
+                    "industry": "string",
+                    "department": "string",
+                    "organization_size": "string",
+                },
+                "memory:write",
+                "public_reference",
+            ),
+            _tool(
+                "public_reference.summarize_case",
+                "Summarize a public reference case by industry, department, and use case.",
+                {"query": "string"},
+                "work:read",
+                "public_reference",
             ),
             _tool(
                 "agent.generate_plan",
@@ -900,6 +984,10 @@ def _dispatch_tool(container: Any, tool_name: str, arguments: dict[str, Any]) ->
         return {"skills": [skill.to_descriptor() for skill in get_skills().values()]}
     if tool_name == "skills.run":
         return _run_skill_via_mcp(container, arguments)
+    if tool_name.startswith("hf."):
+        return _hf_tool(container, tool_name, arguments)
+    if tool_name.startswith("public_reference."):
+        return _public_reference_tool(container, tool_name, arguments)
     if tool_name == "agent.generate_plan":
         return _agent_generate_plan(container, arguments)
     if tool_name.startswith("patch."):
@@ -1068,6 +1156,107 @@ def _notion_tool(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             "items": [],
         }
     raise ValueError(f"unknown Notion MCP tool: {tool_name}")
+
+
+def _hf_tool(container: Any, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    if tool_name == "hf.search_models":
+        return {
+            "ok": True,
+            "models": _run_async_safe(
+                search_huggingface_models(
+                    str(arguments.get("query") or ""),
+                    limit=int(arguments.get("limit") or 12),
+                )
+            ),
+        }
+    if tool_name == "hf.get_model_info":
+        model_id = str(arguments.get("model_id") or "").strip()
+        if not model_id:
+            raise ValueError("model_id is required")
+
+        async def _fetch() -> dict[str, Any]:
+            async with httpx.AsyncClient(timeout=20) as client:
+                response = await client.get(f"https://huggingface.co/api/models/{model_id}")
+                response.raise_for_status()
+                card = await client.get(f"https://huggingface.co/{model_id}/raw/main/README.md")
+            payload = response.json()
+            readme = card.text if card.status_code == 200 else ""
+            return {
+                "id": payload.get("id") or model_id,
+                "pipeline_tag": payload.get("pipeline_tag"),
+                "downloads": payload.get("downloads"),
+                "likes": payload.get("likes"),
+                "tags": payload.get("tags", [])[:20],
+                "card_summary": readme[:2000],
+            }
+
+        return {"ok": True, "model": _run_async_safe(_fetch())}
+    if tool_name == "hf.list_recommended_models":
+        runtime = container.llm_runtime.read()
+        return {
+            "ok": True,
+            "current_local_model": runtime.local_model,
+            "recommended": _run_async_safe(search_huggingface_models("", limit=12)),
+        }
+    if tool_name == "hf.set_local_model":
+        model_id = str(arguments.get("model_id") or "").strip()
+        if not model_id:
+            raise ValueError("model_id is required")
+        runtime = container.llm_runtime.read()
+        updated = LlmRuntimeConfig(
+            local_enabled=runtime.local_enabled,
+            api_enabled=runtime.api_enabled,
+            default_route=runtime.default_route,
+            default_provider=runtime.default_provider,
+            local_model=model_id,
+            task_routes=runtime.task_routes,
+        )
+        container.llm_runtime.write(updated)
+        return {"ok": True, "local_model": model_id}
+    raise ValueError(f"unknown Hugging Face MCP tool: {tool_name}")
+
+
+def _public_reference_tool(container: Any, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    if tool_name == "public_reference.search_cases":
+        return {
+            "ok": True,
+            "cases": container.public_references.search(
+                str(arguments.get("query") or ""),
+                limit=int(arguments.get("limit") or 20),
+            ),
+        }
+    if tool_name == "public_reference.capture_case":
+        raw_tags = arguments.get("tags")
+        tags = [str(item) for item in raw_tags] if isinstance(raw_tags, list) else []
+        case = container.public_references.capture(
+            title=str(arguments.get("title") or "공개 사례"),
+            url=str(arguments.get("url") or ""),
+            industry=str(arguments.get("industry") or ""),
+            department=str(arguments.get("department") or ""),
+            organization_size=str(arguments.get("organization_size") or ""),
+            summary=str(arguments.get("summary") or ""),
+            content=str(arguments.get("content") or ""),
+            tags=tags,
+        )
+        return {"ok": True, "case": case.to_dict()}
+    if tool_name == "public_reference.summarize_case":
+        cases = container.public_references.search(str(arguments.get("query") or ""), limit=5)
+        summaries = [
+            {
+                "id": case.get("id"),
+                "title": case.get("title"),
+                "fit": {
+                    "industry": case.get("industry"),
+                    "department": case.get("department"),
+                    "organization_size": case.get("organization_size"),
+                },
+                "summary": case.get("summary") or str(case.get("content") or "")[:800],
+                "url": case.get("url"),
+            }
+            for case in cases
+        ]
+        return {"ok": True, "summaries": summaries}
+    raise ValueError(f"unknown public reference MCP tool: {tool_name}")
 
 
 def _tool(

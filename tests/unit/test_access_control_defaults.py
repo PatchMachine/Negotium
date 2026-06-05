@@ -3,7 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from patch_machine.archive.access_control import ALL_PERMISSIONS, AccessControlStore
+from patch_machine.archive.access_control import (
+    ALL_PERMISSIONS,
+    AccessControlStore,
+    DepartmentPermissionRecord,
+    PositionRecord,
+    UserRecord,
+)
 
 
 def test_admin_permissions_include_local_mcp_and_hr_controls() -> None:
@@ -51,6 +57,38 @@ def test_fresh_store_has_no_default_owner_account(tmp_path: Path) -> None:
     assert payload["users"] == []
 
 
+def test_legacy_position_level_maps_to_permissions(tmp_path: Path) -> None:
+    path = tmp_path / "access_control.json"
+    path.write_text(
+        json.dumps(
+            {
+                "roles": [
+                    {"id": "owner", "name": "대표/관리자", "level": 100, "permissions": ["*"]}
+                ],
+                "users": [],
+                "positions": [
+                    {"id": "team_lead", "name": "팀장", "level": 70, "description": "legacy"}
+                ],
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    payload = AccessControlStore(tmp_path).read()
+    position = next(item for item in payload["positions"] if item["id"] == "team_lead")
+    assert position["permissions"] == [
+        "memory:write",
+        "llm:chat",
+        "documents:write",
+        "documents:read",
+        "uploads:write",
+        "work:read",
+        "patch_records:read",
+        "patch_records:write",
+    ]
+    assert position["level"] == 70
+
+
 def test_persisted_local_owner_is_normalized(tmp_path: Path) -> None:
     path = tmp_path / "access_control.json"
     path.write_text(
@@ -77,3 +115,58 @@ def test_persisted_local_owner_is_normalized(tmp_path: Path) -> None:
     owner = next(user for user in payload["users"] if user["id"] == "owner")
     assert owner["display_name"] == "시스템 관리자"
     assert owner["title"] == "시스템 관리자"
+
+
+def test_position_default_and_department_permission_policy(tmp_path: Path) -> None:
+    store = AccessControlStore(tmp_path)
+    store.upsert_position(
+        PositionRecord(
+            id="staff_position",
+            name="사원",
+            permissions=["uploads:write"],
+            display_order=10,
+        )
+    )
+    store.upsert_user(
+        UserRecord(
+            id="alice",
+            display_name="Alice",
+            title="사원",
+            role_id="viewer",
+            department="sales",
+            position_id="staff_position",
+        )
+    )
+
+    assert store.has_permission("alice", "uploads:write") is True
+    store.upsert_department_permission(
+        DepartmentPermissionRecord(
+            department_id="sales",
+            position_id="staff_position",
+            permissions=["work:read"],
+        )
+    )
+    assert store.has_permission("alice", "work:read") is True
+    assert store.has_permission("alice", "uploads:write") is False
+
+
+def test_legacy_position_id_hydrates_permissions_and_order(tmp_path: Path) -> None:
+    path = tmp_path / "access_control.json"
+    path.write_text(
+        json.dumps(
+            {
+                "roles": [
+                    {"id": "owner", "name": "대표/관리자", "level": 100, "permissions": ["*"]},
+                    {"id": "staff", "name": "직원", "level": 40, "permissions": ["work:read"]},
+                ],
+                "users": [],
+                "positions": [{"id": "staff", "name": "사원", "level": 0, "description": ""}],
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    payload = AccessControlStore(tmp_path).read()
+    position = next(item for item in payload["positions"] if item["id"] == "staff")
+    assert position["permissions"] == ["work:read"]
+    assert position["display_order"] == 40

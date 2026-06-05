@@ -301,6 +301,16 @@ export type PatchEvent = {
   created_at: string;
 };
 
+export type PatchArtifactFile = {
+  path: string;
+  name: string;
+  kind: string;
+  title: string;
+  bytes: number;
+  updated_at: string;
+  content?: string;
+};
+
 export type IssueCluster = {
   id: string;
   title: string;
@@ -490,38 +500,6 @@ export type TokenLimitStatus = {
   usage: TokenUsageSummary;
 };
 
-export type PatchRecord = {
-  record_id: string;
-  title: string;
-  summary: string;
-  request: string;
-  plan: string[];
-  changed_files: string[];
-  verification: string[];
-  follow_ups: string[];
-  tags: string[];
-  actor: string;
-  agent: string;
-  created_at: string;
-  relative_path: string;
-};
-
-export type PatchRecordDetail = PatchRecord & {
-  markdown: string;
-};
-
-export type PatchRecordCreate = {
-  title: string;
-  summary: string;
-  request: string;
-  plan: string[];
-  changed_files: string[];
-  verification: string[];
-  follow_ups: string[];
-  tags: string[];
-  agent: string;
-};
-
 export type HiringRequest = {
   role_title: string;
   business_need: string;
@@ -658,7 +636,16 @@ export type PositionRecord = {
   id: string;
   name: string;
   level: number;
+  permissions?: string[];
+  display_order?: number;
+  restrict_title_assignment?: boolean;
   description?: string;
+};
+
+export type DepartmentPermissionRecord = {
+  department_id: string;
+  position_id: string;
+  permissions: string[];
 };
 
 export type CompanyProfile = {
@@ -691,6 +678,7 @@ export type AccessControlPayload = {
   users: UserRecord[];
   departments: DepartmentRecord[];
   positions: PositionRecord[];
+  department_permissions: DepartmentPermissionRecord[];
   permissions: string[];
 };
 
@@ -977,9 +965,9 @@ export function generateAgentPlan(payload: {
 export function createPatchRun(payload: {
   repo_id: string;
   request: string;
-  autonomy_level: string;
-  privacy_mode: string;
-  target_branch: string;
+  autonomy_level?: string;
+  privacy_mode?: string;
+  target_branch?: string;
   constraints?: Record<string, unknown>;
 }): Promise<{ ok: boolean; patch_run: PatchRun }> {
   return requestJson<{ ok: boolean; patch_run: PatchRun }>('/api/patch-runs', {
@@ -994,6 +982,46 @@ export function fetchPatchRuns(): Promise<{ patch_runs: PatchRun[] }> {
 
 export function fetchPatchRun(id: string): Promise<{ patch_run: PatchRun; events: PatchEvent[] }> {
   return requestJson<{ patch_run: PatchRun; events: PatchEvent[] }>(`/api/patch-runs/${id}`);
+}
+
+export function fetchPatchRunFiles(id: string): Promise<{ files: PatchArtifactFile[] }> {
+  return requestJson<{ files: PatchArtifactFile[] }>(`/api/patch-runs/${id}/files`);
+}
+
+export function readPatchRunFile(id: string, path: string): Promise<{ file: PatchArtifactFile }> {
+  return requestJson<{ file: PatchArtifactFile }>(
+    `/api/patch-runs/${id}/files/${encodeURIComponent(path)}`,
+  );
+}
+
+export function savePatchRunPlanMarkdown(id: string, content: string): Promise<{ ok: boolean; patch_run: PatchRun; file: PatchArtifactFile }> {
+  return requestJson<{ ok: boolean; patch_run: PatchRun; file: PatchArtifactFile }>(`/api/patch-runs/${id}/plan-md`, {
+    method: 'PUT',
+    body: JSON.stringify({ content }),
+  });
+}
+
+export function revisePatchRunPlanMarkdown(
+  id: string,
+  payload: { instruction: string; current_content?: string; source_refs?: string[] },
+): Promise<{ ok: boolean; patch_run: PatchRun; file: PatchArtifactFile }> {
+  return requestJson<{ ok: boolean; patch_run: PatchRun; file: PatchArtifactFile }>(`/api/patch-runs/${id}/plan-md/revise`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function promotePatchRunPlanMarkdown(
+  id: string,
+  content = '',
+): Promise<{ ok: boolean; patch_run: PatchRun; memory: PermanentMemorySource }> {
+  return requestJson<{ ok: boolean; patch_run: PatchRun; memory: PermanentMemorySource }>(
+    `/api/patch-runs/${id}/plan-md/promote-memory`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ content }),
+    },
+  );
 }
 
 export function analyzePatchRun(id: string): Promise<{ ok: boolean; patch_run: PatchRun; events: PatchEvent[] }> {
@@ -1350,6 +1378,20 @@ export type OrgRoster = {
   positions: PositionRecord[];
 };
 
+export type HrEvaluationRecord = {
+  id: string;
+  user_id: string;
+  period: string;
+  work_item_ids: string[];
+  draft: string;
+  final_text: string;
+  evidence: string;
+  created_by: string;
+  created_at: string;
+  document_path?: string;
+  source_refs: string[];
+};
+
 export function fetchOrgRoster(): Promise<OrgRoster> {
   return requestJson<OrgRoster>('/api/org/roster');
 }
@@ -1645,6 +1687,52 @@ export function deletePosition(positionId: string): Promise<AccessControlPayload
   return requestJson<AccessControlPayload>(`/api/admin/positions/${positionId}`, { method: 'DELETE' });
 }
 
+export function saveDepartmentPermission(payload: DepartmentPermissionRecord): Promise<AccessControlPayload> {
+  return requestJson<AccessControlPayload>('/api/admin/department-permissions', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fetchHrEvaluationContext(userId: string): Promise<Record<string, unknown>> {
+  return requestJson<Record<string, unknown>>(`/api/hr/evaluation/context?user_id=${encodeURIComponent(userId)}`);
+}
+
+export function draftHrEvaluation(payload: {
+  user_id: string;
+  period?: string;
+  work_item_ids?: string[];
+  criteria?: string;
+  notes?: string;
+}): Promise<{ ok: boolean; draft: string; context: Record<string, unknown> }> {
+  return requestJson<{ ok: boolean; draft: string; context: Record<string, unknown> }>('/api/hr/evaluation/draft', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function saveHrEvaluation(payload: {
+  user_id: string;
+  period?: string;
+  work_item_ids?: string[];
+  criteria?: string;
+  notes?: string;
+  draft?: string;
+  final_text?: string;
+  evidence?: string;
+  source_refs?: string[];
+}): Promise<{ ok: boolean; record: HrEvaluationRecord; document_path?: string }> {
+  return requestJson<{ ok: boolean; record: HrEvaluationRecord; document_path?: string }>('/api/hr/evaluation/save', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fetchHrEvaluationRecords(userId = ''): Promise<{ records: HrEvaluationRecord[] }> {
+  const query = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
+  return requestJson<{ records: HrEvaluationRecord[] }>(`/api/hr/evaluation/records${query}`);
+}
+
 export function fetchAccountRequests(): Promise<{ requests: AccountRequest[] }> {
   return requestJson<{ requests: AccountRequest[] }>('/api/admin/account-requests');
 }
@@ -1722,17 +1810,3 @@ export function saveTokenLimits(payload: TokenLimit): Promise<TokenLimitStatus> 
   });
 }
 
-export function fetchPatchRecords(): Promise<{ items: PatchRecord[] }> {
-  return requestJson<{ items: PatchRecord[] }>('/api/patch-records');
-}
-
-export function fetchPatchRecord(recordId: string): Promise<PatchRecordDetail> {
-  return requestJson<PatchRecordDetail>(`/api/patch-records/${encodeURIComponent(recordId)}`);
-}
-
-export function createPatchRecord(payload: PatchRecordCreate): Promise<PatchRecordDetail> {
-  return requestJson<PatchRecordDetail>('/api/patch-records', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-}

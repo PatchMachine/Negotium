@@ -44,7 +44,7 @@ export default function AiTestWriterPanel({
       ) : null}
       {testDiffDraft ? (
         <details>
-          <summary>Test Diff Draft</summary>
+          <summary>테스트 코드 변경안</summary>
           <pre>{String(testDiffDraft)}</pre>
         </details>
       ) : null}

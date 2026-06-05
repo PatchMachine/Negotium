@@ -55,6 +55,12 @@ def create_patchops_execution_router(container: Container) -> APIRouter:
             summary="diff 적용 정책 검사를 완료했습니다.",
             payload=result,
         )
+        updated = _write_execution_artifact(
+            container,
+            updated,
+            title="Diff 정책검사",
+            payload=result,
+        )
         _audit_execution_tool(
             container,
             actor=actor,
@@ -101,6 +107,12 @@ def create_patchops_execution_router(container: Container) -> APIRouter:
             summary=f"테스트 명령 실행 결과: {result.get('command')}",
             payload=result,
         )
+        updated = _write_execution_artifact(
+            container,
+            updated,
+            title="테스트 실행",
+            payload=result,
+        )
         _audit_execution_tool(
             container,
             actor=actor,
@@ -139,6 +151,12 @@ def create_patchops_execution_router(container: Container) -> APIRouter:
             summary="테스트 실패 로그를 분석했습니다.",
             payload=analysis,
         )
+        updated = _write_execution_artifact(
+            container,
+            updated,
+            title="테스트 실패 분석",
+            payload=analysis,
+        )
         _audit_execution_tool(
             container,
             actor=actor,
@@ -172,13 +190,23 @@ def create_patchops_execution_router(container: Container) -> APIRouter:
         updated = container.patch_runs.save(
             run.with_updates(
                 status="PR_DRAFTED",
-                artifacts={**run.artifacts, "pr_draft": draft, "execution_memory": promoted},
+                artifacts={
+                    **run.artifacts,
+                    "pr_draft": draft,
+                    "execution_memory": promoted,
+                },
             )
         )
         container.patch_runs.append_event(
             patch_id,
             event_type="pr.drafted",
             summary="PR draft payload를 생성했습니다.",
+            payload={"pr_draft": draft, "memory": promoted},
+        )
+        updated = _write_execution_artifact(
+            container,
+            updated,
+            title="PR Draft 생성",
             payload={"pr_draft": draft, "memory": promoted},
         )
         _audit_execution_tool(
@@ -191,6 +219,51 @@ def create_patchops_execution_router(container: Container) -> APIRouter:
         return {"ok": True, "patch_run": updated.to_dict(), "pr_draft": draft, "memory": promoted}
 
     return router
+
+
+def _write_execution_artifact(
+    container: Container,
+    run: Any,
+    *,
+    title: str,
+    payload: dict[str, Any],
+) -> Any:
+    existing = str(run.artifacts.get("execution_markdown") or "")
+    section = "\n".join(
+        [
+            f"## {title}",
+            "",
+            "```json",
+            _json_dumps(payload),
+            "```",
+            "",
+        ]
+    )
+    body = "\n".join(
+        [
+            f"# PatchOps Execution - {run.request[:80]}",
+            "",
+            f"- Patch Run: `{run.id}`",
+            f"- Status: `{run.status}`",
+            "",
+            existing,
+            section,
+        ]
+    ).strip()
+    return container.patch_runs.save(
+        run.with_updates(
+            artifacts={
+                **run.artifacts,
+                "execution_markdown": body,
+            }
+        )
+    )
+
+
+def _json_dumps(payload: dict[str, Any]) -> str:
+    import json
+
+    return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
 
 
 def _require(container: Container, credential: str | None, permission: str) -> str:

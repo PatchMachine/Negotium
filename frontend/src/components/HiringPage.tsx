@@ -77,13 +77,20 @@ export default function HiringPage() {
     if (!name) return;
     const id = slug(name) || `position_${Date.now()}`;
     try {
-      const acl = await savePosition({ id, name, level: 40, description: '채용/면접 키트 생성 중 추가됨' });
+      const acl = await savePosition({
+        id,
+        name,
+        permissions: ['documents:read', 'documents:write'],
+        display_order: 10,
+        level: 0,
+        description: '채용/면접 키트 생성 중 추가됨',
+      });
       setPositions(acl.positions ?? []);
       setDraft((current) => ({ ...current, position_id: id, role_title: current.role_title || name }));
       setQuickPositionName('');
-      setMessage(`직급/등급을 추가했습니다: ${name}`);
+      setMessage(`직급을 추가했습니다: ${name}`);
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : '직급/등급 추가 실패');
+      setMessage(err instanceof Error ? err.message : '직급 추가 실패');
     }
   }
 
@@ -144,7 +151,7 @@ export default function HiringPage() {
         <form className="memory-form" onSubmit={handleSubmit}>
           <details className="advanced-panel">
             <summary>관리자: 새 조직/직급 빠른 개설</summary>
-            <p className="muted small">신입사원을 직원으로 배정하지 않아도 채용 키트 대상 조직과 등급을 먼저 만들 수 있습니다.</p>
+            <p className="muted small">신입사원을 직원으로 배정하지 않아도 채용 키트 대상 조직과 직급을 먼저 만들 수 있습니다.</p>
             <div className="org-form-row">
               <label>
                 새 조직명
@@ -156,11 +163,11 @@ export default function HiringPage() {
             </div>
             <div className="org-form-row">
               <label>
-                새 직급/등급명
+                새 직급명
                 <input value={quickPositionName} placeholder="예: 신입 데이터 검수자" onChange={(event) => setQuickPositionName(event.target.value)} />
               </label>
               <button type="button" className="secondary-button" onClick={() => void createQuickPosition()}>
-                직급/등급 추가
+                직급 추가
               </button>
             </div>
           </details>
@@ -185,7 +192,7 @@ export default function HiringPage() {
               </select>
             </label>
             <label>
-              직급/등급
+              직급
               <select
                 value={draft.position_id ?? ''}
                 onChange={(event) => {
@@ -197,10 +204,10 @@ export default function HiringPage() {
                   });
                 }}
               >
-                <option value="">직급/등급 미지정</option>
+                <option value="">직급 미지정</option>
                 {positions
                   .slice()
-                  .sort((a, b) => b.level - a.level)
+                  .sort((a, b) => (b.display_order ?? b.level ?? 0) - (a.display_order ?? a.level ?? 0))
                   .map((position) => (
                     <option key={position.id} value={position.id}>
                       {position.name}

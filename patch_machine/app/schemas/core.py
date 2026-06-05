@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from patch_machine.app.container import Container
 from patch_machine.archive.access_control import (
     ALL_PERMISSIONS,
+    DepartmentPermissionRecord,
     DepartmentRecord,
     PositionRecord,
     RoleRecord,
@@ -438,6 +439,20 @@ class PatchRunApprovalPayload(BaseModel):
     comment: str = ""
 
 
+class PatchPlanMarkdownPayload(BaseModel):
+    content: str = ""
+
+
+class PatchPlanRevisePayload(BaseModel):
+    instruction: str
+    current_content: str = ""
+    source_refs: list[str] = []
+
+
+class PatchPlanPromotePayload(BaseModel):
+    content: str = ""
+
+
 class PatchRunPayload(BaseModel):
     id: str
     repo_id: str
@@ -582,6 +597,21 @@ class HiringRequest(BaseModel):
     candidate_profile: str = ""
     interview_stage: str = ""
     include_workload: bool = True
+
+
+class HrEvaluationDraftRequest(BaseModel):
+    user_id: str
+    period: str = ""
+    work_item_ids: list[str] = Field(default_factory=list)
+    criteria: str = ""
+    notes: str = ""
+
+
+class HrEvaluationSaveRequest(HrEvaluationDraftRequest):
+    draft: str = ""
+    final_text: str = ""
+    evidence: str = ""
+    source_refs: list[str] = Field(default_factory=list)
 
 
 class GeneratedDocumentPayload(BaseModel):
@@ -779,6 +809,9 @@ class PositionPayload(BaseModel):
     name: str
     level: int = 0
     description: str = ""
+    permissions: list[str] = []
+    display_order: int = 0
+    restrict_title_assignment: bool = False
 
     def to_record(self) -> PositionRecord:
         return PositionRecord(
@@ -786,6 +819,23 @@ class PositionPayload(BaseModel):
             name=self.name.strip(),
             level=self.level,
             description=self.description.strip(),
+            permissions=[permission for permission in self.permissions if permission in ALL_PERMISSIONS or permission == "*"],
+            display_order=self.display_order,
+            restrict_title_assignment=self.restrict_title_assignment,
+        )
+
+
+class DepartmentPermissionPayload(BaseModel):
+    department_id: str
+    position_id: str
+    permissions: list[str] = []
+
+    def to_record(self) -> DepartmentPermissionRecord:
+        allowed = {*ALL_PERMISSIONS, "*"}
+        return DepartmentPermissionRecord(
+            department_id=self.department_id.strip(),
+            position_id=self.position_id.strip(),
+            permissions=[permission for permission in self.permissions if permission in allowed],
         )
 
 

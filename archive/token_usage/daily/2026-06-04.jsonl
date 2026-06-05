@@ -1,0 +1,9 @@
+{"actor": "", "completion_tokens": 701, "model": "gpt-5.4-mini", "occurred_at": "2026-06-04T03:05:25.937444+00:00", "prompt_tokens": 575, "provider": "openai", "task": "hiring", "total_tokens": 1276}
+{"actor": "", "completion_tokens": 765, "model": "gpt-5.4-mini", "occurred_at": "2026-06-04T03:11:51.791008+00:00", "prompt_tokens": 587, "provider": "openai", "task": "hiring", "total_tokens": 1352}
+{"actor": "", "completion_tokens": 1064, "model": "gpt-5.4-mini", "occurred_at": "2026-06-04T06:14:33.201670+00:00", "prompt_tokens": 583, "provider": "openai", "task": "patch_interview", "total_tokens": 1647}
+{"actor": "", "completion_tokens": 1055, "model": "gpt-5.4-mini", "occurred_at": "2026-06-04T06:14:41.252786+00:00", "prompt_tokens": 809, "provider": "openai", "task": "patch_planning", "total_tokens": 1864}
+{"actor": "", "completion_tokens": 500, "model": "gpt-5.4-mini", "occurred_at": "2026-06-04T07:38:45.403629+00:00", "prompt_tokens": 1192, "provider": "openai", "task": "patch_diff_draft", "total_tokens": 1692}
+{"actor": "", "completion_tokens": 673, "model": "gpt-5.4-mini", "occurred_at": "2026-06-04T07:38:50.245923+00:00", "prompt_tokens": 1239, "provider": "openai", "task": "patch_review", "total_tokens": 1912}
+{"actor": "", "completion_tokens": 359, "model": "gpt-5.4-mini", "occurred_at": "2026-06-04T07:38:53.102001+00:00", "prompt_tokens": 1210, "provider": "openai", "task": "patch_test_writer", "total_tokens": 1569}
+{"actor": "", "completion_tokens": 1144, "model": "gpt-5.4-mini", "occurred_at": "2026-06-04T15:26:20.542035+00:00", "prompt_tokens": 215, "provider": "openai", "task": "patch_planning", "total_tokens": 1359}
+{"actor": "", "completion_tokens": 1657, "model": "gpt-5.4-mini", "occurred_at": "2026-06-04T15:26:35.248895+00:00", "prompt_tokens": 1307, "provider": "openai", "task": "patch_planning", "total_tokens": 2964}

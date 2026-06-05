@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import {
   createLoginUser,
@@ -26,7 +26,15 @@ const personnelSections: Array<{ id: PersonnelSection; label: string; descriptio
 ];
 
 const emptyDept: DepartmentRecord = { id: '', name: '', description: '', lead_user_id: '', parent_id: '' };
-const emptyPosition: PositionRecord = { id: '', name: '', level: 0, description: '' };
+const emptyPosition: PositionRecord = {
+  id: '',
+  name: '',
+  level: 0,
+  permissions: [],
+  display_order: 0,
+  restrict_title_assignment: false,
+  description: '',
+};
 const emptyUser: UserRecord = {
   id: '',
   display_name: '',
@@ -63,6 +71,11 @@ export default function PersonnelManagementPage() {
   const users = acl?.users ?? [];
   const positions = acl?.positions ?? [];
   const roles = acl?.roles ?? [];
+  const permissions = acl?.permissions ?? [];
+  const sortedPositions = useMemo(
+    () => [...positions].sort((a, b) => positionRank(b) - positionRank(a)),
+    [positions],
+  );
 
   function deptName(id?: string): string {
     if (!id) return '부서 미배정';
@@ -72,6 +85,49 @@ export default function PersonnelManagementPage() {
   function positionName(id?: string): string {
     if (!id) return '직급 미지정';
     return positions.find((entry) => entry.id === id)?.name ?? '직급 미지정';
+  }
+
+  function positionPermissions(entry?: PositionRecord): string[] {
+    return entry?.permissions ?? [];
+  }
+
+  function permissionLabel(entry?: PositionRecord): string {
+    const list = positionPermissions(entry);
+    if (list.includes('*')) return '전체 권한';
+    return list.length > 0 ? list.join(', ') : '권한 없음';
+  }
+
+  function positionRank(entry: PositionRecord): number {
+    return entry.display_order ?? entry.level ?? 0;
+  }
+
+  function companyOrderLabel(entry: PositionRecord): string {
+    const index = sortedPositions.findIndex((item) => item.id === entry.id);
+    return index >= 0 ? `회사 순서 ${index + 1}위` : '회사 순서 미정';
+  }
+
+  function orderValueFromCompanyOrder(order: number): number {
+    return Math.max(1, 1000 - Math.max(1, order));
+  }
+
+  function companyOrderInputValue(entry: PositionRecord): number {
+    if (!entry.id && !entry.display_order) return sortedPositions.length + 1;
+    if ((entry.display_order ?? 0) > 100) return Math.max(1, 1000 - (entry.display_order ?? 0));
+    const index = sortedPositions.findIndex((item) => item.id === entry.id);
+    if (index >= 0) return index + 1;
+    return sortedPositions.length + 1;
+  }
+
+  function editablePosition(entry: PositionRecord): PositionRecord {
+    const legacyRoleId = (entry as PositionRecord & { permission_role_id?: string }).permission_role_id;
+    const legacyPermissions = roles.find((role) => role.id === legacyRoleId)?.permissions ?? [];
+    return {
+      ...entry,
+      permissions: entry.permissions && entry.permissions.length > 0 ? entry.permissions : legacyPermissions,
+      display_order: positionRank(entry),
+      restrict_title_assignment: entry.restrict_title_assignment ?? false,
+      description: entry.description ?? '',
+    };
   }
 
   async function submitDepartment() {
@@ -104,7 +160,10 @@ export default function PersonnelManagementPage() {
       return;
     }
     try {
-      setAcl(await savePosition({ ...position, id: position.id.trim() }));
+      const displayOrder = position.display_order && position.display_order > 0
+        ? position.display_order
+        : orderValueFromCompanyOrder(sortedPositions.length + 1);
+      setAcl(await savePosition({ ...position, id: position.id.trim(), display_order: displayOrder }));
       setPosition(emptyPosition);
       setMessage(`직급을 저장했습니다: ${position.name}`);
     } catch (err) {
@@ -134,6 +193,20 @@ export default function PersonnelManagementPage() {
     } catch (err) {
       setMessage(err instanceof Error ? err.message : '직원 배정 저장 실패');
     }
+  }
+
+  function applyLoginPosition(positionId: string) {
+    setLoginUser({ ...loginUser, position_id: positionId });
+  }
+
+  function applyUserPosition(positionId: string) {
+    setUser({ ...user, position_id: positionId });
+  }
+
+  function togglePositionPermission(permission: string, checked: boolean) {
+    const current = position.permissions ?? [];
+    const next = checked ? [...new Set([...current, permission])] : current.filter((entry) => entry !== permission);
+    setPosition({ ...position, permissions: next });
   }
 
   async function submitLoginUser() {
@@ -304,7 +377,9 @@ export default function PersonnelManagementPage() {
           <div className="panel">
             <p className="eyebrow">Positions</p>
             <h2>직급 관리</h2>
-            <p className="muted">직급(직위)은 권한 역할과 별개이며, 조직 내 직위 체계를 정의합니다.</p>
+            <p className="muted">
+              새 직급을 만들 때 그 직급의 권한까지 함께 정합니다. 직원에게 별도 권한 목록을 붙이지 않습니다.
+            </p>
             <div className="memory-form org-form">
               <label>
                 직급 ID
@@ -322,13 +397,51 @@ export default function PersonnelManagementPage() {
                   onChange={(event) => setPosition({ ...position, name: event.target.value })}
                 />
               </label>
+              <fieldset className="advanced-panel">
+                <legend>이 직급에 포함할 권한</legend>
+                <div className="permission-grid">
+                  {permissions.map((permission) => (
+                    <label key={permission} className="permission-item">
+                      <input
+                        type="checkbox"
+                        checked={(position.permissions ?? []).includes('*') || (position.permissions ?? []).includes(permission)}
+                        onChange={(event) => void togglePositionPermission(permission, event.target.checked)}
+                      />
+                      <span>{permission}</span>
+                    </label>
+                  ))}
+                  <label className="permission-item">
+                    <input
+                      type="checkbox"
+                      checked={(position.permissions ?? []).includes('*')}
+                      onChange={(event) => void togglePositionPermission('*', event.target.checked)}
+                    />
+                    <span>전체 권한</span>
+                  </label>
+                </div>
+              </fieldset>
               <label>
-                레벨(높을수록 상위)
+                회사 순서
                 <input
                   type="number"
-                  value={position.level}
-                  onChange={(event) => setPosition({ ...position, level: Number(event.target.value) })}
+                  min={1}
+                  value={companyOrderInputValue(position)}
+                  onChange={(event) =>
+                    setPosition({
+                      ...position,
+                      display_order: orderValueFromCompanyOrder(Number(event.target.value)),
+                    })
+                  }
                 />
+                <small className="muted">1위가 가장 상위 직급입니다. 숫자는 회사 안에서의 순서로만 표시됩니다.</small>
+              </label>
+              <label className="org-checkbox">
+                <input
+                  type="checkbox"
+                  checked={position.restrict_title_assignment ?? false}
+                  onChange={(event) => setPosition({ ...position, restrict_title_assignment: event.target.checked })}
+                />
+                상위 직급으로 표시하고 관리자만 배정
               </label>
               <label>
                 설명
@@ -349,20 +462,19 @@ export default function PersonnelManagementPage() {
             </div>
             <div className="org-list">
               {positions.length === 0 ? <p className="muted">등록된 직급이 없습니다.</p> : null}
-              {[...positions]
-                .sort((a, b) => b.level - a.level)
+              {sortedPositions
                 .map((entry) => (
                   <article className="org-card" key={entry.id}>
                     <div className="org-card-head">
                       <strong>{entry.name}</strong>
-                      <span className="status-pill">level {entry.level}</span>
+                      <span className="status-pill">{companyOrderLabel(entry)}</span>
                     </div>
                     <p className="muted">
-                      {entry.id}
+                      {entry.id} · 포함 권한 {permissionLabel(entry)}
                       {entry.description ? ` · ${entry.description}` : ''}
                     </p>
                     <div className="form-actions">
-                      <button type="button" className="secondary-button" onClick={() => setPosition({ ...entry })}>
+                      <button type="button" className="secondary-button" onClick={() => setPosition(editablePosition(entry))}>
                         편집
                       </button>
                       <button
@@ -382,7 +494,7 @@ export default function PersonnelManagementPage() {
             <p className="eyebrow">Create account</p>
             <h2>로그인 계정 + 직원 배정</h2>
             <p className="muted">
-              직원이 먼저 가입 요청을 보내지 않아도 관리자가 직접 로그인 ID, 초기 비밀번호, 부서, 직급, 권한 역할을 한 번에 만들 수 있습니다.
+              직원이 먼저 가입 요청을 보내지 않아도 관리자가 직접 로그인 ID, 초기 비밀번호, 부서, 직급을 한 번에 만들 수 있습니다.
             </p>
             <div className="memory-form org-form">
               <div className="org-form-row">
@@ -441,7 +553,7 @@ export default function PersonnelManagementPage() {
                   직급
                   <select
                     value={loginUser.position_id ?? ''}
-                    onChange={(event) => setLoginUser({ ...loginUser, position_id: event.target.value })}
+                    onChange={(event) => applyLoginPosition(event.target.value)}
                   >
                     <option value="">직급 미지정</option>
                     {positions.map((entry) => (
@@ -453,19 +565,9 @@ export default function PersonnelManagementPage() {
                 </label>
               </div>
               <div className="org-form-row">
-                <label>
-                  권한 역할
-                  <select
-                    value={loginUser.role_id}
-                    onChange={(event) => setLoginUser({ ...loginUser, role_id: event.target.value })}
-                  >
-                    {roles.map((entry) => (
-                      <option key={entry.id} value={entry.id}>
-                        {entry.name} (level {entry.level})
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <p className="muted small">
+                  선택한 직급에 포함된 권한: {permissionLabel(positions.find((entry) => entry.id === loginUser.position_id))}
+                </p>
                 <label className="org-checkbox">
                   <input
                     type="checkbox"
@@ -534,7 +636,7 @@ export default function PersonnelManagementPage() {
                   직급
                   <select
                     value={user.position_id ?? ''}
-                    onChange={(event) => setUser({ ...user, position_id: event.target.value })}
+                    onChange={(event) => applyUserPosition(event.target.value)}
                   >
                     <option value="">직급 미지정</option>
                     {positions.map((entry) => (
@@ -545,6 +647,9 @@ export default function PersonnelManagementPage() {
                   </select>
                 </label>
               </div>
+              <p className="muted small">
+                선택한 직급에 포함된 권한: {permissionLabel(positions.find((entry) => entry.id === user.position_id))}
+              </p>
               <label className="org-checkbox">
                 <input
                   type="checkbox"

@@ -282,6 +282,8 @@ def test_patchops_execution_router_endpoints_shape(tmp_path: Path) -> None:
             headers=headers,
             json={"arguments": {}},
         )
+        files = client.get(f"/api/patch-runs/{run.id}/files", headers=headers)
+        traversal = client.get(f"/api/patch-runs/{run.id}/files/%2E%2E/runs/{run.id}.json", headers=headers)
 
     assert applied.status_code == 200
     assert applied.json()["execution"]["policy"]["files"] == ["frontend/src/App.tsx"]
@@ -289,7 +291,80 @@ def test_patchops_execution_router_endpoints_shape(tmp_path: Path) -> None:
     assert tested.json()["test_result"]["dry_run"] is True
     assert drafted.status_code == 200
     assert drafted.json()["pr_draft"]["requires_human_approval"] is True
+    assert files.status_code == 200
+    assert {item["name"] for item in files.json()["files"]} <= {"plan.md"}
+    assert traversal.status_code == 400
     assert container.mcp_audit.list(limit=10)
+
+
+def test_patchops_plan_and_artifact_files_are_created(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "app.py").write_text("print('hello')\n", encoding="utf-8")
+    container = Container.build(
+        Settings(env="test", archive_dir=tmp_path / "archive", workspace_dir=workspace)
+    )
+    container.llm = FakeLlmProvider(
+        [
+            ScriptedResponse(text='[{"question":"수정 범위는?","priority":"high","needs_human":false}]'),
+            ScriptedResponse(
+                text='{"goal":"문구 수정","target_files":["app.py"],"patch_steps":["app.py 수정"],"risk_level":"low","test_plan":["python -m pytest -q"],"approval_required":true}'
+            ),
+            ScriptedResponse(
+                text='{"diff_draft":"diff --git a/app.py b/app.py\\n--- a/app.py\\n+++ b/app.py\\n@@ -1 +1 @@\\n-print(\\u0027hello\\u0027)\\n+print(\\u0027hi\\u0027)\\n","verification_commands":["python -m pytest -q"]}'
+            ),
+            ScriptedResponse(text='{"pr_description":"## Summary\\n- Update app","internal_patch_note":"# Note","customer_release_note":"Updated."}'),
+            ScriptedResponse(text='{"test_plan":["python -m pytest -q"],"test_diff_draft":"diff --git a/test_app.py b/test_app.py\\n--- /dev/null\\n+++ b/test_app.py\\n@@ -0,0 +1 @@\\n+def test_app(): pass\\n"}'),
+            ScriptedResponse(text="# 코딩 에이전트 계획서\n\n## 수정됨\n- 저장 API와 AI 수정 API 확인"),
+        ]
+    )
+    headers = _auth_headers(container)
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/patch-runs",
+            headers=headers,
+            json={
+                "repo_id": "local",
+                "request": "app.py 문구 수정",
+                "autonomy_level": "L1",
+                "privacy_mode": "hybrid_redacted",
+                "target_branch": "main",
+            },
+        )
+        run_id = created.json()["patch_run"]["id"]
+        analyzed = client.post(f"/api/patch-runs/{run_id}/analyze", headers=headers)
+        drafted = client.post(f"/api/patch-runs/{run_id}/draft-diff", headers=headers)
+        files = client.get(f"/api/patch-runs/{run_id}/files", headers=headers)
+        plan = client.get(f"/api/patch-runs/{run_id}/files/plan.md", headers=headers)
+        saved = client.put(
+            f"/api/patch-runs/{run_id}/plan-md",
+            headers=headers,
+            json={"content": "# 직접 수정한 plan.md\n"},
+        )
+        revised = client.post(
+            f"/api/patch-runs/{run_id}/plan-md/revise",
+            headers=headers,
+            json={"instruction": "체크리스트를 추가해줘", "current_content": "# 직접 수정한 plan.md\n"},
+        )
+        memory = client.get("/api/memory/permanent/search?q=PatchOps%20plan", headers=headers)
+        docs = client.get("/api/archive/document-index?q=PatchOps&limit=20", headers=headers)
+
+    assert analyzed.status_code == 200
+    assert drafted.status_code == 200
+    names = {item["name"] for item in files.json()["files"]}
+    assert names == {"plan.md"}
+    assert "코딩 에이전트 계획서" in plan.json()["file"]["content"]
+    assert "## Code Change Draft" in plan.json()["file"]["content"]
+    assert "## Test Draft" in plan.json()["file"]["content"]
+    assert "## PR Draft" in plan.json()["file"]["content"]
+    assert saved.status_code == 200
+    assert saved.json()["file"]["content"].startswith("# 직접 수정한 plan.md")
+    assert revised.status_code == 200
+    assert "## 수정됨" in revised.json()["file"]["content"]
+    assert any("patch_ops/workspaces" in source["path"] for source in memory.json()["sources"])
+    assert any(item["kind"] == "AI 개발 도우미" for item in docs.json()["documents"])
 
 
 def test_context_firewall_security_api_redacts_and_audits(tmp_path: Path) -> None:
@@ -718,6 +793,35 @@ def test_secure_admin_and_upload_endpoints(tmp_path: Path) -> None:
             headers=headers,
             json={"id": "lead", "name": "팀장", "level": 80},
         )
+        saved_synced_position = client.post(
+            "/api/admin/positions",
+            headers=headers,
+            json={
+                "id": "synced_lead",
+                "name": "리드",
+                "permissions": ["users:read"],
+                "display_order": 45,
+            },
+        )
+        saved_synced_user = client.post(
+            "/api/admin/users",
+            headers=headers,
+            json={
+                "id": "lead_user",
+                "display_name": "Lead User",
+                "role_id": "viewer",
+                "department": "backend",
+                "position_id": "synced_lead",
+                "active": True,
+            },
+        )
+        container.auth_store.create_user(
+            user_id="lead_user", display_name="Lead User", password="password-5678"
+        )
+        lead_token = container.auth_store.authenticate("lead_user", "password-5678")
+        assert lead_token is not None
+        synced_headers = {"X-PM-User": f"Bearer {lead_token}"}
+        scope = client.get("/api/work-schedule/assignment-scope", headers=synced_headers)
         acl = client.get("/api/admin/access-control", headers=headers)
         deleted_position = client.delete("/api/admin/positions/lead", headers=headers)
         uploaded = client.post(
@@ -744,12 +848,23 @@ def test_secure_admin_and_upload_endpoints(tmp_path: Path) -> None:
     assert saved_child_dept.status_code == 200
     assert cyclic_dept.status_code == 400
     assert saved_position.status_code == 200
+    assert "permissions" in saved_position.json()
+    assert "documents:read" in saved_position.json()["permissions"]
+    assert saved_synced_position.status_code == 200
+    assert "permissions" in saved_synced_position.json()
+    assert saved_synced_user.status_code == 200
     assert acl.status_code == 200
     assert "owner" in {user["id"] for user in acl.json()["users"]}
     acl_payload = acl.json()
     departments_by_id = {dept["id"]: dept for dept in acl_payload["departments"]}
     assert departments_by_id["backend"]["parent_id"] == "eng"
     assert "lead" in {position["id"] for position in acl_payload["positions"]}
+    users_by_id = {user["id"]: user for user in acl_payload["users"]}
+    assert users_by_id["lead_user"]["role_id"] == "viewer"
+    assert scope.status_code == 200
+    assert scope.json()["scope"] == "department"
+    assert scope.json()["position_rank"] == 45
+    assert "backend" in scope.json()["department_ids"]
     assert deleted_position.status_code == 200
     assert "lead" not in {position["id"] for position in deleted_position.json()["positions"]}
     assert uploaded.status_code == 200
@@ -813,6 +928,69 @@ def test_initial_office_setup_analyze_and_apply(tmp_path: Path) -> None:
     assert container.operations_memory.read().company_name == "Acme"
     users = {user["id"]: user for user in container.access_control.read()["users"]}
     assert users["alice"]["role_id"] == "ops_manager"
+
+
+def test_hr_evaluation_context_draft_and_save(tmp_path: Path) -> None:
+    archive_dir = tmp_path / "archive"
+    container = Container.build(
+        Settings(env="test", archive_dir=archive_dir, workspace_dir=tmp_path / "workspaces")
+    )
+    container.llm = FakeLlmProvider([ScriptedResponse(text="# 인사평가 초안\n좋은 성과")])
+    headers = _auth_headers(container)
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        client.post(
+            "/api/admin/positions",
+            headers=headers,
+            json={"id": "dev", "name": "개발 담당", "permissions": ["documents:read"]},
+        )
+        client.post(
+            "/api/admin/users",
+            headers=headers,
+            json={
+                "id": "alice",
+                "display_name": "Alice",
+                "role_id": "staff",
+                "position_id": "dev",
+                "active": True,
+            },
+        )
+        context = client.get("/api/hr/evaluation/context?user_id=alice", headers=headers)
+        draft = client.post(
+            "/api/hr/evaluation/draft",
+            headers=headers,
+            json={"user_id": "alice", "period": "2026 Q2", "criteria": "업무 성과"},
+        )
+        saved = client.post(
+            "/api/hr/evaluation/save",
+            headers=headers,
+            json={
+                "user_id": "alice",
+                "period": "2026 Q2",
+                "draft": draft.json()["draft"],
+                "final_text": "관리자 수정본",
+            },
+        )
+        records = client.get("/api/hr/evaluation/records?user_id=alice", headers=headers)
+        document_path = saved.json().get("document_path", "")
+        document = client.get(
+            f"/api/archive/documents?path={document_path}",
+            headers=headers,
+        )
+        memory = client.get("/api/memory/permanent/search?q=관리자%20수정본", headers=headers)
+
+    assert context.status_code == 200
+    assert context.json()["employee"]["display_name"] == "Alice"
+    assert draft.status_code == 200
+    assert "# 인사평가 초안" in draft.json()["draft"]
+    assert saved.status_code == 200
+    assert document_path.startswith("hr/evaluations/")
+    assert saved.json()["record"]["document_path"] == document_path
+    assert document.status_code == 200
+    assert "관리자 수정본" in document.json()["markdown"]
+    assert any(source["path"] == document_path for source in memory.json()["sources"])
+    assert records.json()["records"][0]["final_text"] == "관리자 수정본"
 
 
 def _auth_headers(

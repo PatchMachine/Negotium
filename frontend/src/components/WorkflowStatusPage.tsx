@@ -96,10 +96,10 @@ export default function WorkflowStatusPage() {
         risk: 'plan run timeline API는 아직 제한적이므로 plan 상태 중심으로 봅니다.',
       },
       {
-        title: 'AI 개발 도우미',
+        title: '코딩 에이전트 계획서 작성',
         status: `${activePatchRuns.length} active`,
         detail: `runs ${snapshot.patchRuns.length}`,
-        risk: activePatchRuns[0]?.status || 'AI 개발 도우미 화면의 상세 event와 연결됩니다.',
+        risk: activePatchRuns[0]?.status || '코딩 에이전트 계획서 작성 화면의 상세 event와 연결됩니다.',
       },
       {
         title: 'Queue',
@@ -124,7 +124,7 @@ export default function WorkflowStatusPage() {
           <p className="eyebrow">Admin workflow observability</p>
           <h2>워크플로우 상태</h2>
           <p className="muted">
-            문서 생성, AI job, Agent plan, AI 개발 도우미, queue, LLM route를 한 화면에서 확인합니다. 빈 출력 fallback이 발생하면
+            문서 생성, AI job, Agent plan, 코딩 에이전트 계획서 작성, queue, LLM route를 한 화면에서 확인합니다. 빈 출력 fallback이 발생하면
             문서 생성 route와 최근 token/job 기록부터 확인하세요.
           </p>
           <button type="button" className="secondary-button" disabled={loading} onClick={() => void refresh()}>

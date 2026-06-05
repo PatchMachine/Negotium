@@ -53,8 +53,8 @@
       "title": "시스템 관리자",
       "role_id": "owner",
       "active": true,
-      "department": "",
-      "position_id": ""
+      "department": "management",
+      "position_id": "Founder"
     },
     {
       "id": "minwoo123",
@@ -63,7 +63,7 @@
       "role_id": "staff",
       "active": true,
       "department": "product",
-      "position_id": ""
+      "position_id": "staff"
     },
     {
       "id": "chulsu456",
@@ -72,7 +72,7 @@
       "role_id": "manager",
       "active": false,
       "department": "developer",
-      "position_id": ""
+      "position_id": "lead"
     }
   ],
   "departments": [
@@ -84,23 +84,35 @@
       "parent_id": ""
     },
     {
-      "id": "product",
-      "name": "제품 개발팀",
-      "description": "제품",
+      "id": "developer",
+      "name": "개발",
+      "description": "개발팀",
       "lead_user_id": "",
       "parent_id": "management"
     },
     {
-      "id": "developer",
-      "name": "개발",
-      "description": "개발팀",
+      "id": "product",
+      "name": "영업팀",
+      "description": "영업",
       "lead_user_id": "",
       "parent_id": "management"
     }
   ],
   "positions": [
     {
-      "id": "jepetolee",
+      "id": "staff",
+      "name": "사원",
+      "level": 0,
+      "description": ""
+    },
+    {
+      "id": "lead",
+      "name": "팀장",
+      "level": 0,
+      "description": ""
+    },
+    {
+      "id": "Founder",
       "name": "CEO",
       "level": 0,
       "description": ""

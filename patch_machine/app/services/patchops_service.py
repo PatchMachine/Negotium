@@ -118,13 +118,19 @@ async def analyze_patch_run(
     plan_raw = await complete(plan_prompt, "patch_planning")
     plan = parse_json_object(plan_raw) or fallback_plan(run.request, context, questions)
     plan = apply_policy_to_plan(plan)
+    plan_artifact = container.patch_runs.write_artifact(
+        run.id,
+        "plan.md",
+        render_plan_markdown(run, plan=plan, questions=questions, context=context),
+    )
     container.patch_runs.append_event(
         run.id,
         event_type="patch.plan.updated",
         summary=f"패치 계획 생성 완료: risk={plan.get('risk_level', 'medium')}",
-        payload=plan,
+        payload={**plan, "plan_path": plan_artifact["path"]},
     )
     artifacts = {
+        "plan_path": plan_artifact["path"],
         "test_requirements": context.get("test_requirements", []),
         "test_frameworks": context.get("test_frameworks", {}),
         "test_patterns": context.get("test_patterns", {}),
@@ -204,7 +210,26 @@ async def draft_patch_artifacts(
         summary="AI Test Writer가 테스트 diff 초안을 생성했습니다.",
         payload={"test_plan": test_payload.get("test_plan", [])},
     )
-    artifacts = {**run.artifacts, **diff_payload, **docs_payload, **test_payload}
+    plan_artifact = container.patch_runs.write_artifact(
+        run.id,
+        "plan.md",
+        render_plan_markdown(
+            run,
+            plan=run.plan,
+            questions=run.questions,
+            context=run.context,
+            diff_payload=diff_payload,
+            docs_payload=docs_payload,
+            test_payload=test_payload,
+        ),
+    )
+    artifacts = {
+        **run.artifacts,
+        **diff_payload,
+        **docs_payload,
+        **test_payload,
+        "plan_path": plan_artifact["path"],
+    }
     return container.patch_runs.save(
         run.with_updates(status="VERIFICATION_PLANNED", artifacts=artifacts)
     )
@@ -510,6 +535,90 @@ def fallback_diff_artifact(run: PatchRun) -> dict[str, Any]:
         "verification_commands": run.plan.get("test_plan", []),
         "risk_notes": run.plan.get("risk_reasons", []),
     }
+
+
+def render_plan_markdown(
+    run: PatchRun,
+    *,
+    plan: dict[str, Any],
+    questions: list[dict[str, Any]],
+    context: dict[str, Any],
+    diff_payload: dict[str, Any] | None = None,
+    docs_payload: dict[str, Any] | None = None,
+    test_payload: dict[str, Any] | None = None,
+) -> str:
+    steps = plan.get("patch_steps") or plan.get("steps") or []
+    target_files = [str(item) for item in plan.get("target_files", [])]
+    tests = [str(item) for item in plan.get("test_plan", [])]
+    risks = [str(item) for item in plan.get("risk_reasons", [])]
+    diff_payload = diff_payload or {}
+    docs_payload = docs_payload or {}
+    test_payload = test_payload or {}
+    question_lines = [
+        f"- {item.get('question', '확인 질문')} ({item.get('priority', 'normal')})"
+        for item in questions
+    ]
+    step_lines = [f"{index + 1}. {step}" for index, step in enumerate(steps)]
+    return "\n".join(
+        [
+            f"# 코딩 에이전트 계획서 - {run.request[:80]}",
+            "",
+            f"- Patch Run: `{run.id}`",
+            f"- Repo: `{run.repo_id}`",
+            f"- Autonomy: `{run.autonomy_level}`",
+            f"- Privacy: `{run.privacy_mode}`",
+            f"- Risk: `{plan.get('risk_level', run.risk_level)}`",
+            f"- Approval required: `{plan.get('approval_required', True)}`",
+            "",
+            "## Goal",
+            str(plan.get("goal") or run.request),
+            "",
+            "## Target Files",
+            *(f"- `{path}`" for path in target_files),
+            "",
+            "## Questions",
+            *(question_lines or ["- 추가 질문 없음"]),
+            "",
+            "## Steps",
+            *(step_lines or ["1. 후보 파일과 테스트를 추가 확인합니다."]),
+            "",
+            "## Test Plan",
+            *(f"- `{cmd}`" for cmd in tests),
+            "",
+            "## Risk Notes",
+            *(f"- {risk}" for risk in risks),
+            "",
+            "## Code Change Draft",
+            str(diff_payload.get("diff_draft") or "아직 코드 변경안 초안이 생성되지 않았습니다."),
+            "",
+            "## Implementation Notes",
+            *(
+                f"- {note}"
+                for note in diff_payload.get("implementation_notes", [])
+                if isinstance(note, str)
+            ),
+            "",
+            "## Test Draft",
+            str(test_payload.get("test_diff_draft") or "아직 테스트 초안이 생성되지 않았습니다."),
+            "",
+            "## Test Writer Notes",
+            *(
+                f"- {note}"
+                for note in test_payload.get("test_writer_notes", [])
+                if isinstance(note, str)
+            ),
+            "",
+            "## PR Draft",
+            str(docs_payload.get("pr_description") or "아직 PR 초안이 생성되지 않았습니다."),
+            "",
+            "## Internal Patch Note",
+            str(docs_payload.get("internal_patch_note") or "아직 내부 패치 노트가 생성되지 않았습니다."),
+            "",
+            "## Context Sources",
+            *(f"- `{path}`" for path in context.get("candidate_files", [])[:20]),
+            "",
+        ]
+    )
 
 
 def fallback_test_writer_artifact(run: PatchRun) -> dict[str, Any]:

@@ -564,9 +564,9 @@ function McpHubPanel({
     <div className="panel">
       <div className="sticky-panel-header">
         <p className="eyebrow">MCP-compatible hub</p>
-        <h2>AI 개발 도우미 MCP Hub</h2>
+        <h2>코딩 에이전트 계획서 작성 MCP Hub</h2>
         <p className="muted">
-          HTTP-compatible API와 JSON-RPC/SSE skeleton을 함께 제공해 AI 개발 도우미가 tools, resources, prompts를 표준
+          HTTP-compatible API와 JSON-RPC/SSE skeleton을 함께 제공해 코딩 에이전트 계획서 작성 기능이 tools, resources, prompts를 표준
           형태로 조회합니다.
         </p>
         <div className="switch-row">

@@ -106,11 +106,11 @@ export default function AiAgentPage() {
   return (
     <section className="ai-agent-layout">
       <div className="panel ai-agent-hero">
-        <p className="eyebrow">AI development assistant</p>
-        <h2>AI 개발 도우미</h2>
+        <p className="eyebrow">Coding agent brief writer</p>
+        <h2>코딩 에이전트 계획서 작성</h2>
         <p className="muted">
-          코드 패치 작업(PatchOps)을 관리합니다. 계획(plan.md)은 AI 어시스턴트의 “계획 모드”에서 만들고, 일반 대화는
-          “대화 모드”에서 사용하세요. 아래 코드 패치에서 만들어진 계획을 불러와 작업을 시작할 수 있습니다.
+          자동으로 코드를 적용하는 모드는 종료했습니다. 이제 저장소를 읽고 Cursor나 Claude Code가 바로 사용할 수 있는
+          plan.md, 코드 변경안, 테스트 가이드, PR 초안 파일을 만드는 데 집중합니다.
         </p>
         {isAdmin ? (
           <div className="switch-row">

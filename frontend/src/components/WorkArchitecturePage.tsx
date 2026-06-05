@@ -106,7 +106,7 @@ export default function WorkArchitecturePage() {
     setMessage(`계획 “${source.title}”을(를) 설계 기반으로 불러왔습니다. 투입 인력·기간을 지정하세요.`);
   }
 
-  const sortedPositions = [...positions].sort((a, b) => b.level - a.level);
+  const sortedPositions = [...positions].sort((a, b) => (b.display_order ?? b.level ?? 0) - (a.display_order ?? a.level ?? 0));
   const selectedDepartments = selectedDeptIds
     .map((deptId) => departments.find((dept) => dept.id === deptId))
     .filter((dept): dept is DepartmentRecord => Boolean(dept));

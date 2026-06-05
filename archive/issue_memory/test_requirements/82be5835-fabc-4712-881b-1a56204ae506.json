@@ -1,0 +1,16 @@
+{
+  "id": "82be5835-fabc-4712-881b-1a56204ae506",
+  "patch_candidate_id": "f1fc92e9-6633-469e-93cd-a1be775c0872",
+  "title": "Regression coverage for 새로 출시할 대형언어모델에 대한 프로젝트 코드를 만들어줘",
+  "requirement_type": "regression",
+  "given": "A user exercises the affected workflow.",
+  "when": "The reported issue condition is reproduced.",
+  "then": "The workflow completes without the reported failure and preserves existing behavior.",
+  "priority": "medium",
+  "status": "passing",
+  "source_refs": [
+    "patchops:0029a510-58eb-4446-91ea-5c8ee05b126b"
+  ],
+  "created_at": "2026-06-04T06:14:24.212889+00:00",
+  "updated_at": "2026-06-04T07:40:05.541623+00:00"
+}

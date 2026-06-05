@@ -123,22 +123,56 @@ class PositionRecord:
     name: str
     level: int = 0
     description: str = ""
+    permission_role_id: str = ""
+    permissions: list[str] = field(default_factory=list)
+    display_order: int = 0
+    restrict_title_assignment: bool = False
 
     @classmethod
     def from_mapping(cls, payload: dict[str, Any]) -> PositionRecord:
+        level = _coerce_int(payload.get("level"), 0)
         return cls(
             id=str(payload.get("id") or ""),
             name=str(payload.get("name") or ""),
-            level=int(payload.get("level") or 0),
+            level=level,
             description=str(payload.get("description") or ""),
+            permission_role_id=str(payload.get("permission_role_id") or payload.get("default_role_id") or ""),
+            permissions=[str(item) for item in payload.get("permissions", [])],
+            display_order=_coerce_int(payload.get("display_order"), level),
+            restrict_title_assignment=bool(payload.get("restrict_title_assignment", False)),
         )
 
     def to_dict(self) -> dict[str, object]:
         return {
             "id": self.id,
             "name": self.name,
+            "permissions": self.permissions,
+            "display_order": self.display_order,
+            "restrict_title_assignment": self.restrict_title_assignment,
             "level": self.level,
             "description": self.description,
+        }
+
+
+@dataclass(frozen=True)
+class DepartmentPermissionRecord:
+    department_id: str
+    position_id: str
+    permissions: list[str] = field(default_factory=list)
+
+    @classmethod
+    def from_mapping(cls, payload: dict[str, Any]) -> DepartmentPermissionRecord:
+        return cls(
+            department_id=str(payload.get("department_id") or ""),
+            position_id=str(payload.get("position_id") or ""),
+            permissions=[str(item) for item in payload.get("permissions", [])],
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "department_id": self.department_id,
+            "position_id": self.position_id,
+            "permissions": self.permissions,
         }
 
 
@@ -152,6 +186,7 @@ class AccessControlStore:
         users = payload["users"]
         departments = payload["departments"]
         positions = payload["positions"]
+        department_permissions = payload["department_permissions"]
         return {
             "roles": [role.to_dict() for role in roles if isinstance(role, RoleRecord)],
             "users": [user.to_dict() for user in users if isinstance(user, UserRecord)],
@@ -162,6 +197,11 @@ class AccessControlStore:
                 position.to_dict()
                 for position in positions
                 if isinstance(position, PositionRecord)
+            ],
+            "department_permissions": [
+                policy.to_dict()
+                for policy in department_permissions
+                if isinstance(policy, DepartmentPermissionRecord)
             ],
         }
 
@@ -238,6 +278,7 @@ class AccessControlStore:
         if not position.id.strip():
             raise ValueError("position id is required")
         payload = self._read_payload()
+        position = _hydrate_position_defaults(position, payload)
         positions = [
             existing
             for existing in payload["positions"]
@@ -256,16 +297,38 @@ class AccessControlStore:
         ]
         self._write_payload(payload)
 
+    def upsert_department_permission(self, policy: DepartmentPermissionRecord) -> None:
+        if not policy.department_id.strip() or not policy.position_id.strip():
+            raise ValueError("department_id and position_id are required")
+        payload = self._read_payload()
+        allowed = {*ALL_PERMISSIONS, "*"}
+        normalized = DepartmentPermissionRecord(
+            department_id=policy.department_id,
+            position_id=policy.position_id,
+            permissions=[permission for permission in policy.permissions if permission in allowed],
+        )
+        policies = [
+            existing
+            for existing in payload["department_permissions"]
+            if not (
+                isinstance(existing, DepartmentPermissionRecord)
+                and existing.department_id == normalized.department_id
+                and existing.position_id == normalized.position_id
+            )
+        ]
+        policies.append(normalized)
+        payload["department_permissions"] = policies
+        self._write_payload(payload)
+
     def has_permission(self, user_id: str | None, permission: str) -> bool:
         payload = self._read_payload()
         user = self._resolve_user(payload, user_id)
         if user is None or not user.active:
             return False
-        roles = [role for role in payload["roles"] if isinstance(role, RoleRecord)]
-        role = next((role for role in roles if role.id == user.role_id), None)
-        if role is None:
+        permissions = _effective_permissions(payload, user)
+        if not permissions:
             return False
-        return "*" in role.permissions or permission in role.permissions
+        return "*" in permissions or permission in permissions
 
     def _read_payload(self) -> AclPayload:
         if not self._path.exists():
@@ -281,12 +344,29 @@ class AccessControlStore:
         positions: list[PositionRecord] = [
             PositionRecord.from_mapping(item) for item in raw.get("positions", [])
         ]
+        department_permissions: list[DepartmentPermissionRecord] = [
+            DepartmentPermissionRecord.from_mapping(item)
+            for item in raw.get("department_permissions", [])
+        ]
         if not roles:
             return _default_payload()
         default_payload = _default_payload()
         for default_role in default_payload["roles"]:
             if isinstance(default_role, RoleRecord) and all(role.id != default_role.id for role in roles):
                 roles.append(default_role)
+        positions = [
+            _hydrate_position_defaults(
+                position,
+                {
+                    "roles": roles,
+                    "users": users,
+                    "departments": departments,
+                    "positions": positions,
+                    "department_permissions": department_permissions,
+                },
+            )
+            for position in positions
+        ]
         # Lockout recovery only: if no active admin remains, restore the owner role
         # on an existing "owner" user. We intentionally do NOT fabricate a default
         # owner account — only the initial setup designer exists as administrator.
@@ -300,6 +380,7 @@ class AccessControlStore:
             "users": users,
             "departments": departments,
             "positions": positions,
+            "department_permissions": department_permissions,
         }
 
     def _write_payload(self, payload: AclPayload) -> None:
@@ -316,6 +397,11 @@ class AccessControlStore:
                 position.to_dict()
                 for position in payload.get("positions", [])
                 if isinstance(position, PositionRecord)
+            ],
+            "department_permissions": [
+                policy.to_dict()
+                for policy in payload.get("department_permissions", [])
+                if isinstance(policy, DepartmentPermissionRecord)
             ],
         }
         with portalocker.Lock(self._path, "w", encoding="utf-8", timeout=5) as fh:
@@ -374,6 +460,7 @@ def _default_payload() -> AclPayload:
         "users": [],
         "departments": [],
         "positions": [],
+        "department_permissions": [],
     }
 
 
@@ -385,6 +472,95 @@ def _replace_parent(department: DepartmentRecord, parent_id: str) -> DepartmentR
         lead_user_id=department.lead_user_id,
         parent_id=parent_id,
     )
+
+
+def _hydrate_position_defaults(position: PositionRecord, payload: AclPayload) -> PositionRecord:
+    roles = [role for role in payload.get("roles", []) if isinstance(role, RoleRecord)]
+    role_id = position.permission_role_id or (
+        _permission_role_from_legacy_level(position.level)
+        if position.level
+        else _permission_role_from_legacy_position_id(position.id)
+    )
+    role = next((item for item in roles if item.id == role_id), None)
+    permissions = position.permissions or (role.permissions if role is not None else [])
+    allowed = {*ALL_PERMISSIONS, "*"}
+    return PositionRecord(
+        id=position.id,
+        name=position.name,
+        level=position.level,
+        description=position.description,
+        permissions=[permission for permission in permissions if permission in allowed],
+        display_order=position.display_order or position.level or _position_order_from_role(role_id),
+        restrict_title_assignment=position.restrict_title_assignment,
+    )
+
+
+def _effective_permissions(payload: AclPayload, user: UserRecord) -> list[str]:
+    roles = [role for role in payload["roles"] if isinstance(role, RoleRecord)]
+    positions = [
+        position for position in payload["positions"] if isinstance(position, PositionRecord)
+    ]
+    policies = [
+        policy
+        for policy in payload.get("department_permissions", [])
+        if isinstance(policy, DepartmentPermissionRecord)
+    ]
+    position = next((item for item in positions if item.id == user.position_id), None)
+    if position is not None:
+        policy = next(
+            (
+                item
+                for item in policies
+                if item.department_id == user.department and item.position_id == position.id
+            ),
+            None,
+        )
+        if policy is not None:
+            return policy.permissions
+        if position.permissions:
+            return position.permissions
+    role = next((item for item in roles if item.id == user.role_id), None)
+    return role.permissions if role is not None else []
+
+
+def _coerce_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(float(str(value)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _permission_role_from_legacy_level(level: int) -> str:
+    if level >= 60:
+        return "manager"
+    if level >= 40:
+        return "staff"
+    return "viewer"
+
+
+def _permission_role_from_legacy_position_id(position_id: str) -> str:
+    normalized = position_id.strip().lower()
+    if normalized in {"owner", "founder", "ceo", "admin", "administrator"}:
+        return "owner"
+    if normalized in {"lead", "leader", "manager", "team_lead", "director"}:
+        return "manager"
+    if normalized in {"staff", "employee", "member"}:
+        return "staff"
+    if normalized in {"viewer", "guest"}:
+        return "viewer"
+    return ""
+
+
+def _position_order_from_role(role_id: str) -> int:
+    if role_id == "owner":
+        return 100
+    if role_id == "manager":
+        return 70
+    if role_id == "staff":
+        return 40
+    if role_id == "viewer":
+        return 10
+    return 0
 
 
 def _normalize_user(user: UserRecord) -> UserRecord:

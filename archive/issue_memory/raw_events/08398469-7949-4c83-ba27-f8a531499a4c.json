@@ -1,0 +1,17 @@
+{
+  "id": "08398469-7949-4c83-ba27-f8a531499a4c",
+  "provider": "manual",
+  "event_type": "manual_issue",
+  "external_uri": "patchops:0029a510-58eb-4446-91ea-5c8ee05b126b",
+  "payload": {
+    "title": "새로 출시할 대형언어모델에 대한 프로젝트 코드를 만들어줘",
+    "summary": "새로 출시할 대형언어모델에 대한 프로젝트 코드를 만들어줘",
+    "provider": "manual",
+    "affected_repos": [
+      "local"
+    ],
+    "external_uri": "patchops:0029a510-58eb-4446-91ea-5c8ee05b126b"
+  },
+  "received_at": "2026-06-04T06:14:24.209472+00:00",
+  "processed_at": ""
+}

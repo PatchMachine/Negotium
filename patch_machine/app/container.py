@@ -33,6 +33,7 @@ from patch_machine.archive.context_compressor import CompressedContextStore
 from patch_machine.archive.context_firewall import ContextFirewallStore
 from patch_machine.archive.conversation_store import ConversationStore
 from patch_machine.archive.deletion_requests import DeletionRequestStore
+from patch_machine.archive.hr_evaluations import HrEvaluationStore
 from patch_machine.archive.integration_config import IntegrationConfigStore
 from patch_machine.archive.issue_memory import IssueMemoryStore
 from patch_machine.archive.llm_runtime import LlmRuntimeStore
@@ -45,6 +46,7 @@ from patch_machine.archive.patch_records import PatchRecordStore
 from patch_machine.archive.patch_runs import PatchRunStore
 from patch_machine.archive.permanent_memory import PermanentMemoryStore
 from patch_machine.archive.process_plans import ProcessPlanStore
+from patch_machine.archive.public_references import PublicReferenceStore
 from patch_machine.archive.secret_store import SecretStore
 from patch_machine.archive.token_usage import TokenUsageStore
 from patch_machine.archive.uploads import UploadStore
@@ -76,6 +78,7 @@ class Container:
     conversations: ConversationStore
     deletion_requests: DeletionRequestStore
     integration_config: IntegrationConfigStore
+    hr_evaluations: HrEvaluationStore
     memory_schema: MemorySchemaStore
     issue_memory: IssueMemoryStore
     mcp_audit: McpAuditStore
@@ -85,6 +88,7 @@ class Container:
     patch_records: PatchRecordStore
     patch_runs: PatchRunStore
     secret_store: SecretStore
+    public_references: PublicReferenceStore
     token_usage: TokenUsageStore
     uploads: UploadStore
     volatile_memory: VolatileMemoryStore
@@ -127,6 +131,7 @@ class Container:
         conversations = ConversationStore(settings.archive_dir)
         deletion_requests = DeletionRequestStore(settings.archive_dir)
         integration_config = IntegrationConfigStore(settings.archive_dir)
+        hr_evaluations = HrEvaluationStore(settings.archive_dir)
         issue_memory = IssueMemoryStore(settings.archive_dir)
         mcp_audit = McpAuditStore(settings.archive_dir)
         mcp_sessions = McpSessionStore(settings.archive_dir)
@@ -135,6 +140,7 @@ class Container:
         patch_execution = PatchExecutionStore(settings.archive_dir)
         patch_records = PatchRecordStore(settings.archive_dir)
         patch_runs = PatchRunStore(settings.archive_dir)
+        public_references = PublicReferenceStore(settings.archive_dir)
         secret_store = SecretStore(
             settings.archive_dir,
             master_key=_resolve_secret_key(settings),
@@ -210,6 +216,7 @@ class Container:
             conversations=conversations,
             deletion_requests=deletion_requests,
             integration_config=integration_config,
+            hr_evaluations=hr_evaluations,
             issue_memory=issue_memory,
             mcp_audit=mcp_audit,
             mcp_sessions=mcp_sessions,
@@ -219,6 +226,7 @@ class Container:
             patch_records=patch_records,
             patch_runs=patch_runs,
             secret_store=secret_store,
+            public_references=public_references,
             token_usage=token_usage,
             uploads=uploads,
             volatile_memory=volatile_memory,

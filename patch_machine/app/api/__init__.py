@@ -49,6 +49,7 @@ from patch_machine.app.schemas.core import (
     CurrentUserPayload,
     DeletionRequestPayload,
     DepartmentPayload,
+    DepartmentPermissionPayload,
     DiscordChannelBindingPayload,
     DiscordConnectorPayload,
     DocumentReadPayload,
@@ -56,6 +57,8 @@ from patch_machine.app.schemas.core import (
     GitHubConnectorPayload,
     HandoverRequest,
     HiringRequest,
+    HrEvaluationDraftRequest,
+    HrEvaluationSaveRequest,
     HuggingFaceModelItemPayload,
     HuggingFaceModelSearchPayload,
     HuggingFaceModelSearchResultPayload,
@@ -74,6 +77,9 @@ from patch_machine.app.schemas.core import (
     PatchRecordCreatePayload,
     PatchRecordDetailPayload,
     PatchRecordPayload,
+    PatchPlanMarkdownPayload,
+    PatchPlanPromotePayload,
+    PatchPlanRevisePayload,
     PatchRunApprovalPayload,
     PatchRunCreatePayload,
     PatchRunPayload,
@@ -1036,6 +1042,170 @@ def create_operations_api_router(container: Container) -> APIRouter:
     ) -> dict[str, object]:
         _require(container, x_pm_user, "work:read")
         return {"events": container.patch_runs.list_events(patch_id)}
+
+    @router.get("/patch-runs/{patch_id}/files")
+    async def list_patch_run_files(
+        patch_id: str,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        _require(container, x_pm_user, "work:read")
+        try:
+            container.patch_runs.read(patch_id)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        return {"files": container.patch_runs.list_artifacts(patch_id)}
+
+    @router.get("/patch-runs/{patch_id}/files/{artifact_path:path}")
+    async def read_patch_run_file(
+        patch_id: str,
+        artifact_path: str,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        _require(container, x_pm_user, "work:read")
+        try:
+            container.patch_runs.read(patch_id)
+            artifact = container.patch_runs.read_artifact(
+                patch_id, _patch_artifact_relative_path(patch_id, artifact_path)
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        return {"file": artifact}
+
+    @router.put("/patch-runs/{patch_id}/plan-md")
+    async def save_patch_plan_markdown(
+        patch_id: str,
+        payload: PatchPlanMarkdownPayload,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        actor = _require(container, x_pm_user, "memory:write")
+        try:
+            run = container.patch_runs.read(patch_id)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        artifact = container.patch_runs.write_artifact(patch_id, "plan.md", payload.content)
+        updated = container.patch_runs.save(
+            run.with_updates(
+                status="PLAN_CREATED",
+                artifacts={**run.artifacts, "plan_path": artifact["path"], "plan_markdown": payload.content},
+            )
+        )
+        container.patch_runs.append_event(
+            patch_id,
+            event_type="plan.md.saved",
+            summary="plan.md를 직접 저장했습니다.",
+            payload={"actor": actor, "bytes": artifact["bytes"]},
+        )
+        _audit(
+            container,
+            actor=actor,
+            action="patchops.plan_md.save",
+            target="patch_run",
+            target_id=patch_id,
+        )
+        return {"ok": True, "patch_run": updated.to_dict(), "file": container.patch_runs.read_artifact(patch_id, "plan.md")}
+
+    @router.post("/patch-runs/{patch_id}/plan-md/revise")
+    async def revise_patch_plan_markdown(
+        patch_id: str,
+        payload: PatchPlanRevisePayload,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        actor = _require(container, x_pm_user, "memory:write")
+        try:
+            run = container.patch_runs.read(patch_id)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        current = payload.current_content.strip()
+        if not current:
+            try:
+                current = str(container.patch_runs.read_artifact(patch_id, "plan.md").get("content") or "")
+            except (FileNotFoundError, ValueError):
+                current = ""
+        sources = _collect_plan_source_files(container, payload.source_refs)
+        revised = await _revise_patch_plan_markdown(
+            container,
+            run=run,
+            current=current,
+            instruction=payload.instruction,
+            sources=sources,
+        )
+        artifact = container.patch_runs.write_artifact(patch_id, "plan.md", revised)
+        updated = container.patch_runs.save(
+            run.with_updates(
+                status="PLAN_CREATED",
+                artifacts={**run.artifacts, "plan_path": artifact["path"], "plan_markdown": revised},
+            )
+        )
+        summary = (
+            "참고 파일과 지시를 합성해 plan.md를 작성했습니다."
+            if sources
+            else "대화 요청을 반영해 plan.md를 수정했습니다."
+        )
+        container.patch_runs.append_event(
+            patch_id,
+            event_type="plan.md.revised",
+            summary=summary,
+            payload={
+                "actor": actor,
+                "instruction": payload.instruction[:500],
+                "source_refs": [str(item.get("id") or "") for item in sources],
+            },
+        )
+        _audit(
+            container,
+            actor=actor,
+            action="patchops.plan_md.revise",
+            target="patch_run",
+            target_id=patch_id,
+        )
+        return {"ok": True, "patch_run": updated.to_dict(), "file": container.patch_runs.read_artifact(patch_id, "plan.md")}
+
+    @router.post("/patch-runs/{patch_id}/plan-md/promote-memory")
+    async def promote_patch_plan_memory(
+        patch_id: str,
+        payload: PatchPlanPromotePayload,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        actor = _require(container, x_pm_user, "memory:write")
+        try:
+            run = container.patch_runs.read(patch_id)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        content = payload.content.strip()
+        if not content:
+            try:
+                content = str(
+                    container.patch_runs.read_artifact(patch_id, "plan.md").get("content") or ""
+                ).strip()
+            except (FileNotFoundError, ValueError):
+                content = ""
+        if not content:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail="저장할 plan.md 내용이 없습니다. 먼저 plan.md를 작성하세요.",
+            )
+        promoted = container.permanent_memory.promote(
+            title=f"코딩 에이전트 계획서: {run.request[:60]}",
+            content=content,
+            source_refs=[run.id],
+            actor=actor,
+        )
+        container.patch_runs.append_event(
+            patch_id,
+            event_type="plan.md.promoted",
+            summary="plan.md를 영구 메모리에 저장했습니다.",
+            payload={"actor": actor, "memory": promoted},
+        )
+        _audit(
+            container,
+            actor=actor,
+            action="patchops.plan_md.promote",
+            target="patch_run",
+            target_id=patch_id,
+        )
+        return {"ok": True, "patch_run": run.to_dict(), "memory": promoted}
 
     @router.post("/patch-runs/{patch_id}/analyze")
     async def analyze_patch_run_endpoint(
@@ -2481,6 +2651,89 @@ def create_operations_api_router(container: Container) -> APIRouter:
         )
         return result
 
+    @router.get("/hr/evaluation/context")
+    async def hr_evaluation_context(
+        user_id: str,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        _require(container, x_pm_user, "admin:hr_evaluation")
+        return _hr_evaluation_context(container, user_id=user_id)
+
+    @router.post("/hr/evaluation/draft")
+    async def hr_evaluation_draft(
+        payload: HrEvaluationDraftRequest,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        actor = _require(container, x_pm_user, "admin:hr_evaluation")
+        context = _hr_evaluation_context(
+            container, user_id=payload.user_id, work_item_ids=payload.work_item_ids
+        )
+        prompt = render_prompt(
+            "office/hr_evaluation.md.j2",
+            context=context,
+            period=payload.period,
+            criteria=payload.criteria,
+            notes=payload.notes,
+        ).strip()
+        text = await _complete_office_task(container, prompt, task="hiring")
+        _audit(
+            container,
+            actor=actor,
+            action="hr.evaluation.draft",
+            target="user",
+            target_id=payload.user_id,
+        )
+        return {"ok": True, "draft": text, "context": context}
+
+    @router.post("/hr/evaluation/save")
+    async def hr_evaluation_save(
+        payload: HrEvaluationSaveRequest,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        actor = _require(container, x_pm_user, "admin:hr_evaluation")
+        from patch_machine.archive.hr_evaluations import HrEvaluationRecord
+
+        context = _hr_evaluation_context(
+            container, user_id=payload.user_id, work_item_ids=payload.work_item_ids
+        )
+        draft_record = HrEvaluationRecord.create(
+            user_id=payload.user_id,
+            period=payload.period,
+            work_item_ids=payload.work_item_ids,
+            draft=payload.draft,
+            final_text=payload.final_text,
+            evidence=payload.evidence,
+            created_by=actor,
+            source_refs=payload.source_refs,
+        )
+        document_path = _write_generated_doc(
+            container.settings.archive_dir,
+            folder="hr/evaluations",
+            slug=f"hr_evaluation_{payload.user_id}_{payload.period or draft_record.id[:8]}",
+            markdown=_hr_evaluation_markdown(draft_record, context=context),
+        )
+        record = container.hr_evaluations.append(
+            HrEvaluationRecord.from_mapping({**draft_record.to_dict(), "document_path": document_path})
+        )
+        _audit(
+            container,
+            actor=actor,
+            action="hr.evaluation.save",
+            target="user",
+            target_id=payload.user_id,
+            details={"document_path": document_path},
+        )
+        return {"ok": True, "record": record.to_dict(), "document_path": document_path}
+
+    @router.get("/hr/evaluation/records")
+    async def hr_evaluation_records(
+        user_id: str = "",
+        limit: int = 100,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, object]:
+        _require(container, x_pm_user, "admin:hr_evaluation")
+        return {"records": container.hr_evaluations.list_recent(user_id=user_id, limit=limit)}
+
     @router.post("/handover/brief")
     async def create_handover_brief(
         payload: HandoverRequest,
@@ -2772,7 +3025,7 @@ def create_operations_api_router(container: Container) -> APIRouter:
         x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
     ) -> dict[str, Any]:
         _require(container, x_pm_user, "admin:users")
-        return {**container.access_control.read(), "permissions": ALL_PERMISSIONS}
+        return _access_control_payload(container)
 
     @router.post("/admin/roles")
     async def upsert_role(
@@ -2793,7 +3046,7 @@ def create_operations_api_router(container: Container) -> APIRouter:
             target="role",
             target_id=payload.id.strip(),
         )
-        return container.access_control.read()
+        return _access_control_payload(container)
 
     @router.delete("/admin/roles/{role_id}")
     async def delete_role(
@@ -2810,7 +3063,7 @@ def create_operations_api_router(container: Container) -> APIRouter:
         except ValueError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         _audit(container, actor=actor, action="role.delete", target="role", target_id=role_id)
-        return container.access_control.read()
+        return _access_control_payload(container)
 
     @router.post("/admin/users")
     async def upsert_user(
@@ -2818,9 +3071,10 @@ def create_operations_api_router(container: Container) -> APIRouter:
         x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
     ) -> dict[str, Any]:
         actor = _require(container, x_pm_user, "admin:users")
+        acl = container.access_control.read()
         user = payload.to_record()
         _ensure_acl_keeps_admin_access(
-            container.access_control.read(),
+            acl,
             users_override=[user.to_dict()],
         )
         container.access_control.upsert_user(user)
@@ -2831,7 +3085,7 @@ def create_operations_api_router(container: Container) -> APIRouter:
             target="user",
             target_id=payload.id.strip(),
         )
-        return container.access_control.read()
+        return _access_control_payload(container)
 
     @router.post("/admin/users/create-login")
     async def create_login_user(
@@ -2839,9 +3093,10 @@ def create_operations_api_router(container: Container) -> APIRouter:
         x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
     ) -> dict[str, Any]:
         actor = _require(container, x_pm_user, "admin:users")
+        acl = container.access_control.read()
         user = payload.to_record()
         _ensure_acl_keeps_admin_access(
-            container.access_control.read(),
+            acl,
             users_override=[user.to_dict()],
         )
         try:
@@ -2874,7 +3129,7 @@ def create_operations_api_router(container: Container) -> APIRouter:
                 "position_id": user.position_id,
             },
         )
-        return {"ok": True, "access_control": container.access_control.read()}
+        return {"ok": True, "access_control": _access_control_payload(container)}
 
     @router.delete("/admin/users/{user_id}")
     async def delete_user(
@@ -2889,7 +3144,7 @@ def create_operations_api_router(container: Container) -> APIRouter:
         container.access_control.delete_user(user_id)
         container.auth_store.delete_user(user_id)
         _audit(container, actor=actor, action="user.delete", target="user", target_id=user_id)
-        return container.access_control.read()
+        return _access_control_payload(container)
 
     @router.post("/admin/departments")
     async def upsert_department(
@@ -2908,7 +3163,7 @@ def create_operations_api_router(container: Container) -> APIRouter:
             target="department",
             target_id=payload.id.strip(),
         )
-        return container.access_control.read()
+        return _access_control_payload(container)
 
     @router.delete("/admin/departments/{department_id}")
     async def delete_department(
@@ -2924,7 +3179,7 @@ def create_operations_api_router(container: Container) -> APIRouter:
             target="department",
             target_id=department_id,
         )
-        return container.access_control.read()
+        return _access_control_payload(container)
 
     @router.post("/admin/positions")
     async def upsert_position(
@@ -2932,6 +3187,7 @@ def create_operations_api_router(container: Container) -> APIRouter:
         x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
     ) -> dict[str, Any]:
         actor = _require(container, x_pm_user, "admin:users")
+        acl = container.access_control.read()
         try:
             container.access_control.upsert_position(payload.to_record())
         except ValueError as exc:
@@ -2943,7 +3199,7 @@ def create_operations_api_router(container: Container) -> APIRouter:
             target="position",
             target_id=payload.id.strip(),
         )
-        return container.access_control.read()
+        return _access_control_payload(container)
 
     @router.delete("/admin/positions/{position_id}")
     async def delete_position(
@@ -2959,7 +3215,26 @@ def create_operations_api_router(container: Container) -> APIRouter:
             target="position",
             target_id=position_id,
         )
-        return container.access_control.read()
+        return _access_control_payload(container)
+
+    @router.post("/admin/department-permissions")
+    async def upsert_department_permission(
+        payload: DepartmentPermissionPayload,
+        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+    ) -> dict[str, Any]:
+        actor = _require(container, x_pm_user, "admin:users")
+        try:
+            container.access_control.upsert_department_permission(payload.to_record())
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        _audit(
+            container,
+            actor=actor,
+            action="department_permission.upsert",
+            target="department_permission",
+            target_id=f"{payload.department_id}:{payload.position_id}",
+        )
+        return _access_control_payload(container)
 
     @router.get("/admin/account-requests")
     async def list_account_requests(
@@ -3718,6 +3993,14 @@ def _ensure_acl_keeps_admin_access(
         )
 
 
+def _ensure_role_exists(acl: dict[str, Any], role_id: str) -> None:
+    if not role_id:
+        return
+    role_ids = {str(role.get("id") or "") for role in acl.get("roles", []) if isinstance(role, dict)}
+    if role_id not in role_ids:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"unknown role: {role_id}")
+
+
 def _resolve_authenticated_user(container: Container, credential: str | None) -> str | None:
     token = _extract_token(credential)
     if token:
@@ -3742,28 +4025,25 @@ def _user_display_name(container: Container, user_id: str) -> str:
     return str(user.get("display_name") or user_id)
 
 
-# Grade thresholds that divide how far a user can assign work across departments.
-_ASSIGN_ALL_LEVEL = 90  # owner/대표급: 모든 부서에 배정 가능
-_ASSIGN_DEPARTMENT_LEVEL = 70  # 매니저급: 본인 부서(하위 포함)에 배정 가능
+_DEPARTMENT_BRANCH_RANK = 40
+_COMPANY_WIDE_RANK = 80
 
 
-def _role_level(container: Container, user_id: str | None) -> int:
+def _position_rank(container: Container, user_id: str | None) -> int:
     if not user_id:
         return 0
     acl = container.access_control.read()
     user = next((entry for entry in acl["users"] if entry["id"] == user_id), None)
     if user is None:
         return 0
-    role = next((entry for entry in acl["roles"] if entry["id"] == user.get("role_id")), None)
-    if role is None:
+    position = next(
+        (entry for entry in acl["positions"] if entry.get("id") == user.get("position_id")),
+        None,
+    )
+    if not position:
         return 0
-    raw_perms = role.get("permissions", [])
-    permissions = [str(item) for item in raw_perms] if isinstance(raw_perms, list) else []
-    raw_level = role.get("level")
-    level = raw_level if isinstance(raw_level, int) else 0
-    if "*" in permissions:
-        return max(level, _ASSIGN_ALL_LEVEL)
-    return level
+    raw_rank = position.get("display_order") or position.get("level")
+    return _as_int(raw_rank)
 
 
 def _descendant_department_ids(
@@ -3789,15 +4069,15 @@ def _assignment_scope(container: Container, user_id: str | None) -> dict[str, An
     acl = container.access_control.read()
     departments = acl["departments"]
     users = acl["users"]
-    level = _role_level(container, user_id)
+    rank = _position_rank(container, user_id)
     actor = next((entry for entry in users if entry["id"] == user_id), None)
     actor_dept = str(actor.get("department") or "") if actor else ""
-    if level >= _ASSIGN_ALL_LEVEL:
+    if rank >= _COMPANY_WIDE_RANK:
         scope = "all"
         dept_ids = [str(dept.get("id")) for dept in departments]
         assignable = [user for user in users if user.get("active", True)]
         scoped_departments = list(departments)
-    elif level >= _ASSIGN_DEPARTMENT_LEVEL and actor_dept:
+    elif rank >= _DEPARTMENT_BRANCH_RANK and actor_dept:
         scope = "department"
         allowed = _descendant_department_ids(departments, {actor_dept})
         dept_ids = sorted(allowed)
@@ -3815,7 +4095,8 @@ def _assignment_scope(container: Container, user_id: str | None) -> dict[str, An
     return {
         "can_assign": scope != "none",
         "scope": scope,
-        "level": level,
+        "level": rank,
+        "position_rank": rank,
         "department_ids": dept_ids,
         "departments": scoped_departments,
         "assignable_users": assignable,
@@ -3899,6 +4180,94 @@ def _collect_owner_activity(container: Container, owner: str, *, limit: int = 30
     return f"기존 담당자({owner_name}) 활동 요약:\n" + "\n".join(lines)
 
 
+def _hr_evaluation_context(
+    container: Container, *, user_id: str, work_item_ids: list[str] | None = None
+) -> dict[str, object]:
+    acl = container.access_control.read()
+    user = next((entry for entry in acl["users"] if entry.get("id") == user_id), None)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="employee not found")
+    departments = {str(entry.get("id")): entry for entry in acl["departments"]}
+    positions = {str(entry.get("id")): entry for entry in acl["positions"]}
+    position = positions.get(str(user.get("position_id") or ""))
+    selected_ids = set(work_item_ids or [])
+    related_work = [
+        item
+        for item in container.work_schedule.list()
+        if (selected_ids and str(item.get("id") or "") in selected_ids)
+        or str(item.get("owner_name") or "") in {str(user.get("id") or ""), str(user.get("display_name") or "")}
+        or str(item.get("owner_id") or "") == user_id
+        or str(item.get("assignee_id") or "") == user_id
+    ][:30]
+    conversations = [
+        entry
+        for entry in container.conversations.list_recent(user_id=user_id, limit=20)
+        if isinstance(entry.get("content"), str)
+    ]
+    audit_logs = [
+        entry
+        for entry in container.audit_log.list_recent(limit=100)
+        if str(entry.get("actor") or "") == user_id or str(entry.get("target_id") or "") == user_id
+    ][:20]
+    source_refs = [
+        f"work_schedule:{item.get('id')}"
+        for item in related_work
+        if item.get("id")
+    ]
+    return {
+        "employee": user,
+        "department": departments.get(str(user.get("department") or ""), {}),
+        "position": position or {},
+        "work_items": related_work,
+        "conversation_logs": conversations,
+        "audit_logs": audit_logs,
+        "source_refs": source_refs,
+    }
+
+
+def _hr_evaluation_markdown(record: Any, *, context: dict[str, object]) -> str:
+    employee = context.get("employee") if isinstance(context.get("employee"), dict) else {}
+    department = context.get("department") if isinstance(context.get("department"), dict) else {}
+    position = context.get("position") if isinstance(context.get("position"), dict) else {}
+    work_items = context.get("work_items") if isinstance(context.get("work_items"), list) else []
+    employee_name = str(employee.get("display_name") or record.user_id)
+    department_name = str(department.get("name") or employee.get("department") or "미배정")
+    position_name = str(position.get("name") or employee.get("position_id") or "미지정")
+    work_lines = [
+        f"- [{item.get('status', '')}] {item.get('title', '')} ({item.get('id', '')})"
+        for item in work_items
+        if isinstance(item, dict)
+    ]
+    return "\n".join(
+        [
+            f"# 인사평가 기록 - {employee_name}",
+            "",
+            f"- 평가 ID: `{record.id}`",
+            f"- 평가 대상: {employee_name} (`{record.user_id}`)",
+            f"- 부서/직급: {department_name} / {position_name}",
+            f"- 평가 기간: {record.period or '(미지정)'}",
+            f"- 작성자: {record.created_by}",
+            f"- 작성 시각: {record.created_at}",
+            "",
+            "## 최종 평가",
+            record.final_text.strip() or "(내용 없음)",
+            "",
+            "## 관리자 근거/메모",
+            record.evidence.strip() or "(없음)",
+            "",
+            "## 관련 업무",
+            *(work_lines or ["- 관련 업무 없음"]),
+            "",
+            "## 원본 AI 초안",
+            record.draft.strip() or "(초안 없음)",
+            "",
+            "## 출처",
+            *[f"- {ref}" for ref in record.source_refs],
+            "",
+        ]
+    )
+
+
 def _ensure_owner_in_scope(container: Container, actor: str, owner_id: str) -> None:
     if not owner_id:
         return
@@ -3921,6 +4290,18 @@ def _user_payload(container: Container, user_id: str) -> dict[str, object]:
     role = next((entry for entry in acl["roles"] if entry["id"] == user["role_id"]), None)
     permissions = role["permissions"] if role else []
     return {**user, "permissions": permissions}
+
+
+def _access_control_payload(container: Container) -> dict[str, Any]:
+    return {**container.access_control.read(), "permissions": ALL_PERMISSIONS}
+
+
+def _patch_artifact_relative_path(patch_id: str, artifact_path: str) -> str:
+    cleaned = artifact_path.strip().lstrip("/")
+    prefix = f"patch_ops/workspaces/{patch_id}/"
+    if cleaned.startswith(prefix):
+        return cleaned[len(prefix) :]
+    return cleaned
 
 
 def _readable_source_payload(
@@ -4590,8 +4971,8 @@ async def _complete_patchops_task(
         LlmMessage(
             "system",
             (
-                "당신은 PatchOps Agent입니다. 코드를 수정하기 전에 저장소를 조사하고, "
-                "자가 질문, 증거 기반 계획, diff 초안, 검증 계획, 패치 메모리를 정형 출력합니다. "
+                "당신은 코딩 에이전트 계획서 작성 도우미입니다. Patch Machine 안에서 직접 코드를 적용하지 않고, "
+                "Cursor나 Claude Code가 읽을 수 있는 plan.md를 명확하고 실행 가능하게 작성합니다. "
                 "민감정보와 secret은 절대 노출하지 마세요."
             ),
         ),
@@ -4608,6 +4989,94 @@ async def _complete_patchops_task(
         model=model,
     )
     return response.text.strip()
+
+
+def _collect_plan_source_files(
+    container: Container, source_refs: list[str] | None
+) -> list[dict[str, object]]:
+    """Resolve archive-relative refs (memory sources or documents) into readable files.
+
+    Each ref is the archive-relative path/id used across permanent memory and the
+    document index. Unreadable refs are skipped so a bad selection never aborts the
+    whole synthesis request.
+    """
+
+    sources: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for raw in source_refs or []:
+        ref = str(raw or "").strip()
+        if not ref or ref in seen:
+            continue
+        seen.add(ref)
+        try:
+            source = container.permanent_memory.read_source(ref, max_chars=8000)
+        except (FileNotFoundError, ValueError):
+            continue
+        sources.append(source)
+    return sources
+
+
+def _render_plan_sources_md(sources: list[dict[str, object]]) -> str:
+    blocks: list[str] = []
+    for index, source in enumerate(sources, start=1):
+        title = str(source.get("title") or source.get("path") or f"파일 {index}")
+        path = str(source.get("path") or source.get("id") or "")
+        content = str(source.get("content") or "").strip()
+        header = f"### 파일 {index}: {title}"
+        if path:
+            header += f" ({path})"
+        blocks.append(f"{header}\n```\n{content}\n```")
+    return "\n\n".join(blocks)
+
+
+async def _revise_patch_plan_markdown(
+    container: Container,
+    *,
+    run: PatchRun,
+    current: str,
+    instruction: str,
+    sources: list[dict[str, object]] | None = None,
+) -> str:
+    sources = sources or []
+    if sources:
+        prompt = "\n".join(
+            [
+                "아래 참고 파일들과 사용자의 지시를 종합해, 코딩 에이전트(Cursor·Claude Code 등)에게",
+                "그대로 넘길 수 있는 plan.md 한 개를 작성하세요. 비개발자가 작성한 지시를 개발자가",
+                "바로 따라할 수 있도록 목표·범위·관련 파일·단계별 체크리스트·검증 방법을 포함하세요.",
+                "출력은 반드시 plan.md 본문(Markdown)만 반환하세요. 설명, 코드펜스, JSON은 추가하지 마세요.",
+                "",
+                f"작업 요청: {run.request}",
+                f"저장소: {run.repo_id}",
+                "",
+                "## 사용자 지시",
+                instruction.strip() or "(별도 지시 없음 — 참고 파일을 바탕으로 합리적으로 작성)",
+                "",
+                "## 참고 파일",
+                _render_plan_sources_md(sources),
+                "",
+                "## 현재 plan.md (있다면 이어서 보완)",
+                current.strip() or "(아직 plan.md가 없습니다. 새로 작성하세요.)",
+            ]
+        )
+    else:
+        prompt = "\n".join(
+            [
+                "아래 현재 plan.md를 사용자의 요청에 맞게 다시 작성하세요.",
+                "출력은 반드시 수정된 plan.md 본문만 반환하세요. 설명, 코드펜스, JSON은 추가하지 마세요.",
+                "",
+                f"작업 요청: {run.request}",
+                f"저장소: {run.repo_id}",
+                "",
+                "## 사용자 수정 요청",
+                instruction.strip(),
+                "",
+                "## 현재 plan.md",
+                current.strip() or "(아직 plan.md가 없습니다. 새로 작성하세요.)",
+            ]
+        )
+    revised = await _complete_patchops_task(container, prompt, task="patch_planning")
+    return revised.strip() or current.strip() or f"# 코딩 에이전트 계획서\n\n## 요청\n{run.request}\n"
 
 
 async def _complete_with_provider(
@@ -5843,6 +6312,7 @@ def _read_archive_document(container: Container, raw_path: str) -> DocumentReadP
         ".txt",
         ".json",
         ".jsonl",
+        ".patch",
         ".yaml",
         ".yml",
     }:
@@ -5867,7 +6337,7 @@ def _archive_document_index(container: Container, *, q: str, limit: int) -> list
     for path in archive_root.rglob("*"):
         if not path.is_file() or path.name.startswith("."):
             continue
-        if path.suffix.lower() not in {".md", ".markdown", ".txt", ".json", ".yaml", ".yml"}:
+        if path.suffix.lower() not in {".md", ".markdown", ".txt", ".json", ".patch", ".yaml", ".yml"}:
             continue
         try:
             rel = path.relative_to(archive_root).as_posix()
@@ -5917,6 +6387,7 @@ def _archive_document_kind(rel: str) -> str:
         "hr": "채용/면접",
         "handover": "인수인계",
         "patch_records": "코딩 패치 기록",
+        "patch_ops": "AI 개발 도우미",
         "uploads": "업로드",
         "memory": "승격 메모리",
     }

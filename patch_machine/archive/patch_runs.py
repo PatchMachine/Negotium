@@ -109,8 +109,10 @@ class PatchRun:
 
 class PatchRunStore:
     def __init__(self, archive_dir: Path) -> None:
+        self._archive_dir = archive_dir
         self._runs = archive_dir / "patch_ops" / "runs"
         self._events = archive_dir / "patch_ops" / "events"
+        self._workspaces = archive_dir / "patch_ops" / "workspaces"
 
     def create(self, run: PatchRun) -> PatchRun:
         return self.save(run)
@@ -184,6 +186,60 @@ class PatchRunStore:
                 events.append(event)
         return events
 
+    def write_artifact(self, run_id: str, relative_path: str, content: str) -> dict[str, Any]:
+        path = self._artifact_path(run_id, relative_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with portalocker.Lock(path, "w", encoding="utf-8", timeout=5) as fh:
+            fh.write(content.rstrip())
+            fh.write("\n")
+        return self._artifact_payload(path)
+
+    def list_artifacts(self, run_id: str) -> list[dict[str, Any]]:
+        root = self._workspace_root(run_id)
+        if not root.exists():
+            return []
+        files = [path for path in root.rglob("*") if path.is_file() and not path.name.startswith(".")]
+        files.sort(key=lambda item: (item.parent.as_posix(), item.name))
+        return [self._artifact_payload(path) for path in files]
+
+    def read_artifact(self, run_id: str, relative_path: str, *, max_chars: int = 200_000) -> dict[str, Any]:
+        path = self._artifact_path(run_id, relative_path)
+        if not path.exists() or not path.is_file():
+            raise FileNotFoundError(relative_path)
+        payload = self._artifact_payload(path)
+        payload["content"] = path.read_text(encoding="utf-8", errors="replace")[:max_chars]
+        return payload
+
+    def _workspace_root(self, run_id: str) -> Path:
+        safe_id = _safe_segment(run_id)
+        return (self._workspaces / safe_id).resolve()
+
+    def _artifact_path(self, run_id: str, relative_path: str) -> Path:
+        root = self._workspace_root(run_id)
+        cleaned = relative_path.strip().lstrip("/")
+        if not cleaned or "\x00" in cleaned:
+            raise ValueError("invalid artifact path")
+        path = (root / cleaned).resolve()
+        try:
+            path.relative_to(root)
+        except ValueError as exc:
+            raise ValueError("artifact path escapes patch workspace") from exc
+        if any(part in {"", ".", ".."} for part in Path(cleaned).parts):
+            raise ValueError("invalid artifact path")
+        return path
+
+    def _artifact_payload(self, path: Path) -> dict[str, Any]:
+        rel = path.relative_to(self._archive_dir).as_posix()
+        name = path.name
+        return {
+            "path": rel,
+            "name": name,
+            "kind": _artifact_kind(name),
+            "title": _artifact_title(name),
+            "bytes": path.stat().st_size,
+            "updated_at": datetime.fromtimestamp(path.stat().st_mtime, tz=UTC).isoformat(),
+        }
+
 
 def _status(value: object) -> PatchRunStatus:
     allowed = set(PatchRunStatus.__args__)  # type: ignore[attr-defined]
@@ -202,3 +258,27 @@ def _privacy(value: object) -> PrivacyMode:
 
 def _risk(value: object) -> RiskLevel:
     return value if value in {"low", "medium", "high", "critical"} else "medium"  # type: ignore[return-value]
+
+
+def _safe_segment(value: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in value).strip("_")
+    if not cleaned:
+        raise ValueError("invalid patch run id")
+    return cleaned[:120]
+
+
+def _artifact_kind(name: str) -> str:
+    if name.endswith(".patch"):
+        return "diff"
+    if name.endswith(".md"):
+        return "markdown"
+    if name.endswith(".json"):
+        return "json"
+    return "text"
+
+
+def _artifact_title(name: str) -> str:
+    titles = {
+        "plan.md": "코딩 에이전트 계획서",
+    }
+    return titles.get(name, name)

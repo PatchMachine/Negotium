@@ -22,7 +22,6 @@ import HomePage from './components/HomePage';
 import IntegrationsPage from './components/IntegrationsPage';
 import LlmChatPage from './components/LlmChatPage';
 import OperationsMemoryForm from './components/OperationsMemoryForm';
-import PatchRecordsPage from './components/PatchRecordsPage';
 import PersonnelManagementPage from './components/PersonnelManagementPage';
 import ProgressLogPage from './components/ProgressLogPage';
 import SystemStatus from './components/SystemStatus';
@@ -72,7 +71,6 @@ type Page =
   | 'access'
   | 'workflow-status'
   | 'token-limits'
-  | 'patch-records'
   | 'personnel';
 
 type NavItem = { id: Page; label: string; group: string; requiredPermission?: string };
@@ -85,17 +83,15 @@ const navItems: NavItem[] = [
   { id: 'progress', label: '진행 로그', group: '회사 업무 운영' },
   { id: 'work-memory', label: '패치머신 메모리', group: '패치머신 메모리 관리', requiredPermission: 'memory:write' },
   { id: 'assistant', label: 'AI 어시스턴트', group: 'AI 에이전트', requiredPermission: 'llm:chat' },
-  { id: 'chat', label: 'AI 개발 도우미', group: 'AI 에이전트' },
   { id: 'skills', label: '스킬 실행', group: 'AI 에이전트', requiredPermission: 'work:read' },
   { id: 'hiring', label: '채용/면접', group: '오피스워크' },
   { id: 'work-schedule', label: '업무 배정', group: '오피스워크', requiredPermission: 'memory:write' },
   { id: 'documents', label: '문서 자동화', group: '오피스워크' },
   { id: 'documents-viewer', label: '문서 열람', group: '오피스워크', requiredPermission: 'documents:read' },
   { id: 'handover', label: '인수인계', group: '오피스워크' },
-  { id: 'patch-records', label: 'AI 개발 기록', group: '오피스워크', requiredPermission: 'patch_records:read' },
+  { id: 'chat', label: '코딩 에이전트 계획서 작성', group: '오피스워크' },
   { id: 'dashboard', label: '회사 운영 설정', group: '조직·운영 관리', requiredPermission: 'memory:write' },
   { id: 'personnel', label: '인사관리', group: '조직·운영 관리', requiredPermission: 'admin:users' },
-  { id: 'access', label: '권한 관리', group: '조직·운영 관리', requiredPermission: 'admin:users' },
   { id: 'uploads', label: '업로드', group: '시스템 관리', requiredPermission: 'uploads:write' },
   { id: 'admin', label: 'API 키·로컬 에이전트', group: '시스템 관리', requiredPermission: 'admin:api_keys' },
   { id: 'workflow-status', label: '워크플로우 상태', group: '시스템 관리', requiredPermission: 'admin:users' },
@@ -238,7 +234,6 @@ export default function App() {
       {page === 'workflow-status' ? <WorkflowStatusPage /> : null}
       {page === 'skills' ? <SkillsPage /> : null}
       {page === 'token-limits' ? <TokenLimitsPage /> : null}
-      {page === 'patch-records' ? <PatchRecordsPage /> : null}
       {page === 'personnel' ? <PersonnelManagementPage /> : null}
     </AppShell>
   );
