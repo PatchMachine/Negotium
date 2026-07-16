@@ -60,3 +60,25 @@ def test_runtime_task_routes_accept_together_provider() -> None:
     assert loaded.default_provider == "together"
     assert loaded.route_for("chat").provider == "together"
     assert loaded.route_for("chat").model == "openai/gpt-oss-20b"
+
+
+def test_runtime_task_routes_accept_solar_provider() -> None:
+    """Solar must survive the provider whitelist round-trip (no silent vllm downgrade)."""
+
+    loaded = LlmRuntimeConfig.from_mapping(
+        {
+            "default_route": "api",
+            "default_provider": "solar",
+            "task_routes": {
+                "chat": {
+                    "route": "api",
+                    "provider": "solar",
+                    "model": "solar-open2",
+                },
+            },
+        },
+    )
+
+    assert loaded.default_provider == "solar"
+    assert loaded.route_for("chat").provider == "solar"
+    assert loaded.route_for("chat").model == "solar-open2"

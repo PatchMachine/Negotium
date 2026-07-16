@@ -20,7 +20,7 @@ export type ApiStatus = {
   operations_memory_configured: boolean;
 };
 
-export type LlmProviderName = 'vllm' | 'openai' | 'anthropic' | 'gemini' | 'together' | 'fake';
+export type LlmProviderName = 'vllm' | 'solar' | 'openai' | 'anthropic' | 'gemini' | 'together' | 'fake';
 export type LlmRuntimeRoute = 'local' | 'api';
 
 export type LlmTaskRoute = {
@@ -40,6 +40,7 @@ export type LlmRuntime = {
   anthropic_model: string;
   gemini_model: string;
   together_model: string;
+  solar_model: string;
   task_routes: Record<string, LlmTaskRoute>;
 };
 

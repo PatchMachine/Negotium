@@ -287,6 +287,12 @@ class Container:
                 model=settings.llm.together_model,
                 base_url=settings.llm.together_base_url,
             )
+        if settings.llm.solar_api_key or settings.llm.provider == "solar":
+            cloud_providers["solar"] = OpenAiProvider(
+                api_key=settings.llm.solar_api_key,
+                model=settings.llm.solar_model,
+                base_url=settings.llm.solar_base_url,
+            )
 
         cloud = cloud_providers.get(settings.llm.provider) or cloud_providers.get("openai") or fake
         local = local_providers.get("vllm")

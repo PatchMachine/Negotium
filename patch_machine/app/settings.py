@@ -28,9 +28,12 @@ class DiscordSettings(BaseSettings):
 
 class LlmSettings(BaseSettings):
     default_route: Literal["cloud", "local"] = "cloud"
-    provider: Literal["openai", "vllm", "ollama", "anthropic", "gemini", "together", "fake"] = (
-        "openai"
-    )
+    provider: Literal[
+        "solar", "openai", "vllm", "ollama", "anthropic", "gemini", "together", "fake"
+    ] = "solar"
+    solar_api_key: str = ""
+    solar_model: str = "solar-open2"
+    solar_base_url: str = "https://api.upstage.ai/v1"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
     openai_base_url: str = ""

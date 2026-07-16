@@ -10,7 +10,7 @@ import {
   type LlmTaskRoute,
 } from '../../api';
 
-const PROVIDERS: LlmProviderName[] = ['vllm', 'openai', 'anthropic', 'gemini', 'together', 'fake'];
+const PROVIDERS: LlmProviderName[] = ['vllm', 'solar', 'openai', 'anthropic', 'gemini', 'together', 'fake'];
 
 const LOCAL_MODELS = [
   'Qwen/Qwen3-4B',

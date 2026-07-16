@@ -4541,6 +4541,8 @@ def _settings_api_key(container: Container, provider: str) -> str:
         return container.settings.llm.gemini_api_key
     if provider == "together":
         return container.settings.llm.together_api_key
+    if provider == "solar":
+        return container.settings.llm.solar_api_key
     return ""
 
 
@@ -4682,6 +4684,8 @@ def _masked_provider_payload(container: Container) -> list[dict[str, object]]:
 def _default_base_url(container: Container, provider: str) -> str:
     if provider == "together":
         return container.settings.llm.together_base_url.rstrip("/")
+    if provider == "solar":
+        return container.settings.llm.solar_base_url.rstrip("/")
     return default_base_url(provider, vllm_base_url=container.settings.llm.vllm_base_url)
 
 
@@ -4900,6 +4904,7 @@ def _resolve_runtime_model(container: Container, provider: LlmProviderName, rout
     runtime = container.llm_runtime.read()
     llm = container.settings.llm
     defaults: dict[str, str] = {
+        "solar": llm.solar_model,
         "openai": llm.openai_model,
         "anthropic": llm.anthropic_model,
         "gemini": llm.gemini_model,
@@ -5299,6 +5304,24 @@ async def _complete_with_provider(
                 response=sanitized,
             )
             return sanitized
+        if saved and saved.api_key and provider == "solar" and route != "local":
+            response = await OpenAiProvider(
+                api_key=saved.api_key,
+                model=effective_model or saved.model or container.settings.llm.solar_model,
+                base_url=saved.base_url or container.settings.llm.solar_base_url,
+            ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
+            sanitized = sanitize_llm_response(
+                response, destination=destination, task_type=str(provider)
+            )
+            _record_token_usage(
+                container,
+                provider=provider,
+                model=sanitized.model,
+                task=task,
+                actor=actor,
+                response=sanitized,
+            )
+            return sanitized
         if saved and saved.api_key and provider == "together" and route != "local":
             response = await OpenAiProvider(
                 api_key=saved.api_key,
@@ -5447,7 +5470,7 @@ def _llm_provider_http_error(provider: LlmProviderName, exc: Exception) -> HTTPE
 def _firewall_destination(*, provider: LlmProviderName, route: LlmRoute) -> str:
     if route == "local" or provider in {"vllm", "fake"}:
         return "local_llm"
-    if provider in {"openai", "anthropic", "gemini", "together"}:
+    if provider in {"solar", "openai", "anthropic", "gemini", "together"}:
         return "frontier_llm"
     return "cloud_llm"
 

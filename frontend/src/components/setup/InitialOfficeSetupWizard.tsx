@@ -67,6 +67,24 @@ const recommendedLocalModels = [
   },
 ];
 
+const recommendedSolarModels = [
+  {
+    name: 'Solar Open 2',
+    model: 'solar-open2',
+    strength: '한국어 오피스워크에 최적화된 Upstage 오픈 모델 (기본 권장)',
+  },
+  {
+    name: 'Solar Pro 2',
+    model: 'solar-pro2',
+    strength: '고품질 문서 생성/분석용 상위 모델',
+  },
+  {
+    name: 'Solar Mini',
+    model: 'solar-mini',
+    strength: '빠른 응답이 필요한 요약/분류 작업 후보',
+  },
+];
+
 const recommendedTogetherModels = [
   {
     name: 'Llama 3.1 8B Turbo',
@@ -168,7 +186,7 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
   const [admin, setAdmin] = useState({ ...(savedDraft?.admin || { user_id: '', display_name: '', title: '시스템 관리자' }), password: '' });
   const [sessionUser, setSessionUser] = useState<AuthUser | null>(initialUser);
   const [llmChoice, setLlmChoice] = useState<LlmChoice>(savedDraft?.llmChoice || 'local');
-  const [provider, setProvider] = useState<LlmProviderName>(savedDraft?.provider || 'openai');
+  const [provider, setProvider] = useState<LlmProviderName>(savedDraft?.provider || 'solar');
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState(savedDraft?.model || '');
   const [models, setModels] = useState<ProviderModelPayload | null>(null);
@@ -505,11 +523,24 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
                     setModelSearch('');
                   }}
                 >
+                  <option value="solar">Upstage / Solar</option>
                   <option value="openai">OpenAI / GPT</option>
                   <option value="anthropic">Anthropic / Claude</option>
                   <option value="gemini">Google / Gemini</option>
                   <option value="together">Together AI</option>
                 </select>
+                {provider === 'solar' ? (
+                  <div className="local-llm-status">
+                    <div>
+                      <strong>Upstage Solar API</strong>
+                      <p className="muted">
+                        Solar는 OpenAI-compatible API로 호출됩니다. console.upstage.ai에서 발급한 API key를
+                        넣고 모델 확인을 누르면 사용 가능한 모델 목록을 가져옵니다.
+                      </p>
+                    </div>
+                    <span className="status-pill">api</span>
+                  </div>
+                ) : null}
                 {provider === 'together' ? (
                   <div className="local-llm-status">
                     <div>
@@ -523,6 +554,21 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
                   </div>
                 ) : null}
                 <input type="password" placeholder="API Key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+                {provider === 'solar' ? (
+                  <div className="recommended-model-grid">
+                    {recommendedSolarModels.map((item) => (
+                      <article className={model === item.model ? 'model-card model-card-selected' : 'model-card'} key={item.model}>
+                        <small>Upstage</small>
+                        <strong>{item.name}</strong>
+                        <p>{item.strength}</p>
+                        <code>{item.model}</code>
+                        <button className="secondary-button" type="button" onClick={() => setModel(item.model)}>
+                          선택
+                        </button>
+                      </article>
+                    ))}
+                  </div>
+                ) : null}
                 {provider === 'together' ? (
                   <div className="recommended-model-grid">
                     {recommendedTogetherModels.map((item) => (

@@ -145,3 +145,48 @@ async def test_together_model_catalog_uses_openai_compatible_models(
     assert payload["source"] == "live"
     assert payload["models"] == ["meta-llama/Llama-3-8b-chat-hf", "openai/gpt-oss-20b"]
     assert payload["configured"] is True
+
+
+async def test_solar_model_catalog_uses_openai_compatible_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        async def __aenter__(self) -> FakeClient:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        async def get(self, url: str, *args: object, **kwargs: object) -> httpx.Response:
+            assert url.startswith("https://api.upstage.ai/v1")
+            request = httpx.Request("GET", url)
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "data": [
+                        {"id": "solar-open2"},
+                        {"id": "solar-pro2"},
+                    ]
+                },
+            )
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+
+    payload = await catalog.list_models("solar", api_key="test-key")
+
+    assert payload["source"] == "live"
+    assert payload["models"] == ["solar-open2", "solar-pro2"]
+    assert payload["configured"] is True
+
+
+async def test_solar_model_catalog_falls_back_without_api_key() -> None:
+    payload = await catalog.list_models("solar", api_key="")
+
+    assert payload["source"] == "fallback"
+    assert "solar-open2" in payload["models"]
+    assert payload["configured"] is False
+    assert payload["requires_api_key"] is True

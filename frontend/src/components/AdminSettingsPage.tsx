@@ -29,7 +29,7 @@ const adminSettingsSections: Array<{ id: AdminSettingsSection; label: string; de
 export default function AdminSettingsPage() {
   const [activeSection, setActiveSection] = useState<AdminSettingsSection>('api-keys');
   const [providers, setProviders] = useState<ApiKeyInfo[]>([]);
-  const [draft, setDraft] = useState({ provider: 'openai', api_key: '', model: '' });
+  const [draft, setDraft] = useState({ provider: 'solar', api_key: '', model: '' });
   const [models, setModels] = useState<ProviderModelPayload | null>(null);
   const [modelSearch, setModelSearch] = useState('');
   const [message, setMessage] = useState('');
@@ -138,6 +138,7 @@ export default function AdminSettingsPage() {
                     setDraft({ provider: event.target.value, api_key: draft.api_key, model: '' });
                   }}
                 >
+                  <option value="solar">Upstage / Solar</option>
                   <option value="openai">OpenAI / GPT</option>
                   <option value="anthropic">Anthropic / Claude</option>
                   <option value="gemini">Google / Gemini</option>

@@ -8,7 +8,7 @@ from typing import Literal
 
 import httpx
 
-ProviderName = Literal["openai", "anthropic", "gemini", "together", "vllm"]
+ProviderName = Literal["solar", "openai", "anthropic", "gemini", "together", "vllm"]
 
 
 @dataclass(frozen=True)
@@ -20,6 +20,16 @@ class ProviderMetadata:
 
 
 PROVIDERS: dict[str, ProviderMetadata] = {
+    "solar": ProviderMetadata(
+        id="solar",
+        label="Upstage / Solar",
+        default_base_url="https://api.upstage.ai/v1",
+        fallback_models=(
+            "solar-open2",
+            "solar-pro2",
+            "solar-mini",
+        ),
+    ),
     "openai": ProviderMetadata(
         id="openai",
         label="OpenAI / GPT",
@@ -152,7 +162,7 @@ async def list_models(
 ) -> dict[str, object]:
     metadata = require_provider(provider)
     refreshed_at = datetime.now(UTC).isoformat()
-    requires_api_key = provider in {"openai", "anthropic", "gemini", "together"}
+    requires_api_key = provider in {"solar", "openai", "anthropic", "gemini", "together"}
     if not api_key and requires_api_key:
         return _fallback_payload(
             metadata,
@@ -174,7 +184,7 @@ async def list_models(
             models = await _gemini_models(
                 api_key=api_key, base_url=base_url or metadata.default_base_url
             )
-        elif provider in {"together", "vllm"}:
+        elif provider in {"solar", "together", "vllm"}:
             models = await _openai_compatible_models(
                 base_url=base_url or metadata.default_base_url, api_key=api_key
             )

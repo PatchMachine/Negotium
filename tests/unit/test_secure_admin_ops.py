@@ -43,16 +43,27 @@ def test_secret_store_masks_and_round_trips(archive_tmp: Path) -> None:
             model="openai/gpt-oss-20b",
         )
     )
+    store.upsert(
+        ApiKeyRecord(
+            provider="solar",
+            api_key="up-test-1234567890",
+            model="solar-open2",
+        )
+    )
 
     listed = store.list_masked()
     openai = next(item for item in listed if item["provider"] == "openai")
     together = next(item for item in listed if item["provider"] == "together")
+    solar = next(item for item in listed if item["provider"] == "solar")
     assert openai["configured"] is True
     assert openai["masked_value"] == "sk-t...7890"
     assert together["configured"] is True
     assert together["model"] == "openai/gpt-oss-20b"
+    assert solar["configured"] is True
+    assert solar["model"] == "solar-open2"
     assert store.read("openai").api_key == "sk-test-1234567890"  # type: ignore[union-attr]
     assert store.read("together").api_key == "tog-test-1234567890"  # type: ignore[union-attr]
+    assert store.read("solar").api_key == "up-test-1234567890"  # type: ignore[union-attr]
 
 
 def test_access_control_blocks_viewer_from_admin_permissions(archive_tmp: Path) -> None:

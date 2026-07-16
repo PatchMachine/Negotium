@@ -66,6 +66,7 @@ class LlmRuntimePayload(BaseModel):
     anthropic_model: str = ""
     gemini_model: str = ""
     together_model: str = ""
+    solar_model: str = ""
     task_routes: dict[str, dict[str, str]] = Field(default_factory=dict)
 
     @classmethod
@@ -79,6 +80,7 @@ class LlmRuntimePayload(BaseModel):
             anthropic_model=container.settings.llm.anthropic_model,
             gemini_model=container.settings.llm.gemini_model,
             together_model=container.settings.llm.together_model,
+            solar_model=container.settings.llm.solar_model,
             task_routes={
                 task: route.to_dict() for task, route in (config.task_routes or {}).items()
             },

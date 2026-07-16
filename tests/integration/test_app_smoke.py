@@ -787,6 +787,16 @@ def test_secure_admin_and_upload_endpoints(tmp_path: Path) -> None:
                 "model": "openai/gpt-oss-20b",
             },
         )
+        solar_models = client.get("/api/llm/providers/solar/models")
+        saved_solar_key = client.put(
+            "/api/admin/api-keys/solar",
+            headers=headers,
+            json={
+                "provider": "solar",
+                "api_key": "up-test-1234567890",
+                "model": "solar-open2",
+            },
+        )
         saved_parent_dept = client.post(
             "/api/admin/departments",
             headers=headers,
@@ -849,7 +859,14 @@ def test_secure_admin_and_upload_endpoints(tmp_path: Path) -> None:
 
     assert denied.status_code == 401
     assert saved_key.status_code == 200
-    assert saved_key.json()["providers"][0]["masked_value"] == "sk-t...7890"
+    assert (
+        next(
+            provider
+            for provider in saved_key.json()["providers"]
+            if provider["provider"] == "openai"
+        )["masked_value"]
+        == "sk-t...7890"
+    )
     assert together_models.status_code == 200
     assert together_models.json()["provider"] == "together"
     assert together_models.json()["source"] == "fallback"
@@ -857,6 +874,15 @@ def test_secure_admin_and_upload_endpoints(tmp_path: Path) -> None:
     assert any(
         provider["provider"] == "together" and provider["configured"]
         for provider in saved_together_key.json()["providers"]
+    )
+    assert solar_models.status_code == 200
+    assert solar_models.json()["provider"] == "solar"
+    assert solar_models.json()["source"] == "fallback"
+    assert "solar-open2" in solar_models.json()["models"]
+    assert saved_solar_key.status_code == 200
+    assert any(
+        provider["provider"] == "solar" and provider["configured"]
+        for provider in saved_solar_key.json()["providers"]
     )
     assert saved_parent_dept.status_code == 200
     assert saved_child_dept.status_code == 200

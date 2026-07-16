@@ -22,6 +22,7 @@ FRONTIER_DESTINATIONS = {
     "frontier_llm",
     "cloud_llm",
     "api_llm",
+    "solar",
     "openai",
     "anthropic",
     "gemini",
