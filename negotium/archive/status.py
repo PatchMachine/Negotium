@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 
@@ -26,7 +26,7 @@ class StatusManager:
         return self._path
 
     def overwrite(self, summary_md: str) -> None:
-        ts = datetime.now(timezone.utc).isoformat()
+        ts = datetime.now(UTC).isoformat()
         body = f"{_HEADER}_업데이트: {ts}_\n\n{summary_md.strip()}\n"
         with portalocker.Lock(self._path, "w", encoding="utf-8", timeout=5) as fh:
             fh.write(body)

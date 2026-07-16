@@ -90,7 +90,10 @@ class PublicReferenceStore:
             return cases[:limit]
         results: list[dict[str, object]] = []
         for case in cases:
-            haystack = " ".join(str(case.get(key) or "") for key in ("title", "summary", "content", "industry", "department", "tags")).lower()
+            haystack = " ".join(
+                str(case.get(key) or "")
+                for key in ("title", "summary", "content", "industry", "department", "tags")
+            ).lower()
             if all(term in haystack for term in terms):
                 results.append(case)
         return results[:limit]

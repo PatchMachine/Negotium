@@ -254,7 +254,11 @@ class IssueMemoryStore:
     def list_test_requirements(self, *, patch_candidate_id: str = "") -> list[dict[str, Any]]:
         requirements = self._list(self._requirements, TestRequirement)
         if patch_candidate_id:
-            requirements = [item for item in requirements if item.get("patch_candidate_id") == patch_candidate_id]
+            requirements = [
+                item
+                for item in requirements
+                if item.get("patch_candidate_id") == patch_candidate_id
+            ]
         return requirements
 
     def read_cluster(self, cluster_id: str) -> IssueCluster:
@@ -275,7 +279,9 @@ class IssueMemoryStore:
                 for item in clusters
                 if needle in str(item.get("title", "")).lower()
                 or needle in str(item.get("summary", "")).lower()
-                or any(needle in str(feature).lower() for feature in item.get("affected_features", []))
+                or any(
+                    needle in str(feature).lower() for feature in item.get("affected_features", [])
+                )
             ]
         clusters.sort(key=lambda item: str(item.get("updated_at", "")), reverse=True)
         return clusters[: max(1, min(limit, 50))]

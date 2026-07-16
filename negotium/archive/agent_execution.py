@@ -104,10 +104,14 @@ class AgentExecutionStore:
 
     def approve_plan(self, plan_id: str, *, actor: str) -> AgentPlan:
         plan = self.read_plan(plan_id)
-        approved = AgentPlan.create(**{**plan.to_dict(), "status": "approved", "approved_by": actor})
+        approved = AgentPlan.create(
+            **{**plan.to_dict(), "status": "approved", "approved_by": actor}
+        )
         return self.save_plan(approved)
 
-    def append_run(self, plan_id: str, *, actor: str, event: str, details: dict[str, object] | None = None) -> dict[str, object]:
+    def append_run(
+        self, plan_id: str, *, actor: str, event: str, details: dict[str, object] | None = None
+    ) -> dict[str, object]:
         self._runs.mkdir(parents=True, exist_ok=True)
         payload: dict[str, object] = {
             "id": str(uuid4()),

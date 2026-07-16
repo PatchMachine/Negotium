@@ -35,7 +35,9 @@ class MemorySchema:
             retention_policy=str(payload.get("retention_policy") or "keep"),
             sensitivity=str(payload.get("sensitivity") or "internal"),
             delete_requires_approval=bool(payload.get("delete_requires_approval", True)),
-            allowed_roles=[str(item) for item in payload.get("allowed_roles", ["owner", "manager"])],
+            allowed_roles=[
+                str(item) for item in payload.get("allowed_roles", ["owner", "manager"])
+            ],
             created_by=str(payload.get("created_by") or ""),
             updated_at=str(payload.get("updated_at") or ""),
         )
@@ -67,9 +69,15 @@ class MemorySchemaStore:
         if not schema.type_id or not schema.display_name:
             raise ValueError("memory schema type_id and display_name are required")
         updated = MemorySchema.from_mapping(
-            {**schema.to_dict(), "created_by": schema.created_by or actor, "updated_at": datetime.now(UTC).isoformat()}
+            {
+                **schema.to_dict(),
+                "created_by": schema.created_by or actor,
+                "updated_at": datetime.now(UTC).isoformat(),
+            }
         )
-        schemas = [existing for existing in self._read_schemas() if existing.type_id != updated.type_id]
+        schemas = [
+            existing for existing in self._read_schemas() if existing.type_id != updated.type_id
+        ]
         schemas.append(updated)
         self._write_schemas(schemas)
         return updated
@@ -125,7 +133,11 @@ class MemorySchemaStore:
         if not self._proposals_path.exists():
             return []
         payload = json.loads(self._proposals_path.read_text(encoding="utf-8"))
-        return [item for item in payload if isinstance(item, dict)] if isinstance(payload, list) else []
+        return (
+            [item for item in payload if isinstance(item, dict)]
+            if isinstance(payload, list)
+            else []
+        )
 
     def _write_proposals(self, proposals: list[dict[str, object]]) -> None:
         self._proposals_path.parent.mkdir(parents=True, exist_ok=True)

@@ -139,10 +139,7 @@ class TokenUsageStore:
         limits = self.read_limits()
         if not limits.enforcement_enabled:
             return
-        if (
-            limits.per_request_max_tokens > 0
-            and attempted_tokens > limits.per_request_max_tokens
-        ):
+        if limits.per_request_max_tokens > 0 and attempted_tokens > limits.per_request_max_tokens:
             raise TokenLimitExceededError(
                 f"per-request token budget {limits.per_request_max_tokens} exceeded "
                 f"(attempted {attempted_tokens})",

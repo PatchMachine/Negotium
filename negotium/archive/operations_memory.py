@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import portalocker
+from negotium.archive._store import read_json_file, write_json_file
 
 
 @dataclass(frozen=True)
@@ -84,22 +83,16 @@ class OperationsMemoryStore:
         return self._path
 
     def read(self) -> OperationsMemory:
-        if not self._path.exists():
+        payload = read_json_file(self._path, default=dict)
+        if not payload:
             return OperationsMemory()
-        raw = self._path.read_text(encoding="utf-8")
-        if not raw.strip():
-            return OperationsMemory()
-        payload = json.loads(raw)
         if not isinstance(payload, dict):
             raise ValueError("operations memory must be a JSON object")
         return OperationsMemory.from_mapping(payload)
 
     def write(self, memory: OperationsMemory) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
         payload: dict[str, object] = {
             **memory.to_dict(),
             "updated_at": datetime.now(UTC).isoformat(),
         }
-        rendered = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
-        with portalocker.Lock(self._path, "w", encoding="utf-8", timeout=5) as fh:
-            fh.write(rendered)
+        write_json_file(self._path, payload)

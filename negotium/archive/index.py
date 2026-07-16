@@ -127,9 +127,11 @@ class IndexManager:
             bucket = entries.setdefault(key, [])
             if value not in bucket:
                 bucket.append(value)
-        rebuilt = list(header) + [""] + [
-            f"- {key}: [{', '.join(items)}]" for key, items in sorted(entries.items())
-        ]
+        rebuilt = (
+            list(header)
+            + [""]
+            + [f"- {key}: [{', '.join(items)}]" for key, items in sorted(entries.items())]
+        )
         return "\n".join(rebuilt) + "\n"
 
     def _relative_log_path(self, log_path: Path) -> str:

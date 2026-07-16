@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-import portalocker
+from negotium.archive._store import read_json_file, write_json_file
 
 LlmProviderName = Literal["vllm", "solar", "openai", "anthropic", "gemini", "together", "fake"]
 KNOWN_PROVIDERS: frozenset[str] = frozenset(
@@ -32,7 +31,9 @@ class LlmTaskRoute:
     model: str = ""
 
     @classmethod
-    def from_mapping(cls, payload: dict[str, Any], *, fallback: "LlmRuntimeConfig | None" = None) -> LlmTaskRoute:
+    def from_mapping(
+        cls, payload: dict[str, Any], *, fallback: LlmRuntimeConfig | None = None
+    ) -> LlmTaskRoute:
         route = payload.get("route") or (fallback.default_route if fallback else "local")
         provider = payload.get("provider") or (fallback.default_provider if fallback else "vllm")
         if route not in {"local", "api"}:
@@ -103,8 +104,7 @@ class LlmRuntimeConfig:
             "default_provider": self.default_provider,
             "local_model": self.local_model,
             "task_routes": {
-                task: route.to_dict()
-                for task, route in (self.task_routes or {}).items()
+                task: route.to_dict() for task, route in (self.task_routes or {}).items()
             },
         }
 
@@ -120,22 +120,16 @@ class LlmRuntimeStore:
         return self._path
 
     def read(self) -> LlmRuntimeConfig:
-        if not self._path.exists():
+        payload = read_json_file(self._path, default=dict)
+        if not payload:
             return LlmRuntimeConfig()
-        raw = self._path.read_text(encoding="utf-8")
-        if not raw.strip():
-            return LlmRuntimeConfig()
-        payload = json.loads(raw)
         if not isinstance(payload, dict):
             raise ValueError("LLM runtime config must be a JSON object")
         return LlmRuntimeConfig.from_mapping(payload)
 
     def write(self, config: LlmRuntimeConfig) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             **config.to_dict(),
             "updated_at": datetime.now(UTC).isoformat(),
         }
-        rendered = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
-        with portalocker.Lock(self._path, "w", encoding="utf-8", timeout=5) as fh:
-            fh.write(rendered)
+        write_json_file(self._path, payload)

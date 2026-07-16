@@ -224,7 +224,9 @@ def _matches_tokens(source: PermanentMemorySource, tokens: list[str]) -> bool:
     """
     haystack = f"{source.title}\n{source.excerpt}\n{source.path}".lower()
     compact = haystack.replace("_", "").replace("-", "")
-    return all(token in haystack or token.replace("_", "").replace("-", "") in compact for token in tokens)
+    return all(
+        token in haystack or token.replace("_", "").replace("-", "") in compact for token in tokens
+    )
 
 
 def _kind_for(path: Path, archive_dir: Path) -> SourceKind:
@@ -241,11 +243,24 @@ def _kind_for(path: Path, archive_dir: Path) -> SourceKind:
         return "promoted_memory"
     if parts and parts[0] == "patch_records" and path.suffix in {".md", ".jsonl"}:
         return "patch_record"
-    if parts and parts[0] == "uploads" and path.suffix in {".md", ".markdown", ".txt", ".json", ".jsonl", ".yaml", ".yml"}:
+    if (
+        parts
+        and parts[0] == "uploads"
+        and path.suffix in {".md", ".markdown", ".txt", ".json", ".jsonl", ".yaml", ".yml"}
+    ):
         return "upload"
-    if parts[:2] == ("patch_ops", "workspaces") and path.suffix in {".md", ".patch", ".txt", ".json"}:
+    if parts[:2] == ("patch_ops", "workspaces") and path.suffix in {
+        ".md",
+        ".patch",
+        ".txt",
+        ".json",
+    }:
         return "document"
-    if parts and parts[0] in {"documents", "hr", "handover", "work_architecture"} and path.suffix in {".md", ".jsonl"}:
+    if (
+        parts
+        and parts[0] in {"documents", "hr", "handover", "work_architecture"}
+        and path.suffix in {".md", ".jsonl"}
+    ):
         return "document"
     return "unknown"
 
@@ -256,7 +271,9 @@ def _is_operational_internal_file(path: Path, archive_dir: Path) -> bool:
     except ValueError:
         return True
     parts = rel.parts
-    return rel.as_posix() == "audit_log.jsonl" or bool(parts and parts[0] in {"token_usage", "context_firewall", "mcp_hub"})
+    return rel.as_posix() == "audit_log.jsonl" or bool(
+        parts and parts[0] in {"token_usage", "context_firewall", "mcp_hub"}
+    )
 
 
 def _source_from_path(path: Path, archive_dir: Path, kind: SourceKind) -> PermanentMemorySource:
@@ -282,7 +299,9 @@ def _read_excerpt(path: Path) -> str:
             for line in lines:
                 try:
                     payload = json.loads(line)
-                    rendered.append(str(payload.get("content") or payload.get("action") or payload)[:240])
+                    rendered.append(
+                        str(payload.get("content") or payload.get("action") or payload)[:240]
+                    )
                 except (json.JSONDecodeError, AttributeError):
                     rendered.append(line[:240])
             return "\n".join(rendered)

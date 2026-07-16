@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import portalocker
+from negotium.archive._store import read_json_file, write_json_file
 
 ALL_PERMISSIONS = [
     "admin:api_keys",
@@ -136,7 +135,9 @@ class PositionRecord:
             name=str(payload.get("name") or ""),
             level=level,
             description=str(payload.get("description") or ""),
-            permission_role_id=str(payload.get("permission_role_id") or payload.get("default_role_id") or ""),
+            permission_role_id=str(
+                payload.get("permission_role_id") or payload.get("default_role_id") or ""
+            ),
             permissions=[str(item) for item in payload.get("permissions", [])],
             display_order=_coerce_int(payload.get("display_order"), level),
             restrict_title_assignment=bool(payload.get("restrict_title_assignment", False)),
@@ -194,9 +195,7 @@ class AccessControlStore:
                 dept.to_dict() for dept in departments if isinstance(dept, DepartmentRecord)
             ],
             "positions": [
-                position.to_dict()
-                for position in positions
-                if isinstance(position, PositionRecord)
+                position.to_dict() for position in positions if isinstance(position, PositionRecord)
             ],
             "department_permissions": [
                 policy.to_dict()
@@ -331,9 +330,9 @@ class AccessControlStore:
         return "*" in permissions or permission in permissions
 
     def _read_payload(self) -> AclPayload:
-        if not self._path.exists():
+        raw = read_json_file(self._path)
+        if raw is None:
             return _default_payload()
-        raw = json.loads(self._path.read_text(encoding="utf-8"))
         roles: list[RoleRecord] = [RoleRecord.from_mapping(item) for item in raw.get("roles", [])]
         users: list[UserRecord] = [
             _normalize_user(UserRecord.from_mapping(item)) for item in raw.get("users", [])
@@ -352,7 +351,9 @@ class AccessControlStore:
             return _default_payload()
         default_payload = _default_payload()
         for default_role in default_payload["roles"]:
-            if isinstance(default_role, RoleRecord) and all(role.id != default_role.id for role in roles):
+            if isinstance(default_role, RoleRecord) and all(
+                role.id != default_role.id for role in roles
+            ):
                 roles.append(default_role)
         positions = [
             _hydrate_position_defaults(
@@ -371,10 +372,7 @@ class AccessControlStore:
         # on an existing "owner" user. We intentionally do NOT fabricate a default
         # owner account — only the initial setup designer exists as administrator.
         if not _has_active_admin_user(users, roles):
-            users = [
-                _restore_default_owner(user) if user.id == "owner" else user
-                for user in users
-            ]
+            users = [_restore_default_owner(user) if user.id == "owner" else user for user in users]
         return {
             "roles": roles,
             "users": users,
@@ -384,7 +382,6 @@ class AccessControlStore:
         }
 
     def _write_payload(self, payload: AclPayload) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
         rendered = {
             "roles": [role.to_dict() for role in payload["roles"] if isinstance(role, RoleRecord)],
             "users": [user.to_dict() for user in payload["users"] if isinstance(user, UserRecord)],
@@ -404,9 +401,7 @@ class AccessControlStore:
                 if isinstance(policy, DepartmentPermissionRecord)
             ],
         }
-        with portalocker.Lock(self._path, "w", encoding="utf-8", timeout=5) as fh:
-            json.dump(rendered, fh, ensure_ascii=False, indent=2)
-            fh.write("\n")
+        write_json_file(self._path, rendered)
 
     @staticmethod
     def _resolve_user(
@@ -490,7 +485,9 @@ def _hydrate_position_defaults(position: PositionRecord, payload: AclPayload) ->
         level=position.level,
         description=position.description,
         permissions=[permission for permission in permissions if permission in allowed],
-        display_order=position.display_order or position.level or _position_order_from_role(role_id),
+        display_order=position.display_order
+        or position.level
+        or _position_order_from_role(role_id),
         restrict_title_assignment=position.restrict_title_assignment,
     )
 

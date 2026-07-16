@@ -42,7 +42,9 @@ class ProcessPlan:
             architecture_path=str(payload.get("architecture_path") or "").strip(),
             status=_status(payload.get("status")),
             mode=_mode(payload.get("mode")),
-            step_ids=[str(item).strip() for item in payload.get("step_ids", []) if str(item).strip()],
+            step_ids=[
+                str(item).strip() for item in payload.get("step_ids", []) if str(item).strip()
+            ],
             approved_by=str(payload.get("approved_by") or "").strip(),
             approved_at=str(payload.get("approved_at") or "").strip(),
             created_at=str(payload.get("created_at") or now),

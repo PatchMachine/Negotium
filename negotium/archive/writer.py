@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -52,7 +52,7 @@ class ArchiveWriter:
         thought_process_md: str,
         patch_diff: str,
     ) -> Path:
-        created = datetime.now(timezone.utc)
+        created = datetime.now(UTC)
         fm = LogFrontMatter(
             event_id=str(issue.event_id),
             source=issue.source,
@@ -199,9 +199,7 @@ def _format_thought_process(
         ("### Developer", developer_md),
         ("### Reviewer", reviewer_md),
     ]
-    return "\n\n".join(
-        f"{header}\n{body.strip() or '_(내용 없음)_'}" for header, body in sections
-    )
+    return "\n\n".join(f"{header}\n{body.strip() or '_(내용 없음)_'}" for header, body in sections)
 
 
 def write_through_lock(path: Path, content: str) -> None:

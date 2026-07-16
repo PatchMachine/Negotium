@@ -140,7 +140,9 @@ class AuthStore:
             self._write_payload(payload)
         return deleted
 
-    def create_user(self, *, user_id: str, display_name: str, password: str, active: bool = True) -> None:
+    def create_user(
+        self, *, user_id: str, display_name: str, password: str, active: bool = True
+    ) -> None:
         self.create_user_with_hash(
             user_id=user_id,
             display_name=display_name,
@@ -196,7 +198,9 @@ class AuthStore:
             self._write_payload(payload)
         if match is None:
             return None
-        user = next((candidate for candidate in payload["users"] if candidate.id == match.user_id), None)
+        user = next(
+            (candidate for candidate in payload["users"] if candidate.id == match.user_id), None
+        )
         if user is None or not user.active:
             return None
         return user.id
@@ -204,17 +208,24 @@ class AuthStore:
     def revoke_token(self, token: str) -> None:
         token_hash = _hash_token(token)
         payload = self._read_payload()
-        payload["sessions"] = [session for session in payload["sessions"] if session.token_hash != token_hash]
+        payload["sessions"] = [
+            session for session in payload["sessions"] if session.token_hash != token_hash
+        ]
         self._write_payload(payload)
 
-    def request_account(self, *, user_id: str, display_name: str, title: str, password: str) -> AccountRequest:
+    def request_account(
+        self, *, user_id: str, display_name: str, title: str, password: str
+    ) -> AccountRequest:
         _validate_user_id(user_id)
         if not display_name.strip():
             raise ValueError("display name is required")
         payload = self._read_payload()
         if any(user.id == user_id for user in payload["users"]):
             raise ValueError("user id already exists")
-        if any(request.user_id == user_id and request.status == "pending" for request in payload["requests"]):
+        if any(
+            request.user_id == user_id and request.status == "pending"
+            for request in payload["requests"]
+        ):
             raise ValueError("account request is already pending")
         request = AccountRequest(
             id=secrets.token_urlsafe(12),
@@ -235,7 +246,9 @@ class AuthStore:
             return requests
         return [request for request in requests if request.status == status]
 
-    def decide_request(self, request_id: str, *, status: Literal["approved", "rejected"], decided_by: str) -> AccountRequest:
+    def decide_request(
+        self, request_id: str, *, status: Literal["approved", "rejected"], decided_by: str
+    ) -> AccountRequest:
         payload = self._read_payload()
         requests = payload["requests"]
         target = next((request for request in requests if request.id == request_id), None)
@@ -254,7 +267,9 @@ class AuthStore:
             decided_at=datetime.now(UTC).isoformat(),
             decided_by=decided_by,
         )
-        payload["requests"] = [decided if request.id == request_id else request for request in requests]
+        payload["requests"] = [
+            decided if request.id == request_id else request for request in requests
+        ]
         self._write_payload(payload)
         return decided
 

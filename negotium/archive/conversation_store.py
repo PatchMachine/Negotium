@@ -126,7 +126,9 @@ class ConversationStore:
             )
         )
 
-    def list_recent(self, *, user_id: str | None = None, limit: int = 100) -> list[dict[str, object]]:
+    def list_recent(
+        self, *, user_id: str | None = None, limit: int = 100
+    ) -> list[dict[str, object]]:
         paths = [self._path_for(user_id)] if user_id else sorted(self._root.glob("*.jsonl"))
         records: list[ConversationRecord] = []
         for path in paths:
@@ -144,5 +146,7 @@ class ConversationStore:
         return [record.to_dict() for record in records[-limit:]][::-1]
 
     def _path_for(self, user_id: str | None) -> Path:
-        safe = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in (user_id or "unknown"))
+        safe = "".join(
+            ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in (user_id or "unknown")
+        )
         return self._root / f"{datetime.now(UTC).strftime('%Y-%m-%d')}_{safe or 'unknown'}.jsonl"

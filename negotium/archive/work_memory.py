@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
-import portalocker
+from negotium.archive._store import read_json_file, write_json_file
 
 WorkStatus = Literal["todo", "in_progress", "blocked", "done", "cancelled"]
 WorkPriority = Literal["low", "normal", "high", "urgent"]
@@ -104,7 +103,9 @@ class WorkScheduleItem:
             priority=_priority(payload.get("priority")),
             start_date=str(payload.get("start_date") or "").strip(),
             due_date=str(payload.get("due_date") or "").strip(),
-            dependencies=[str(item).strip() for item in payload.get("dependencies", []) if str(item).strip()],
+            dependencies=[
+                str(item).strip() for item in payload.get("dependencies", []) if str(item).strip()
+            ],
             notes=str(payload.get("notes") or "").strip(),
             source_architecture_id=str(payload.get("source_architecture_id") or "").strip(),
             queue_order=_safe_int(payload.get("queue_order")),
@@ -148,22 +149,16 @@ class WorkMemoryStore:
         self._path = archive_dir / "work_memory.json"
 
     def read(self) -> WorkMemory:
-        if not self._path.exists():
+        payload = read_json_file(self._path, default=dict)
+        if not payload:
             return WorkMemory()
-        raw = self._path.read_text(encoding="utf-8")
-        if not raw.strip():
-            return WorkMemory()
-        payload = json.loads(raw)
         if not isinstance(payload, dict):
             raise ValueError("work memory must be a JSON object")
         return WorkMemory.from_mapping(payload)
 
     def write(self, memory: WorkMemory) -> WorkMemory:
         updated = WorkMemory(**{**memory.to_dict(), "updated_at": datetime.now(UTC).isoformat()})
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        with portalocker.Lock(self._path, "w", encoding="utf-8", timeout=5) as fh:
-            json.dump(updated.to_dict(), fh, ensure_ascii=False, indent=2)
-            fh.write("\n")
+        write_json_file(self._path, updated.to_dict())
         return updated
 
 
@@ -197,21 +192,13 @@ class WorkScheduleStore:
         return len(next_items) != len(items)
 
     def _read_items(self) -> ScheduleItemList:
-        if not self._path.exists():
-            return []
-        raw = self._path.read_text(encoding="utf-8")
-        if not raw.strip():
-            return []
-        payload = json.loads(raw)
+        payload = read_json_file(self._path, default=list)
         if not isinstance(payload, list):
             return []
         return [WorkScheduleItem.from_mapping(item) for item in payload if isinstance(item, dict)]
 
     def _write_items(self, items: ScheduleItemList) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        with portalocker.Lock(self._path, "w", encoding="utf-8", timeout=5) as fh:
-            json.dump([item.to_dict() for item in items], fh, ensure_ascii=False, indent=2)
-            fh.write("\n")
+        write_json_file(self._path, [item.to_dict() for item in items])
 
 
 def _status(value: object) -> WorkStatus:

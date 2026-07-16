@@ -108,7 +108,11 @@ class VolatileMemoryStore:
         return True
 
     def list(self, *, scope: MemoryScope | None = None) -> list[dict[str, object]]:
-        paths = sorted(self._root.rglob("*.json")) if scope is None else sorted(self._scope_root(scope).glob("*.json"))
+        paths = (
+            sorted(self._root.rglob("*.json"))
+            if scope is None
+            else sorted(self._scope_root(scope).glob("*.json"))
+        )
         memories = []
         for path in paths:
             try:
@@ -142,7 +146,9 @@ class VolatileMemoryStore:
             key="default",
             summary="\n".join(part for part in summary_parts if part),
             active_context=str(payload.get("decisions") or ""),
-            next_actions=[str(payload.get("next_actions") or "")] if payload.get("next_actions") else [],
+            next_actions=[str(payload.get("next_actions") or "")]
+            if payload.get("next_actions")
+            else [],
             updated_at=str(payload.get("updated_at") or ""),
         )
 

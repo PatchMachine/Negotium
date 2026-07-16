@@ -101,7 +101,11 @@ class DeletionRequestStore:
 
     def _append_tombstone(self, request: DeletionRequest) -> None:
         self._tombstones.parent.mkdir(parents=True, exist_ok=True)
-        payload = {**request.to_dict(), "status": "tombstoned", "tombstoned_at": datetime.now(UTC).isoformat()}
+        payload = {
+            **request.to_dict(),
+            "status": "tombstoned",
+            "tombstoned_at": datetime.now(UTC).isoformat(),
+        }
         with portalocker.Lock(self._tombstones, "a", encoding="utf-8", timeout=5) as fh:
             fh.write(json.dumps(payload, ensure_ascii=False, sort_keys=True))
             fh.write("\n")
@@ -110,7 +114,11 @@ class DeletionRequestStore:
         if not self._path.exists():
             return []
         payload = json.loads(self._path.read_text(encoding="utf-8"))
-        return [DeletionRequest.create(**item) for item in payload if isinstance(item, dict)] if isinstance(payload, list) else []
+        return (
+            [DeletionRequest.create(**item) for item in payload if isinstance(item, dict)]
+            if isinstance(payload, list)
+            else []
+        )
 
     def _write(self, requests: list[DeletionRequest]) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)

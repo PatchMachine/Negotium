@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-import portalocker
+from negotium.archive._store import append_jsonl_line, iter_jsonl_records
 
 
 @dataclass(frozen=True)
@@ -91,23 +90,9 @@ class AuditLogStore:
             target_id=target_id,
             details=details,
         )
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        with portalocker.Lock(self._path, "a", encoding="utf-8", timeout=5) as fh:
-            fh.write(json.dumps(record.to_dict(), ensure_ascii=False, sort_keys=True))
-            fh.write("\n")
+        append_jsonl_line(self._path, record.to_dict(), sort_keys=True)
         return record
 
     def list_recent(self, *, limit: int = 100) -> list[dict[str, object]]:
-        if not self._path.exists():
-            return []
-        records: list[AuditRecord] = []
-        for line in self._path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(payload, dict):
-                records.append(AuditRecord.from_mapping(payload))
+        records = [AuditRecord.from_mapping(payload) for payload in iter_jsonl_records(self._path)]
         return [record.to_dict() for record in records[-limit:]][::-1]

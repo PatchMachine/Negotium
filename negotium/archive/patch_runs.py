@@ -198,11 +198,15 @@ class PatchRunStore:
         root = self._workspace_root(run_id)
         if not root.exists():
             return []
-        files = [path for path in root.rglob("*") if path.is_file() and not path.name.startswith(".")]
+        files = [
+            path for path in root.rglob("*") if path.is_file() and not path.name.startswith(".")
+        ]
         files.sort(key=lambda item: (item.parent.as_posix(), item.name))
         return [self._artifact_payload(path) for path in files]
 
-    def read_artifact(self, run_id: str, relative_path: str, *, max_chars: int = 200_000) -> dict[str, Any]:
+    def read_artifact(
+        self, run_id: str, relative_path: str, *, max_chars: int = 200_000
+    ) -> dict[str, Any]:
         path = self._artifact_path(run_id, relative_path)
         if not path.exists() or not path.is_file():
             raise FileNotFoundError(relative_path)
