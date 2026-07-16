@@ -38,7 +38,7 @@ export default function AuthPage({ setupRequired, onAuthenticated }: Props) {
   return (
     <main className="auth-layout">
       <section className="panel auth-panel">
-        <img className="auth-logo" src="/patchmachine-logo.png" alt="Patch Machine" />
+        <img className="auth-logo" src="/negotium-logo.png" alt="Negotium" />
         <p className="eyebrow">{setupRequired ? 'Initial Admin Setup' : 'Login'}</p>
         <h1>{setupRequired ? '첫 관리자 계정 설정' : mode === 'login' ? '로그인' : '계정 개설 요청'}</h1>
         <div className="memory-form">

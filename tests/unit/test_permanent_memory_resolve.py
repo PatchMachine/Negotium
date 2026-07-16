@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from patch_machine.archive.permanent_memory import PermanentMemoryStore
+from negotium.archive.permanent_memory import PermanentMemoryStore
 
 
 def _write_patch_log(root: Path, rel: str, body: str) -> None:

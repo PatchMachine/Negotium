@@ -1,8 +1,8 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from patch_machine.app.services.issue_memory_service import capture_manual_issue
-from patch_machine.app.services.mcp_hub_service import (
+from negotium.app.services.issue_memory_service import capture_manual_issue
+from negotium.app.services.mcp_hub_service import (
     call_tool,
     guard_tool_arguments,
     handle_json_rpc,
@@ -12,17 +12,17 @@ from patch_machine.app.services.mcp_hub_service import (
     read_resource,
     record_mcp_audit,
 )
-from patch_machine.app.services.test_writer_service import (
+from negotium.app.services.test_writer_service import (
     detect_test_frameworks,
     find_existing_test_patterns,
     run_test_command,
 )
-from patch_machine.archive.context_firewall import ContextFirewallStore
-from patch_machine.archive.issue_memory import IssueMemoryStore
-from patch_machine.archive.mcp_audit import McpAuditStore
-from patch_machine.archive.mcp_sessions import McpSessionStore
-from patch_machine.archive.patch_execution import PatchExecutionStore
-from patch_machine.archive.patch_runs import PatchRun, PatchRunStore
+from negotium.archive.context_firewall import ContextFirewallStore
+from negotium.archive.issue_memory import IssueMemoryStore
+from negotium.archive.mcp_audit import McpAuditStore
+from negotium.archive.mcp_sessions import McpSessionStore
+from negotium.archive.patch_execution import PatchExecutionStore
+from negotium.archive.patch_runs import PatchRun, PatchRunStore
 
 
 def test_mcp_registry_calls_memory_and_reads_resource(tmp_path: Path) -> None:

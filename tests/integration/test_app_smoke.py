@@ -6,14 +6,14 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from patch_machine.adapters.llm.fake_adapter import FakeLlmProvider, ScriptedResponse
-from patch_machine.app.container import Container
-from patch_machine.app.main import create_app
-from patch_machine.app.settings import Settings
-from patch_machine.archive.access_control import UserRecord
-from patch_machine.archive.llm_runtime import LlmRuntimeConfig
-from patch_machine.archive.operations_memory import OperationsMemory
-from patch_machine.archive.patch_runs import PatchRun
+from negotium.adapters.llm.fake_adapter import FakeLlmProvider, ScriptedResponse
+from negotium.app.container import Container
+from negotium.app.main import create_app
+from negotium.app.settings import Settings
+from negotium.archive.access_control import UserRecord
+from negotium.archive.llm_runtime import LlmRuntimeConfig
+from negotium.archive.operations_memory import OperationsMemory
+from negotium.archive.patch_runs import PatchRun
 
 
 def test_health_endpoint_reports_queue_state() -> None:
@@ -42,11 +42,11 @@ def test_contributor_site_routes_are_served(tmp_path: Path) -> None:
         styles = client.get("/site.css")
 
     assert home.status_code == 200
-    assert "패치 머신은 외부 기여와 함께 더 똑똑해집니다" in home.text
+    assert "네고티움은 외부 기여와 함께 더 똑똑해집니다" in home.text
     assert join.status_code == 200
     assert "좋은 제보 하나가 자동 패치의 출발점입니다" in join.text
     assert operations.status_code == 200
-    assert "패치머신이 지금 운영할 회사를 기억하게 합니다" in operations.text
+    assert "네고티움이 지금 운영할 회사를 기억하게 합니다" in operations.text
     assert styles.status_code == 200
     assert "text/css" in styles.headers["content-type"]
 
@@ -146,7 +146,7 @@ def test_chat_replays_history_and_supports_slash_and_stream(tmp_path: Path) -> N
         responses=[
             ScriptedResponse(text="첫 번째 응답입니다."),
             ScriptedResponse(text="두 번째 응답입니다."),
-            ScriptedResponse(text="<!-- patchmachine:format=markdown -->\n슬래시 초안 본문"),
+            ScriptedResponse(text="<!-- negotium:format=markdown -->\n슬래시 초안 본문"),
             ScriptedResponse(text="스트리밍 응답 본문"),
         ]
     )
@@ -194,8 +194,9 @@ def test_chat_replays_history_and_supports_slash_and_stream(tmp_path: Path) -> N
     assert second.status_code == 200
     # The second call must replay the first turn (user + assistant) into the prompt.
     second_call_messages = fake.calls[1]
-    replayed = "\n".join(message.content for message in second_call_messages
-                         if isinstance(message.content, str))
+    replayed = "\n".join(
+        message.content for message in second_call_messages if isinstance(message.content, str)
+    )
     assert "내 이름은 지호야" in replayed
     assert "첫 번째 응답입니다." in replayed
     assert second.json()["used_history"] >= 2
@@ -283,7 +284,9 @@ def test_patchops_execution_router_endpoints_shape(tmp_path: Path) -> None:
             json={"arguments": {}},
         )
         files = client.get(f"/api/patch-runs/{run.id}/files", headers=headers)
-        traversal = client.get(f"/api/patch-runs/{run.id}/files/%2E%2E/runs/{run.id}.json", headers=headers)
+        traversal = client.get(
+            f"/api/patch-runs/{run.id}/files/%2E%2E/runs/{run.id}.json", headers=headers
+        )
 
     assert applied.status_code == 200
     assert applied.json()["execution"]["policy"]["files"] == ["frontend/src/App.tsx"]
@@ -306,16 +309,24 @@ def test_patchops_plan_and_artifact_files_are_created(tmp_path: Path) -> None:
     )
     container.llm = FakeLlmProvider(
         [
-            ScriptedResponse(text='[{"question":"수정 범위는?","priority":"high","needs_human":false}]'),
+            ScriptedResponse(
+                text='[{"question":"수정 범위는?","priority":"high","needs_human":false}]'
+            ),
             ScriptedResponse(
                 text='{"goal":"문구 수정","target_files":["app.py"],"patch_steps":["app.py 수정"],"risk_level":"low","test_plan":["python -m pytest -q"],"approval_required":true}'
             ),
             ScriptedResponse(
                 text='{"diff_draft":"diff --git a/app.py b/app.py\\n--- a/app.py\\n+++ b/app.py\\n@@ -1 +1 @@\\n-print(\\u0027hello\\u0027)\\n+print(\\u0027hi\\u0027)\\n","verification_commands":["python -m pytest -q"]}'
             ),
-            ScriptedResponse(text='{"pr_description":"## Summary\\n- Update app","internal_patch_note":"# Note","customer_release_note":"Updated."}'),
-            ScriptedResponse(text='{"test_plan":["python -m pytest -q"],"test_diff_draft":"diff --git a/test_app.py b/test_app.py\\n--- /dev/null\\n+++ b/test_app.py\\n@@ -0,0 +1 @@\\n+def test_app(): pass\\n"}'),
-            ScriptedResponse(text="# 코딩 에이전트 계획서\n\n## 수정됨\n- 저장 API와 AI 수정 API 확인"),
+            ScriptedResponse(
+                text='{"pr_description":"## Summary\\n- Update app","internal_patch_note":"# Note","customer_release_note":"Updated."}'
+            ),
+            ScriptedResponse(
+                text='{"test_plan":["python -m pytest -q"],"test_diff_draft":"diff --git a/test_app.py b/test_app.py\\n--- /dev/null\\n+++ b/test_app.py\\n@@ -0,0 +1 @@\\n+def test_app(): pass\\n"}'
+            ),
+            ScriptedResponse(
+                text="# 코딩 에이전트 계획서\n\n## 수정됨\n- 저장 API와 AI 수정 API 확인"
+            ),
         ]
     )
     headers = _auth_headers(container)
@@ -346,7 +357,10 @@ def test_patchops_plan_and_artifact_files_are_created(tmp_path: Path) -> None:
         revised = client.post(
             f"/api/patch-runs/{run_id}/plan-md/revise",
             headers=headers,
-            json={"instruction": "체크리스트를 추가해줘", "current_content": "# 직접 수정한 plan.md\n"},
+            json={
+                "instruction": "체크리스트를 추가해줘",
+                "current_content": "# 직접 수정한 plan.md\n",
+            },
         )
         memory = client.get("/api/memory/permanent/search?q=PatchOps%20plan", headers=headers)
         docs = client.get("/api/archive/document-index?q=PatchOps&limit=20", headers=headers)
@@ -488,7 +502,7 @@ def test_office_document_generation_falls_back_when_llm_returns_empty(tmp_path: 
             json={
                 "document_type": "meeting_minutes",
                 "title": "5월 프로젝트 진행 계획 회의",
-                "source_text": "패치머신 원문 개발 문서 자동화",
+                "source_text": "네고티움 원문 개발 문서 자동화",
                 "audience": "담당자",
             },
         )
@@ -497,7 +511,7 @@ def test_office_document_generation_falls_back_when_llm_returns_empty(tmp_path: 
     markdown = response.json()["markdown"]
     assert "LLM 응답 없음" not in markdown
     assert "로컬 fallback 초안" in markdown
-    assert "패치머신 원문 개발 문서 자동화" in markdown
+    assert "네고티움 원문 개발 문서 자동화" in markdown
 
 
 def test_document_generation_honors_format_directive_and_attachment(tmp_path: Path) -> None:
@@ -506,7 +520,7 @@ def test_document_generation_honors_format_directive_and_attachment(tmp_path: Pa
         Settings(env="test", archive_dir=archive_dir, workspace_dir=tmp_path / "workspaces")
     )
     container.llm = FakeLlmProvider(
-        responses=[ScriptedResponse(text="<!-- patchmachine:format=csv -->\nname,role\nA,dev")]
+        responses=[ScriptedResponse(text="<!-- negotium:format=csv -->\nname,role\nA,dev")]
     )
     container.llm_runtime.write(
         LlmRuntimeConfig(
@@ -554,7 +568,7 @@ def test_skills_endpoints_list_and_run(tmp_path: Path) -> None:
         )
     )
     container.llm = FakeLlmProvider(
-        responses=[ScriptedResponse(text="<!-- patchmachine:format=markdown -->\n초안 본문")]
+        responses=[ScriptedResponse(text="<!-- negotium:format=markdown -->\n초안 본문")]
     )
     container.llm_runtime.write(
         LlmRuntimeConfig(
@@ -755,7 +769,7 @@ def test_secure_admin_and_upload_endpoints(tmp_path: Path) -> None:
     with TestClient(app) as client:
         denied = client.put(
             "/api/admin/api-keys/openai",
-            headers={"X-PM-User": "missing"},
+            headers={"X-NG-User": "missing"},
             json={"provider": "openai", "api_key": "sk-test-1234567890"},
         )
         saved_key = client.put(
@@ -771,6 +785,16 @@ def test_secure_admin_and_upload_endpoints(tmp_path: Path) -> None:
                 "provider": "together",
                 "api_key": "tog-test-1234567890",
                 "model": "openai/gpt-oss-20b",
+            },
+        )
+        solar_models = client.get("/api/llm/providers/solar/models")
+        saved_solar_key = client.put(
+            "/api/admin/api-keys/solar",
+            headers=headers,
+            json={
+                "provider": "solar",
+                "api_key": "up-test-1234567890",
+                "model": "solar-open2",
             },
         )
         saved_parent_dept = client.post(
@@ -820,7 +844,7 @@ def test_secure_admin_and_upload_endpoints(tmp_path: Path) -> None:
         )
         lead_token = container.auth_store.authenticate("lead_user", "password-5678")
         assert lead_token is not None
-        synced_headers = {"X-PM-User": f"Bearer {lead_token}"}
+        synced_headers = {"X-NG-User": f"Bearer {lead_token}"}
         scope = client.get("/api/work-schedule/assignment-scope", headers=synced_headers)
         acl = client.get("/api/admin/access-control", headers=headers)
         deleted_position = client.delete("/api/admin/positions/lead", headers=headers)
@@ -835,7 +859,14 @@ def test_secure_admin_and_upload_endpoints(tmp_path: Path) -> None:
 
     assert denied.status_code == 401
     assert saved_key.status_code == 200
-    assert saved_key.json()["providers"][0]["masked_value"] == "sk-t...7890"
+    assert (
+        next(
+            provider
+            for provider in saved_key.json()["providers"]
+            if provider["provider"] == "openai"
+        )["masked_value"]
+        == "sk-t...7890"
+    )
     assert together_models.status_code == 200
     assert together_models.json()["provider"] == "together"
     assert together_models.json()["source"] == "fallback"
@@ -843,6 +874,15 @@ def test_secure_admin_and_upload_endpoints(tmp_path: Path) -> None:
     assert any(
         provider["provider"] == "together" and provider["configured"]
         for provider in saved_together_key.json()["providers"]
+    )
+    assert solar_models.status_code == 200
+    assert solar_models.json()["provider"] == "solar"
+    assert solar_models.json()["source"] == "fallback"
+    assert "solar-open2" in solar_models.json()["models"]
+    assert saved_solar_key.status_code == 200
+    assert any(
+        provider["provider"] == "solar" and provider["configured"]
+        for provider in saved_solar_key.json()["providers"]
     )
     assert saved_parent_dept.status_code == 200
     assert saved_child_dept.status_code == 200
@@ -1002,4 +1042,4 @@ def _auth_headers(
     )
     token = container.auth_store.authenticate(user_id, password)
     assert token is not None
-    return {"X-PM-User": f"Bearer {token}"}
+    return {"X-NG-User": f"Bearer {token}"}

@@ -7,11 +7,11 @@ from typing import Any
 
 import pytest
 
-from patch_machine.adapters.llm.openai_adapter import (
+from negotium.adapters.llm.openai_adapter import (
     OpenAiProvider,
     _model_uses_completion_tokens_param,
 )
-from patch_machine.domain.ports import LlmMessage
+from negotium.domain.ports import LlmMessage
 
 
 @dataclass
@@ -124,7 +124,7 @@ async def test_openai_provider_retries_when_max_tokens_unsupported() -> None:
 async def test_openai_provider_retries_when_temperature_unsupported() -> None:
     error = RuntimeError(
         "Error code: 400 - {'error': {'message': \"Unsupported value: 'temperature' "
-        "does not support 0.2 with this model. Only the default (1) value is supported.\", "
+        'does not support 0.2 with this model. Only the default (1) value is supported.", '
         "'param': 'temperature', 'code': 'unsupported_value'}}"
     )
     client = _FakeClient(error=error)

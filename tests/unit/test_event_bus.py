@@ -6,8 +6,8 @@ import asyncio
 
 import pytest
 
-from patch_machine.application.event_bus import EventBus, QueueFullError
-from patch_machine.domain.entities import IssueEvent, RepoRef
+from negotium.application.event_bus import EventBus, QueueFullError
+from negotium.domain.entities import IssueEvent, RepoRef
 
 
 def _make_event(idx: int) -> IssueEvent:

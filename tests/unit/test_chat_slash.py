@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from patch_machine.app.api import _is_slash_command, _parse_chat_slash
+from negotium.app.api import _is_slash_command, _parse_chat_slash
 
 
 def test_is_slash_command_detects_leading_slash() -> None:

@@ -10,9 +10,9 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from patch_machine.adapters.ingestion.github_webhook import GitHubWebhookRouter
-from patch_machine.app.settings import GitHubSettings
-from patch_machine.application.event_bus import EventBus
+from negotium.adapters.ingestion.github_webhook import GitHubWebhookRouter
+from negotium.app.settings import GitHubSettings
+from negotium.application.event_bus import EventBus
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 _SECRET = "topsecret"
@@ -26,7 +26,7 @@ def _make_app(bus: EventBus, *, allowlist: list[str] | None = None) -> FastAPI:
     settings = GitHubSettings(
         webhook_secret=_SECRET,
         allowed_repos=allowlist or [],
-        trigger_label="patch-machine",
+        trigger_label="negotium",
     )
     router = GitHubWebhookRouter(bus=bus, settings=settings)
     app = FastAPI()

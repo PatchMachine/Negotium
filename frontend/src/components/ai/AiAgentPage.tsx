@@ -15,7 +15,7 @@ import {
 import AiJobStatusBar from '../common/AiJobStatusBar';
 import PatchOpsCockpit from './PatchOpsCockpit';
 
-const providerOptions: LlmProviderName[] = ['vllm', 'openai', 'anthropic', 'gemini', 'together', 'fake'];
+const providerOptions: LlmProviderName[] = ['vllm', 'solar', 'openai', 'anthropic', 'gemini', 'together', 'fake'];
 
 export default function AiAgentPage() {
   const [runtime, setRuntime] = useState<LlmRuntime | null>(null);

@@ -66,9 +66,9 @@ export default function AppShell<T extends string>({ page, navItems, onNavigate,
     <div className="site-shell">
       <header className="topbar">
         <div className="topbar-brand">
-          <img className="brand-logo" src="/patchmachine-logo.png" alt="Patch Machine" />
+          <img className="brand-logo" src="/negotium-logo.png" alt="Negotium" />
           <div>
-            <p className="eyebrow">Patch Machine</p>
+            <p className="eyebrow">Negotium</p>
             <strong>AI Office BPA</strong>
           </div>
         </div>

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from patch_machine.archive.access_control import (
+from negotium.archive.access_control import (
     ALL_PERMISSIONS,
     AccessControlStore,
     DepartmentPermissionRecord,

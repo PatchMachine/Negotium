@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from patch_machine.archive.operations_memory import OperationsMemory, OperationsMemoryStore
+from negotium.archive.operations_memory import OperationsMemory, OperationsMemoryStore
 
 
 def test_operations_memory_starts_empty(archive_tmp: Path) -> None:

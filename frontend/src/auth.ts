@@ -1,4 +1,4 @@
-const TOKEN_KEY = 'patch-machine-session-token';
+const TOKEN_KEY = 'negotium-session-token';
 
 export function getSessionToken(): string {
   return localStorage.getItem(TOKEN_KEY) || '';
@@ -19,6 +19,6 @@ export function getAuthHeaders(): Record<string, string> {
   }
   return {
     Authorization: `Bearer ${token}`,
-    'X-PM-User': `Bearer ${token}`,
+    'X-NG-User': `Bearer ${token}`,
   };
 }

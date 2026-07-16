@@ -6,12 +6,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from patch_machine.adapters.llm.vllm_embedded_adapter import (
+from negotium.adapters.llm.vllm_embedded_adapter import (
     VllmEmbeddedProvider,
     _EngineBundle,
     reset_engine_for_tests,
 )
-from patch_machine.domain.ports import LlmMessage
+from negotium.domain.ports import LlmMessage
 
 
 @dataclass

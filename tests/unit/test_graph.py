@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from patch_machine.adapters.llm.fake_adapter import FakeLlmProvider, ScriptedResponse
-from patch_machine.agents.developer import DeveloperAgent
-from patch_machine.agents.graph import AgentGraph, GraphState
-from patch_machine.agents.pm import PmAgent
-from patch_machine.agents.reviewer import ReviewerAgent
-from patch_machine.domain.entities import IssueEvent, RepoRef
+from negotium.adapters.llm.fake_adapter import FakeLlmProvider, ScriptedResponse
+from negotium.agents.developer import DeveloperAgent
+from negotium.agents.graph import AgentGraph, GraphState
+from negotium.agents.pm import PmAgent
+from negotium.agents.reviewer import ReviewerAgent
+from negotium.domain.entities import IssueEvent, RepoRef
 
 _PM_OUTPUT = """MODULES: refund, webhook
 RATIONALE:
@@ -52,7 +52,7 @@ def _issue() -> IssueEvent:
         title="double refund",
         body="refund duplicated",
         author="alice",
-        labels=["bug", "patch-machine"],
+        labels=["bug", "negotium"],
     )
 
 

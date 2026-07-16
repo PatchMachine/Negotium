@@ -22,6 +22,7 @@ import {
 } from '../../api';
 import { setSessionToken } from '../../auth';
 import AiJobStatusBar from '../common/AiJobStatusBar';
+import { SETUP_DRAFT_KEY } from './setupDraft';
 
 type Props = {
   onAuthenticated: (user: AuthUser) => void;
@@ -31,8 +32,6 @@ type Props = {
 type Step = 'admin' | 'llm' | 'profile' | 'files' | 'analyze' | 'review';
 type LlmChoice = 'local' | 'api';
 type ReviewSection = 'memory' | 'agents' | 'templates' | 'workflows' | 'security' | 'integrations' | 'routes';
-
-const SETUP_DRAFT_KEY = 'patch-machine-initial-setup-draft';
 
 const recommendedLocalModels = [
   {
@@ -64,6 +63,24 @@ const recommendedLocalModels = [
     name: 'Solar 텍스트',
     model: 'upstage/SOLAR-10.7B-Instruct-v1.0',
     strength: '한국어 업무/문서 자동화 실험 후보',
+  },
+];
+
+const recommendedSolarModels = [
+  {
+    name: 'Solar Open 2',
+    model: 'solar-open2',
+    strength: '한국어 오피스워크에 최적화된 Upstage 오픈 모델 (기본 권장)',
+  },
+  {
+    name: 'Solar Pro 2',
+    model: 'solar-pro2',
+    strength: '고품질 문서 생성/분석용 상위 모델',
+  },
+  {
+    name: 'Solar Mini',
+    model: 'solar-mini',
+    strength: '빠른 응답이 필요한 요약/분류 작업 후보',
   },
 ];
 
@@ -132,7 +149,7 @@ function loadSetupDraft(): SetupDraft | null {
       step: parsed.step,
       admin: parsed.admin || { user_id: '', display_name: '', title: '시스템 관리자' },
       llmChoice: parsed.llmChoice || 'local',
-      provider: parsed.provider || 'openai',
+      provider: parsed.provider || 'solar',
       model: parsed.model || '',
       localModel: parsed.localModel || 'Qwen/Qwen3-4B',
       localModelQuery: parsed.localModelQuery || 'Qwen',
@@ -149,11 +166,6 @@ function loadSetupDraft(): SetupDraft | null {
   }
 }
 
-export function hasIncompleteInitialSetupDraft(): boolean {
-  const draft = loadSetupDraft();
-  return Boolean(draft && draft.step !== 'admin');
-}
-
 function saveSetupDraft(draft: SetupDraft) {
   window.localStorage.setItem(SETUP_DRAFT_KEY, JSON.stringify(draft));
 }
@@ -168,7 +180,7 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
   const [admin, setAdmin] = useState({ ...(savedDraft?.admin || { user_id: '', display_name: '', title: '시스템 관리자' }), password: '' });
   const [sessionUser, setSessionUser] = useState<AuthUser | null>(initialUser);
   const [llmChoice, setLlmChoice] = useState<LlmChoice>(savedDraft?.llmChoice || 'local');
-  const [provider, setProvider] = useState<LlmProviderName>(savedDraft?.provider || 'openai');
+  const [provider, setProvider] = useState<LlmProviderName>(savedDraft?.provider || 'solar');
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState(savedDraft?.model || '');
   const [models, setModels] = useState<ProviderModelPayload | null>(null);
@@ -463,9 +475,9 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
   return (
     <main className="auth-layout setup-layout">
       <section className="panel setup-wizard">
-        <img className="auth-logo" src="/patchmachine-logo.png" alt="Patch Machine" />
+        <img className="auth-logo" src="/negotium-logo.png" alt="Negotium" />
         <p className="eyebrow">First-run office setup</p>
-        <h1>패치머신 초기 오피스 세팅</h1>
+        <h1>네고티움 초기 오피스 세팅</h1>
         <StepBar step={step} />
         {step === 'admin' ? (
           <div className="memory-form">
@@ -505,11 +517,24 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
                     setModelSearch('');
                   }}
                 >
+                  <option value="solar">Upstage / Solar</option>
                   <option value="openai">OpenAI / GPT</option>
                   <option value="anthropic">Anthropic / Claude</option>
                   <option value="gemini">Google / Gemini</option>
                   <option value="together">Together AI</option>
                 </select>
+                {provider === 'solar' ? (
+                  <div className="local-llm-status">
+                    <div>
+                      <strong>Upstage Solar API</strong>
+                      <p className="muted">
+                        Solar는 OpenAI-compatible API로 호출됩니다. console.upstage.ai에서 발급한 API key를
+                        넣고 모델 확인을 누르면 사용 가능한 모델 목록을 가져옵니다.
+                      </p>
+                    </div>
+                    <span className="status-pill">api</span>
+                  </div>
+                ) : null}
                 {provider === 'together' ? (
                   <div className="local-llm-status">
                     <div>
@@ -523,6 +548,21 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
                   </div>
                 ) : null}
                 <input type="password" placeholder="API Key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+                {provider === 'solar' ? (
+                  <div className="recommended-model-grid">
+                    {recommendedSolarModels.map((item) => (
+                      <article className={model === item.model ? 'model-card model-card-selected' : 'model-card'} key={item.model}>
+                        <small>Upstage</small>
+                        <strong>{item.name}</strong>
+                        <p>{item.strength}</p>
+                        <code>{item.model}</code>
+                        <button className="secondary-button" type="button" onClick={() => setModel(item.model)}>
+                          선택
+                        </button>
+                      </article>
+                    ))}
+                  </div>
+                ) : null}
                 {provider === 'together' ? (
                   <div className="recommended-model-grid">
                     {recommendedTogetherModels.map((item) => (
@@ -836,7 +876,7 @@ function ProfileStep({
             <input
               value={companyProfile.company_name}
               onChange={(event) => update('company_name', event.target.value)}
-              placeholder="예: Patch Machine Lab Co., Ltd."
+              placeholder="예: Negotium Lab Co., Ltd."
             />
           </label>
           <label>

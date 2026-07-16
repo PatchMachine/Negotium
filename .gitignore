@@ -16,14 +16,13 @@ node_modules/
 frontend/dist/
 
 # Runtime workspaces (cloned repos)
-.pm_workspaces/
-/var/pm/
+.ng_workspaces/
+/var/ng/
 workspaces/
 
 # IDE
 .idea/
 .vscode/
 
-# Do NOT ignore archive/ - GitOps source of truth
-archive/secrets/
-archive/uploads/
+# Runtime data (user PII, job logs, generated documents) — never commit
+archive/

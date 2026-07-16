@@ -1,15 +1,15 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from patch_machine.app.services.patch_execution_service import (
+from negotium.app.services.patch_execution_service import (
     apply_patch_run_diff,
     create_pr_draft,
     evaluate_diff_policy,
     extract_diff_files,
     validate_branch_name,
 )
-from patch_machine.archive.patch_execution import PatchExecutionStore
-from patch_machine.archive.patch_runs import PatchRun
+from negotium.archive.patch_execution import PatchExecutionStore
+from negotium.archive.patch_runs import PatchRun
 
 
 def test_extract_diff_files_from_unified_diff() -> None:

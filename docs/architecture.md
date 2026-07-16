@@ -1,6 +1,6 @@
-# Patch Machine Architecture
+# Negotium Architecture
 
-Patch Machine is an AI Office BPA system that combines a React console, a FastAPI backend, local/cloud LLM routing, external ingestion, and a Markdown-first archive.
+Negotium is an AI Office BPA system that combines a React console, a FastAPI backend, local/cloud LLM routing, external ingestion, and a Markdown-first archive.
 
 ## 1. System Overview
 
@@ -8,7 +8,7 @@ Patch Machine is an AI Office BPA system that combines a React console, a FastAP
 flowchart TB
   User["Users: owner, manager, staff, viewer"] --> Frontend["React Frontend: localhost:5173"]
 
-  Frontend -->|"REST API"| FastAPI["FastAPI Backend: patch-machine serve"]
+  Frontend -->|"REST API"| FastAPI["FastAPI Backend: negotium serve"]
 
   FastAPI --> OperationsAPI["Operations API"]
   FastAPI --> ContributorSite["Contributor Site"]
@@ -23,6 +23,7 @@ flowchart TB
   OperationsAPI --> LlmGateway["LLM Gateway"]
 
   LlmGateway --> LocalVllm["Embedded vLLM: Qwen3-4B"]
+  LlmGateway --> Solar["Upstage Solar (default)"]
   LlmGateway --> OpenAI["OpenAI GPT"]
   LlmGateway --> Claude["Anthropic Claude"]
   LlmGateway --> Gemini["Google Gemini"]
@@ -61,7 +62,7 @@ sequenceDiagram
   participant VLLM as Embedded vLLM
 
   User->>UI: Ask a question in LLM Chat
-  UI->>API: POST /api/llm/chat with X-PM-User
+  UI->>API: POST /api/llm/chat with X-NG-User
   API->>Auth: Check llm:chat permission
   Auth-->>API: Allowed
   API->>Runtime: Read route and provider
@@ -91,7 +92,7 @@ stateDiagram-v2
 
 ```mermaid
 flowchart TB
-  Start["Backend startup"] --> ModeCheck{"PM_VLLM_MODE"}
+  Start["Backend startup"] --> ModeCheck{"NG_VLLM_MODE"}
 
   ModeCheck -->|"embedded"| HostMode["Host Python process"]
   HostMode --> Spawn["VLLM_WORKER_MULTIPROC_METHOD=spawn"]
@@ -99,7 +100,7 @@ flowchart TB
   LoadModel --> Ready["Local LLM running"]
 
   ModeCheck -->|"http"| HttpMode["External vLLM HTTP server"]
-  HttpMode --> BaseURL["PM_VLLM_BASE_URL"]
+  HttpMode --> BaseURL["NG_VLLM_BASE_URL"]
   BaseURL --> HttpReady["OpenAI-compatible API"]
 
   Ready --> Chat["LLM Chat"]
@@ -109,12 +110,12 @@ flowchart TB
 Recommended local GPU mode:
 
 ```bash
-PM_LLM_PROVIDER=vllm \
-PM_LLM_DEFAULT_ROUTE=local \
-PM_VLLM_MODE=embedded \
-PM_VLLM_PRELOAD_ON_STARTUP=true \
-PM_VLLM_WORKER_MULTIPROC_METHOD=spawn \
-uv run patch-machine serve
+NG_LLM_PROVIDER=vllm \
+NG_LLM_DEFAULT_ROUTE=local \
+NG_VLLM_MODE=embedded \
+NG_VLLM_PRELOAD_ON_STARTUP=true \
+NG_VLLM_WORKER_MULTIPROC_METHOD=spawn \
+uv run negotium serve
 ```
 
 Docker mode is for the frontend and non-GPU backend operation. It does not load the embedded local GPU model.
@@ -190,7 +191,7 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-  Request["Frontend request"] --> Header["X-PM-User"]
+  Request["Frontend request"] --> Header["X-NG-User"]
   Header --> ACL["AccessControlStore"]
   ACL --> User["UserRecord"]
   User --> Role["RoleRecord"]
@@ -214,16 +215,16 @@ Default roles:
 ```mermaid
 flowchart TB
   subgraph HostGpu["Host GPU Mode"]
-    HostBackend["uv run patch-machine serve"]
+    HostBackend["uv run negotium serve"]
     HostBackend --> EmbeddedVllm["Embedded vLLM on RTX GPU"]
     HostFrontend["npm run dev --prefix frontend"] --> HostBackend
   end
 
   subgraph DockerMode["Docker Compose Mode"]
     DockerFrontend["frontend container"]
-    DockerBackend["patch-machine container"]
+    DockerBackend["negotium container"]
     DockerFrontend --> DockerBackend
-    DockerBackend --> CloudProviders["GPT, Claude, Gemini, or external vLLM HTTP"]
+    DockerBackend --> CloudProviders["Solar, GPT, Claude, Gemini, or external vLLM HTTP"]
   end
 ```
 

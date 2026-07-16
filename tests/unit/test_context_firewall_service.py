@@ -1,11 +1,11 @@
 from pathlib import Path
 
-from patch_machine.app.services.context_firewall_service import (
+from negotium.app.services.context_firewall_service import (
     load_context_firewall_policy,
     sanitize_context,
     sanitize_llm_messages,
 )
-from patch_machine.domain.ports import LlmMessage
+from negotium.domain.ports import LlmMessage
 
 
 def test_context_firewall_redacts_secret_pii_and_db_url() -> None:

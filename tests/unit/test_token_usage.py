@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from patch_machine.archive.token_usage import (
+from negotium.archive.token_usage import (
     TokenLimitConfig,
     TokenLimitExceededError,
     TokenUsageStore,

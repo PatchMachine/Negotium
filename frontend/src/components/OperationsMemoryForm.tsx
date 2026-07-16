@@ -24,7 +24,7 @@ export default function OperationsMemoryForm({ disabled, memory, onSaved }: Prop
     try {
       const saved = await saveOperationsMemory(draft);
       onSaved(saved);
-      setMessage('패치머신 영구메모리를 저장했습니다.');
+      setMessage('네고티움 영구메모리를 저장했습니다.');
     } catch (err) {
       setMessage(err instanceof Error ? err.message : '저장 중 오류가 발생했습니다.');
     } finally {
@@ -36,7 +36,7 @@ export default function OperationsMemoryForm({ disabled, memory, onSaved }: Prop
     <section className="panel memory-panel">
       <div className="panel-heading">
         <p className="eyebrow">Operations Memory</p>
-        <h2>패치머신 영구메모리 (대시보드)</h2>
+        <h2>네고티움 영구메모리 (대시보드)</h2>
         <p>
           회사 이름, 진행 계획, 핵심 업무 흐름, 사용 도구, 민감정보 정책을 저장합니다. 이 설정은 채용,
           인수인계, 문서 자동화, LLM 채팅의 기본 컨텍스트가 됩니다. 조직 구조(부서·직급·직원 배정)는
@@ -107,7 +107,7 @@ export default function OperationsMemoryForm({ disabled, memory, onSaved }: Prop
 
         <div className="form-actions">
           <button disabled={disabled || saving} type="submit">
-            {saving ? '저장 중...' : '패치머신 영구메모리 저장'}
+            {saving ? '저장 중...' : '네고티움 영구메모리 저장'}
           </button>
           {message ? <span className="form-message">{message}</span> : null}
         </div>

@@ -7,6 +7,18 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    build: {
+      target: 'es2020',
+      // Keep the React runtime in its own long-cached chunk; page chunks
+      // (React.lazy in App.tsx) then only change when their page changes.
+      rollupOptions: {
+        output: {
+          manualChunks(id: string) {
+            if (id.includes('node_modules')) return 'vendor';
+          },
+        },
+      },
+    },
     server: {
       port: 5173,
       strictPort: true,

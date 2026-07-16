@@ -5,8 +5,8 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
-from patch_machine.archive.writer import ArchiveWriter
-from patch_machine.domain.entities import IssueEvent, RepoRef
+from negotium.archive.writer import ArchiveWriter
+from negotium.domain.entities import IssueEvent, RepoRef
 
 
 def _event(number: int) -> IssueEvent:

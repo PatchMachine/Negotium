@@ -134,7 +134,7 @@ export default function LocalAgentAdminPanel() {
 
   const embedHint =
     status?.state === 'unavailable'
-      ? `모드 ${status.mode}: 호스트에서 PM_VLLM_MODE=embedded 로 patch-machine serve 실행`
+      ? `모드 ${status.mode}: 호스트에서 NG_VLLM_MODE=embedded 로 negotium serve 실행`
       : '';
 
   return (

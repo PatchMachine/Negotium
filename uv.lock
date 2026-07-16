@@ -2460,6 +2460,100 @@ wheels = [
 ]
 
 [[package]]
+name = "negotium"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "detect-secrets" },
+    { name = "discord-py" },
+    { name = "fastapi" },
+    { name = "gitpython" },
+    { name = "httpx" },
+    { name = "jinja2" },
+    { name = "langgraph" },
+    { name = "openai" },
+    { name = "openpyxl" },
+    { name = "portalocker" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "pygithub" },
+    { name = "pypdf" },
+    { name = "python-multipart" },
+    { name = "pyyaml" },
+    { name = "rank-bm25" },
+    { name = "structlog" },
+    { name = "tree-sitter" },
+    { name = "tree-sitter-languages" },
+    { name = "typer" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "respx" },
+    { name = "ruff" },
+    { name = "types-pyyaml" },
+]
+local-ai = [
+    { name = "accelerate" },
+    { name = "transformers" },
+    { name = "vllm", marker = "sys_platform == 'linux'" },
+]
+ocr = [
+    { name = "pillow" },
+    { name = "pytesseract" },
+]
+sandbox = [
+    { name = "docker" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "accelerate", marker = "extra == 'local-ai'", specifier = ">=0.30" },
+    { name = "detect-secrets", specifier = ">=1.4" },
+    { name = "discord-py", specifier = ">=2.3" },
+    { name = "docker", marker = "extra == 'sandbox'", specifier = ">=7.0" },
+    { name = "fastapi", specifier = ">=0.110" },
+    { name = "gitpython", specifier = ">=3.1" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "jinja2", specifier = ">=3.1" },
+    { name = "langgraph", specifier = ">=0.2" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
+    { name = "openai", specifier = ">=1.30" },
+    { name = "openpyxl", specifier = ">=3.1" },
+    { name = "pillow", marker = "extra == 'ocr'", specifier = ">=10.0" },
+    { name = "portalocker", specifier = ">=2.8" },
+    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.7" },
+    { name = "pydantic", specifier = ">=2.6" },
+    { name = "pydantic-settings", specifier = ">=2.2" },
+    { name = "pygithub", specifier = ">=2.3" },
+    { name = "pypdf", specifier = ">=4.0" },
+    { name = "pytesseract", marker = "extra == 'ocr'", specifier = ">=0.3.10" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0" },
+    { name = "python-multipart", specifier = ">=0.0.9" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "rank-bm25", specifier = ">=0.2.2" },
+    { name = "respx", marker = "extra == 'dev'", specifier = ">=0.21" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
+    { name = "structlog", specifier = ">=24.1" },
+    { name = "transformers", marker = "extra == 'local-ai'", specifier = ">=4.44" },
+    { name = "tree-sitter", specifier = ">=0.21" },
+    { name = "tree-sitter-languages", specifier = ">=1.10" },
+    { name = "typer", specifier = ">=0.12" },
+    { name = "types-pyyaml", marker = "extra == 'dev'" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.27" },
+    { name = "vllm", marker = "sys_platform == 'linux' and extra == 'local-ai'", specifier = ">=0.6" },
+]
+provides-extras = ["ocr", "dev", "sandbox", "local-ai"]
+
+[[package]]
 name = "networkx"
 version = "3.6.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3242,100 +3336,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/6a/6d/eed37d7ebc1e0bcd2
 wheels = [
     { url = "https://files.pythonhosted.org/packages/42/32/658973117bf0fd82a24abbfb94fe73a5e86216e49342985e10acce54775a/partial_json_parser-0.2.1.1.post7-py3-none-any.whl", hash = "sha256:145119e5eabcf80cbb13844a6b50a85c68bf99d376f8ed771e2a3c3b03e653ae", size = 10877, upload-time = "2025-11-17T07:27:40.457Z" },
 ]
-
-[[package]]
-name = "patch-machine"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "detect-secrets" },
-    { name = "discord-py" },
-    { name = "fastapi" },
-    { name = "gitpython" },
-    { name = "httpx" },
-    { name = "jinja2" },
-    { name = "langgraph" },
-    { name = "openai" },
-    { name = "openpyxl" },
-    { name = "portalocker" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "pygithub" },
-    { name = "pypdf" },
-    { name = "python-multipart" },
-    { name = "pyyaml" },
-    { name = "rank-bm25" },
-    { name = "structlog" },
-    { name = "tree-sitter" },
-    { name = "tree-sitter-languages" },
-    { name = "typer" },
-    { name = "uvicorn", extra = ["standard"] },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "mypy" },
-    { name = "pre-commit" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-cov" },
-    { name = "respx" },
-    { name = "ruff" },
-    { name = "types-pyyaml" },
-]
-local-ai = [
-    { name = "accelerate" },
-    { name = "transformers" },
-    { name = "vllm", marker = "sys_platform == 'linux'" },
-]
-ocr = [
-    { name = "pillow" },
-    { name = "pytesseract" },
-]
-sandbox = [
-    { name = "docker" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "accelerate", marker = "extra == 'local-ai'", specifier = ">=0.30" },
-    { name = "detect-secrets", specifier = ">=1.4" },
-    { name = "discord-py", specifier = ">=2.3" },
-    { name = "docker", marker = "extra == 'sandbox'", specifier = ">=7.0" },
-    { name = "fastapi", specifier = ">=0.110" },
-    { name = "gitpython", specifier = ">=3.1" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "jinja2", specifier = ">=3.1" },
-    { name = "langgraph", specifier = ">=0.2" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
-    { name = "openai", specifier = ">=1.30" },
-    { name = "openpyxl", specifier = ">=3.1" },
-    { name = "pillow", marker = "extra == 'ocr'", specifier = ">=10.0" },
-    { name = "portalocker", specifier = ">=2.8" },
-    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.7" },
-    { name = "pydantic", specifier = ">=2.6" },
-    { name = "pydantic-settings", specifier = ">=2.2" },
-    { name = "pygithub", specifier = ">=2.3" },
-    { name = "pypdf", specifier = ">=4.0" },
-    { name = "pytesseract", marker = "extra == 'ocr'", specifier = ">=0.3.10" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0" },
-    { name = "python-multipart", specifier = ">=0.0.9" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "rank-bm25", specifier = ">=0.2.2" },
-    { name = "respx", marker = "extra == 'dev'", specifier = ">=0.21" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
-    { name = "structlog", specifier = ">=24.1" },
-    { name = "transformers", marker = "extra == 'local-ai'", specifier = ">=4.44" },
-    { name = "tree-sitter", specifier = ">=0.21" },
-    { name = "tree-sitter-languages", specifier = ">=1.10" },
-    { name = "typer", specifier = ">=0.12" },
-    { name = "types-pyyaml", marker = "extra == 'dev'" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.27" },
-    { name = "vllm", marker = "sys_platform == 'linux' and extra == 'local-ai'", specifier = ">=0.6" },
-]
-provides-extras = ["ocr", "dev", "sandbox", "local-ai"]
 
 [[package]]
 name = "pathspec"

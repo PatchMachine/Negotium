@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from patch_machine.adapters.ingestion.discord_bot import normalize_discord_message
-from patch_machine.adapters.ingestion.github_webhook import normalize_github_payload
-from patch_machine.domain.entities import RepoRef
+from negotium.adapters.ingestion.discord_bot import normalize_discord_message
+from negotium.adapters.ingestion.github_webhook import normalize_github_payload
+from negotium.domain.entities import RepoRef
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 
@@ -19,7 +19,7 @@ def test_github_issue_opened_payload_maps_all_fields() -> None:
     assert event.source == "github"
     assert event.external_id == "42"
     assert event.repo.full_name == "acme/payments"
-    assert "patch-machine" in event.labels
+    assert "negotium" in event.labels
     assert event.author == "qa-tester"
     assert event.metadata["html_url"].endswith("/issues/42")
 
