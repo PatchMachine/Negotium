@@ -16,8 +16,8 @@ node_modules/
 frontend/dist/
 
 # Runtime workspaces (cloned repos)
-.pm_workspaces/
-/var/pm/
+.ng_workspaces/
+/var/ng/
 workspaces/
 
 # IDE

@@ -91,7 +91,7 @@ async def test_run_prompt_skill_writes_doc(tmp_path: Path, monkeypatch: pytest.M
 
     async def _completion(prompt: str, image_parts: Any) -> str:
         assert "Subject" in prompt
-        return "<!-- patchmachine:format=markdown -->\nGenerated body"
+        return "<!-- negotium:format=markdown -->\nGenerated body"
 
     result = await run_skill(
         container,

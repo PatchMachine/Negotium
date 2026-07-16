@@ -33,4 +33,4 @@ inputs:
 작성 지침:
 - 핵심 요약, 본문, 액션 아이템, 확인 필요사항을 포함하세요.
 - 내용에 가장 적합한 출력 형식(markdown/html/csv/json/text)을 직접 선택하세요.
-- 출력의 첫 줄에 선택한 형식을 `<!-- patchmachine:format=markdown -->` 형태로 명시한 뒤 본문을 작성하세요.
+- 출력의 첫 줄에 선택한 형식을 `<!-- negotium:format=markdown -->` 형태로 명시한 뒤 본문을 작성하세요.

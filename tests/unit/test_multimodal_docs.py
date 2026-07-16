@@ -102,14 +102,14 @@ def test_extract_audio_attachment(tmp_path: Path) -> None:
 
 
 def test_resolve_output_format_reads_directive() -> None:
-    text = "<!-- patchmachine:format=csv -->\na,b\n1,2"
+    text = "<!-- negotium:format=csv -->\na,b\n1,2"
     fmt, body = resolve_output_format(text)
     assert fmt == "csv"
     assert body == "a,b\n1,2"
 
 
 def test_resolve_output_format_requested_overrides_directive() -> None:
-    text = "<!-- patchmachine:format=csv -->\nbody"
+    text = "<!-- negotium:format=csv -->\nbody"
     fmt, body = resolve_output_format(text, requested="json")
     assert fmt == "json"
     assert body == "body"

@@ -80,7 +80,7 @@ class Settings(BaseSettings):
 
     env: Literal["development", "production", "test"] = "development"
     log_level: str = "INFO"
-    workspace_dir: Path = Path("./.pm_workspaces")
+    workspace_dir: Path = Path("./.ng_workspaces")
     archive_dir: Path = Path("./archive")
     http_host: str = "0.0.0.0"
     http_port: int = 8080

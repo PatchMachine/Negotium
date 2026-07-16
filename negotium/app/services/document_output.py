@@ -1,7 +1,7 @@
 """Shared helpers for writing AI-generated documents in AI-chosen formats.
 
 Extracted so the HTTP API, the skill runtime, and the CLI all write documents
-the same way and honor a leading ``<!-- patchmachine:format=... -->`` directive.
+the same way and honor a leading ``<!-- negotium:format=... -->`` directive.
 """
 
 from __future__ import annotations
@@ -20,8 +20,10 @@ FORMAT_EXTENSIONS = {
     "json": "json",
     "text": "txt",
 }
+# "patchmachine" is accepted for backward compatibility with prompts/skills
+# authored before the Negotium rename.
 _FORMAT_DIRECTIVE_RE = re.compile(
-    r"^\s*<!--\s*patchmachine:format\s*=\s*([a-zA-Z]+)\s*-->\s*", re.IGNORECASE
+    r"^\s*<!--\s*(?:negotium|patchmachine):format\s*=\s*([a-zA-Z]+)\s*-->\s*", re.IGNORECASE
 )
 
 

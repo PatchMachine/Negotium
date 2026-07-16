@@ -170,7 +170,7 @@ docker compose -f docker/docker-compose.yml run --rm negotium \
 
 - `--yes`: 필수 확인 플래그입니다. 없으면 파괴적 초기화를 거부합니다.
 - `--actor <name>`: 감사 로그에 남길 실행자 이름입니다. 예: `admin`, `ops`, `local-owner`.
-- `--include-workspaces / --no-include-workspaces`: `.pm_workspaces/` 작업 디렉터리까지 비울지 결정합니다. 기본값은 포함입니다.
+- `--include-workspaces / --no-include-workspaces`: `.ng_workspaces/` 작업 디렉터리까지 비울지 결정합니다. 기본값은 포함입니다.
 
 예를 들어 내부 메모리와 계정/API 키만 초기화하고 작업 디렉터리는 남기려면 다음처럼 실행합니다.
 
@@ -180,7 +180,7 @@ negotium reset-state --yes --actor admin --no-include-workspaces
 
 이 명령은 `archive/`의 운영 메모리, 권한, 인증 세션, API 키 저장소, 업로드, 생성 문서,
 `archive/conversations/`, `archive/volatile_memory/`, `archive/memory/`, `archive/agent_execution/`와
-`.pm_workspaces/` 작업 디렉터리를 비웁니다. `.env`, 소스 코드, 외부 공급자 모델 캐시나 API 서버는
+`.ng_workspaces/` 작업 디렉터리를 비웁니다. `.env`, 소스 코드, 외부 공급자 모델 캐시나 API 서버는
 건드리지 않습니다. 초기화 작업 자체는 새 `archive/audit_log.jsonl`에 `system.reset`으로 기록됩니다.
 
 ### 메모리 저장 위치

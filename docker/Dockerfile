@@ -22,11 +22,11 @@ RUN pip install --upgrade pip \
  && pip install ".[dev]" \
  && pip install -e .
 
-RUN adduser --disabled-password --gecos "" patchmachine \
- && mkdir -p /var/pm/workspaces /app/archive \
- && chown -R patchmachine:patchmachine /var/pm /app
+RUN adduser --disabled-password --gecos "" negotium \
+ && mkdir -p /var/ng/workspaces /app/archive \
+ && chown -R negotium:negotium /var/ng /app
 
-USER patchmachine
+USER negotium
 EXPOSE 8080
 
 CMD ["negotium", "serve"]

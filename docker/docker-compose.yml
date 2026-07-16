@@ -10,7 +10,7 @@ services:
       - path: ../.env
         required: false
     environment:
-      NG_WORKSPACE_DIR: /var/pm/workspaces
+      NG_WORKSPACE_DIR: /var/ng/workspaces
       NG_ARCHIVE_DIR: /app/archive
       NG_HTTP_HOST: 0.0.0.0
       NG_HTTP_PORT: 8080
@@ -25,7 +25,7 @@ services:
     volumes:
       - ../archive:/app/archive
       - ../config:/app/config:ro
-      - pm-workspaces:/var/pm/workspaces
+      - ng-workspaces:/var/ng/workspaces
     ports:
       - "${NG_HOST_HTTP_PORT:-8080}:8080"
     healthcheck:
@@ -80,4 +80,4 @@ services:
 
 volumes:
   frontend-node-modules:
-  pm-workspaces:
+  ng-workspaces:

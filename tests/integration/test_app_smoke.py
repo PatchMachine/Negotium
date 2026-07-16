@@ -146,7 +146,7 @@ def test_chat_replays_history_and_supports_slash_and_stream(tmp_path: Path) -> N
         responses=[
             ScriptedResponse(text="첫 번째 응답입니다."),
             ScriptedResponse(text="두 번째 응답입니다."),
-            ScriptedResponse(text="<!-- patchmachine:format=markdown -->\n슬래시 초안 본문"),
+            ScriptedResponse(text="<!-- negotium:format=markdown -->\n슬래시 초안 본문"),
             ScriptedResponse(text="스트리밍 응답 본문"),
         ]
     )
@@ -520,7 +520,7 @@ def test_document_generation_honors_format_directive_and_attachment(tmp_path: Pa
         Settings(env="test", archive_dir=archive_dir, workspace_dir=tmp_path / "workspaces")
     )
     container.llm = FakeLlmProvider(
-        responses=[ScriptedResponse(text="<!-- patchmachine:format=csv -->\nname,role\nA,dev")]
+        responses=[ScriptedResponse(text="<!-- negotium:format=csv -->\nname,role\nA,dev")]
     )
     container.llm_runtime.write(
         LlmRuntimeConfig(
@@ -568,7 +568,7 @@ def test_skills_endpoints_list_and_run(tmp_path: Path) -> None:
         )
     )
     container.llm = FakeLlmProvider(
-        responses=[ScriptedResponse(text="<!-- patchmachine:format=markdown -->\n초안 본문")]
+        responses=[ScriptedResponse(text="<!-- negotium:format=markdown -->\n초안 본문")]
     )
     container.llm_runtime.write(
         LlmRuntimeConfig(
