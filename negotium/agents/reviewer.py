@@ -6,10 +6,10 @@ import re
 import time
 from dataclasses import dataclass
 
-from negotium.agents.prompts import render
 from negotium.domain.entities import ReviewOutcome
 from negotium.domain.ports import LlmMessage, LlmProvider
 from negotium.observability import AgentMetrics, get_logger
+from negotium.prompts import render
 
 
 @dataclass

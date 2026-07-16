@@ -9,9 +9,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from negotium.app.api import create_operations_api_router
 from negotium.app.container import Container
 from negotium.app.contributor_site import create_contributor_site_router
-from negotium.app.operations_api import create_operations_api_router
 from negotium.observability import get_logger
 
 
