@@ -81,7 +81,7 @@ const navItems: NavItem[] = [
   { id: 'work', label: '업무 현황', group: '회사 업무 운영' },
   { id: 'work-architecture', label: '프로세스 설계', group: '회사 업무 운영', requiredPermission: 'memory:write' },
   { id: 'progress', label: '진행 로그', group: '회사 업무 운영' },
-  { id: 'work-memory', label: '패치머신 메모리', group: '패치머신 메모리 관리', requiredPermission: 'memory:write' },
+  { id: 'work-memory', label: '네고티움 메모리', group: '네고티움 메모리 관리', requiredPermission: 'memory:write' },
   { id: 'assistant', label: 'AI 어시스턴트', group: 'AI 에이전트', requiredPermission: 'llm:chat' },
   { id: 'skills', label: '스킬 실행', group: 'AI 에이전트', requiredPermission: 'work:read' },
   { id: 'hiring', label: '채용/면접', group: '오피스워크' },

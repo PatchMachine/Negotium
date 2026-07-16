@@ -1,4 +1,4 @@
-# Patch Machine
+# Negotium
 
 비 IT 기업이 사내 업무를 AI 기반으로 전환할 수 있도록 돕는
 LLM 에이전트 기반 **AI 오피스워크 / BPA(Business Process Automation) 시스템**입니다.
@@ -146,12 +146,12 @@ AI 업무 아키텍처 생성 결과는 `archive/work_architecture/`에 Markdown
 
 ### 초기화 CLI 명세
 
-초기화는 Patch Machine 백엔드가 설치된 호스트에서 실행합니다. 개발 환경에서는 저장소 루트에서
+초기화는 Negotium 백엔드가 설치된 호스트에서 실행합니다. 개발 환경에서는 저장소 루트에서
 가상환경을 활성화한 뒤 실행하고, Docker 환경에서는 `negotium` 이미지/컨테이너 안에서 실행합니다.
 
 ```bash
 # 로컬 개발 환경
-cd /path/to/PatchMachine_Core_Engine
+cd /path/to/Negotium_Core_Engine
 source .venv/bin/activate
 negotium reset-state --yes --actor admin
 

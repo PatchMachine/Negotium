@@ -132,7 +132,7 @@ export default function WorkMemoryPage() {
   const pendingDeletionCount = deletionRequests.filter((request) => request.status === 'pending').length;
   const sectionItems: Array<{ id: typeof section; label: string }> = [
     { id: 'edit', label: '메모리 수정' },
-    { id: 'lookup', label: '패치머신 영구메모리 조회' },
+    { id: 'lookup', label: '네고티움 영구메모리 조회' },
     { id: 'summary', label: 'AI 가독 정보 요약' },
     { id: 'governance', label: `삭제 요청 승인${pendingDeletionCount ? ` (${pendingDeletionCount})` : ''}` },
     { id: 'cache', label: '캐시 관리' },
@@ -175,7 +175,7 @@ export default function WorkMemoryPage() {
       </div>
 
       <div className="work-memory-toolbar">
-        <div className="workspace-tabs" role="tablist" aria-label="패치머신 메모리 관리 메뉴">
+        <div className="workspace-tabs" role="tablist" aria-label="네고티움 메모리 관리 메뉴">
           {sectionItems.map((item) => (
             <button
               key={item.id}

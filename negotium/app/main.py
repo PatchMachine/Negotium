@@ -57,7 +57,7 @@ def create_app(container: Container | None = None) -> FastAPI:
                 with contextlib.suppress(asyncio.CancelledError):
                     await orchestrator_task
 
-    app = FastAPI(title="Patch Machine", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Negotium", version="0.1.0", lifespan=lifespan)
     app.include_router(create_operations_api_router(container))
     app.include_router(create_contributor_site_router(container.operations_memory))
     app.include_router(container.github_router.router)

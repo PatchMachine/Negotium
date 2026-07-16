@@ -21,7 +21,7 @@ const LOCAL_MODELS = [
 ];
 
 const TASKS: Array<{ id: string; label: string; description: string }> = [
-  { id: 'memory_summary', label: 'AI 가독 정보 요약', description: '패치머신 영구메모리와 작업 기억을 읽기 좋게 요약' },
+  { id: 'memory_summary', label: 'AI 가독 정보 요약', description: '네고티움 영구메모리와 작업 기억을 읽기 좋게 요약' },
   { id: 'agent_planning', label: '에이전트 실행계획', description: '작업 목표를 승인 가능한 실행 단계로 분해' },
   { id: 'document_generation', label: '문서 자동화', description: '보고서, 회의록, 업무 요청서 등 회사 문서 생성' },
   { id: 'hiring', label: '채용/면접', description: '직무 요구사항, 면접 질문, 온보딩 문서 생성' },

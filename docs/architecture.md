@@ -1,6 +1,6 @@
-# Patch Machine Architecture
+# Negotium Architecture
 
-Patch Machine is an AI Office BPA system that combines a React console, a FastAPI backend, local/cloud LLM routing, external ingestion, and a Markdown-first archive.
+Negotium is an AI Office BPA system that combines a React console, a FastAPI backend, local/cloud LLM routing, external ingestion, and a Markdown-first archive.
 
 ## 1. System Overview
 

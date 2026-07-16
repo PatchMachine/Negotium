@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Patch Machine — an LLM-agent based AI office-work / BPA system for non-IT companies. GitHub Issues and Discord messages flow through agents into patch proposals; office features (hiring, handover, document automation, work scheduling) run in the same console. There is **no database**: the `archive/` directory of Markdown/JSON/JSONL files is the single source of truth ("MD GitOps"). Sensitive work routes to a local vLLM model; general work routes to cloud providers (OpenAI/Anthropic/Gemini/Together).
+Negotium — an LLM-agent based AI office-work / BPA system for non-IT companies. GitHub Issues and Discord messages flow through agents into patch proposals; office features (hiring, handover, document automation, work scheduling) run in the same console. There is **no database**: the `archive/` directory of Markdown/JSON/JSONL files is the single source of truth ("MD GitOps"). Sensitive work routes to a local vLLM model; general work routes to cloud providers (OpenAI/Anthropic/Gemini/Together).
 
 ## Commands
 

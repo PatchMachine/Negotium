@@ -11,7 +11,7 @@ import uvicorn
 from negotium.app.container import Container
 from negotium.observability import configure_logging, get_logger
 
-app = typer.Typer(no_args_is_help=True, add_completion=False, help="Patch Machine CLI")
+app = typer.Typer(no_args_is_help=True, add_completion=False, help="Negotium CLI")
 
 
 @app.command()

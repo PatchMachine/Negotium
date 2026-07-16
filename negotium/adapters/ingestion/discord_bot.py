@@ -183,7 +183,7 @@ class DiscordBotAdapter:
                 trigger="slash",
             )
             await ctx.reply(
-                "Patch Machine이 요청을 접수했습니다. 처리 결과는 이 채널에 답글로 올라옵니다."
+                "Negotium이 요청을 접수했습니다. 처리 결과는 이 채널에 답글로 올라옵니다."
             )
 
     async def _enqueue_from_binding(

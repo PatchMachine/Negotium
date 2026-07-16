@@ -1,4 +1,4 @@
-"""Utilities for resetting local Patch Machine state."""
+"""Utilities for resetting local Negotium state."""
 
 from __future__ import annotations
 

@@ -26,7 +26,7 @@ export default function WorkMemoryEditSection({
   return (
     <div className="panel memory-edit-panel">
       <p className="eyebrow">메모리 수정</p>
-      <h2>패치머신 메모리 편집</h2>
+      <h2>네고티움 메모리 편집</h2>
       <div className="segmented-control" role="tablist" aria-label="편집할 메모리 종류">
         <button
           type="button"
@@ -35,7 +35,7 @@ export default function WorkMemoryEditSection({
           className={mode === 'permanent' ? 'segment active' : 'segment'}
           onClick={() => onModeChange('permanent')}
         >
-          패치머신 영구메모리
+          네고티움 영구메모리
         </button>
         <button
           type="button"
@@ -51,7 +51,7 @@ export default function WorkMemoryEditSection({
       {mode === 'permanent' ? (
         <div className="memory-form" role="tabpanel">
           <p className="muted small">
-            운영 메모리(회사·조직·정책)입니다. LLM과 에이전트가 참조하는 패치머신 영구메모리입니다.
+            운영 메모리(회사·조직·정책)입니다. LLM과 에이전트가 참조하는 네고티움 영구메모리입니다.
           </p>
           <input
             placeholder="회사 이름"

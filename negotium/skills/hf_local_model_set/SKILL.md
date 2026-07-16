@@ -1,7 +1,7 @@
 ---
 id: hf.local_model_set
 name: 로컬 LLM 모델 지정
-description: 관리자 권한으로 Patch Machine의 로컬 LLM 모델을 지정합니다.
+description: 관리자 권한으로 Negotium의 로컬 LLM 모델을 지정합니다.
 category: admin
 executor: tool
 tool: hf.set_local_model

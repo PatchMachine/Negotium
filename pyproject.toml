@@ -5,7 +5,7 @@ description = "Auto SI/SE agent system: GitHub Issues + Discord bug reports -> P
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "Patch Machine Team" }]
+authors = [{ name = "Negotium Team" }]
 keywords = ["llm", "agents", "gitops", "automation", "si", "se"]
 
 dependencies = [

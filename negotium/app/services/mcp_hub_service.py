@@ -266,7 +266,7 @@ def list_tool_descriptors() -> list[dict[str, Any]]:
             ),
             _tool(
                 "skills.list",
-                "List registered Patch Machine skills.",
+                "List registered Negotium skills.",
                 {},
                 "work:read",
                 "skills",

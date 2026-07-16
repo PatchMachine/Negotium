@@ -481,9 +481,9 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
   return (
     <main className="auth-layout setup-layout">
       <section className="panel setup-wizard">
-        <img className="auth-logo" src="/patchmachine-logo.png" alt="Patch Machine" />
+        <img className="auth-logo" src="/negotium-logo.png" alt="Negotium" />
         <p className="eyebrow">First-run office setup</p>
-        <h1>패치머신 초기 오피스 세팅</h1>
+        <h1>네고티움 초기 오피스 세팅</h1>
         <StepBar step={step} />
         {step === 'admin' ? (
           <div className="memory-form">
@@ -882,7 +882,7 @@ function ProfileStep({
             <input
               value={companyProfile.company_name}
               onChange={(event) => update('company_name', event.target.value)}
-              placeholder="예: Patch Machine Lab Co., Ltd."
+              placeholder="예: Negotium Lab Co., Ltd."
             />
           </label>
           <label>

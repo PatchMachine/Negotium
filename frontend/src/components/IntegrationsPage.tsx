@@ -100,7 +100,7 @@ export default function IntegrationsPage({ permissions = [] }: IntegrationsPageP
           <p className="eyebrow">MCP integrations</p>
           <h2>MCP 서버 연동</h2>
           <p className="muted">
-            패치머신이 외부 플랫폼 양식을 이해하도록 MCP 서버와 플랫폼 커넥터를 관리합니다. GitHub/Discord는 기본
+            네고티움이 외부 플랫폼 양식을 이해하도록 MCP 서버와 플랫폼 커넥터를 관리합니다. GitHub/Discord는 기본
             커넥터이며, 이후 Notion, Slack, Jira, Google Drive 같은 서버를 탭 단위로 추가할 수 있습니다.
           </p>
         </div>

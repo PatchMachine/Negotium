@@ -23,7 +23,7 @@ export default function HomePage({
       </div>
       <section className="guide-grid">
         <article className="guide-card">
-          <p className="eyebrow">패치머신 영구메모리</p>
+          <p className="eyebrow">네고티움 영구메모리</p>
           <h3>{memory.company_name || '회사 미설정'}</h3>
           <p>{memory.office_project || '오피스 프로젝트와 진행 계획을 등록하면 모든 LLM 응답에 반영됩니다.'}</p>
           <button type="button" onClick={() => onAction('dashboard')}>운영 메모리 설정</button>

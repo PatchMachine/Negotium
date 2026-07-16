@@ -80,7 +80,7 @@ export default function PermanentSourcesList({
   return (
     <div className="panel memory-sources-panel">
       <p className="eyebrow">Permanent memory browser</p>
-      <h2>패치머신 영구메모리 조회</h2>
+      <h2>네고티움 영구메모리 조회</h2>
       <p className="muted small">저장된 기억을 종류별로 살펴보고, AI가 참고할 항목을 선택합니다.</p>
       <div className="kind-filter-list" aria-label="메모리 종류별 보기">
         {(Object.keys(KIND_LABELS) as MemoryKindFilter[]).map((kind) => (

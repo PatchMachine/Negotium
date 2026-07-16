@@ -42,11 +42,11 @@ def test_contributor_site_routes_are_served(tmp_path: Path) -> None:
         styles = client.get("/site.css")
 
     assert home.status_code == 200
-    assert "패치 머신은 외부 기여와 함께 더 똑똑해집니다" in home.text
+    assert "네고티움은 외부 기여와 함께 더 똑똑해집니다" in home.text
     assert join.status_code == 200
     assert "좋은 제보 하나가 자동 패치의 출발점입니다" in join.text
     assert operations.status_code == 200
-    assert "패치머신이 지금 운영할 회사를 기억하게 합니다" in operations.text
+    assert "네고티움이 지금 운영할 회사를 기억하게 합니다" in operations.text
     assert styles.status_code == 200
     assert "text/css" in styles.headers["content-type"]
 
@@ -502,7 +502,7 @@ def test_office_document_generation_falls_back_when_llm_returns_empty(tmp_path: 
             json={
                 "document_type": "meeting_minutes",
                 "title": "5월 프로젝트 진행 계획 회의",
-                "source_text": "패치머신 원문 개발 문서 자동화",
+                "source_text": "네고티움 원문 개발 문서 자동화",
                 "audience": "담당자",
             },
         )
@@ -511,7 +511,7 @@ def test_office_document_generation_falls_back_when_llm_returns_empty(tmp_path: 
     markdown = response.json()["markdown"]
     assert "LLM 응답 없음" not in markdown
     assert "로컬 fallback 초안" in markdown
-    assert "패치머신 원문 개발 문서 자동화" in markdown
+    assert "네고티움 원문 개발 문서 자동화" in markdown
 
 
 def test_document_generation_honors_format_directive_and_attachment(tmp_path: Path) -> None:

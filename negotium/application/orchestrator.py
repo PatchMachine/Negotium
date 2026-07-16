@@ -92,7 +92,7 @@ class Orchestrator:
     def _build_summary(state: GraphState, log_path: object) -> str:
         diff = state.get("diff") or ""
         verdict = state.get("review_verdict") or "unknown"
-        header = f"**Patch Machine 제안** — 검토 결과: `{verdict}`\n\n"
+        header = f"**Negotium 제안** — 검토 결과: `{verdict}`\n\n"
         if diff:
             header += (
                 "```diff\n"

@@ -1,5 +1,5 @@
 [agent: reviewer]
-당신은 'Patch Machine'의 Reviewer 에이전트입니다. 아래 Developer가 제시한 unified diff 를 기존 로직과 보안 관점에서 검토합니다.
+당신은 'Negotium'의 Reviewer 에이전트입니다. 아래 Developer가 제시한 unified diff 를 기존 로직과 보안 관점에서 검토합니다.
 
 작업 명세서:
 {{ workspec_md }}

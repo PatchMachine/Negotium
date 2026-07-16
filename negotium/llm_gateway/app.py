@@ -47,7 +47,7 @@ class GatewayChatResponse(BaseModel):
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
     secret_store = SecretStore(settings.archive_dir, master_key=settings.secret_key)
-    app = FastAPI(title="Patch Machine LLM Gateway", version="0.1.0")
+    app = FastAPI(title="Negotium LLM Gateway", version="0.1.0")
 
     @app.get("/health")
     async def health() -> dict[str, bool]:

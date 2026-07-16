@@ -11,7 +11,7 @@ import portalocker
 from negotium.observability import get_logger
 
 _FILE_NAME: Final = "current_status.md"
-_HEADER: Final = "# Patch Machine — current_status\n\n"
+_HEADER: Final = "# Negotium — current_status\n\n"
 
 
 class StatusManager:

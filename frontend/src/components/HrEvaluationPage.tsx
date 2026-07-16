@@ -171,7 +171,7 @@ export default function HrEvaluationPage() {
         <p className="eyebrow">HR evaluation</p>
         <h2>인사평가</h2>
         <p className="muted">
-          직원과 진행 업무를 선택하면 패치머신의 업무 로그를 근거로 AI 평가 초안을 만들고, 관리자가 수정한 최종본을 저장합니다.
+          직원과 진행 업무를 선택하면 네고티움의 업무 로그를 근거로 AI 평가 초안을 만들고, 관리자가 수정한 최종본을 저장합니다.
         </p>
         <div className="memory-form">
           <div className="org-form-row">

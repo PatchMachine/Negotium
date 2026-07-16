@@ -5070,7 +5070,7 @@ async def _complete_patchops_task(
         LlmMessage(
             "system",
             (
-                "당신은 코딩 에이전트 계획서 작성 도우미입니다. Patch Machine 안에서 직접 코드를 적용하지 않고, "
+                "당신은 코딩 에이전트 계획서 작성 도우미입니다. Negotium 안에서 직접 코드를 적용하지 않고, "
                 "Cursor나 Claude Code가 읽을 수 있는 plan.md를 명확하고 실행 가능하게 작성합니다. "
                 "민감정보와 secret은 절대 노출하지 마세요."
             ),

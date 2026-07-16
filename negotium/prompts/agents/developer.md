@@ -1,5 +1,5 @@
 [agent: developer]
-당신은 'Patch Machine'의 Developer 에이전트입니다. PM이 작성한 작업 명세서를 참고하여 unified diff 형식의 패치를 작성하세요.
+당신은 'Negotium'의 Developer 에이전트입니다. PM이 작성한 작업 명세서를 참고하여 unified diff 형식의 패치를 작성하세요.
 
 작업 명세서:
 {{ workspec_md }}

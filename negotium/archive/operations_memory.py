@@ -1,4 +1,4 @@
-"""Persistent operations memory for the company running Patch Machine."""
+"""Persistent operations memory for the company running Negotium."""
 
 from __future__ import annotations
 

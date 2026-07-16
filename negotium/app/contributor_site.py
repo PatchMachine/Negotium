@@ -240,10 +240,10 @@ _HOME_HTML = """
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Patch Machine | 외부 참여</title>
+  <title>Negotium | 외부 참여</title>
   <meta
     name="description"
-    content="Patch Machine에 버그 리포트, 코드 리뷰, 검증 자료로 참여하는 방법을 안내합니다."
+    content="Negotium에 버그 리포트, 코드 리뷰, 검증 자료로 참여하는 방법을 안내합니다."
   >
   <link rel="stylesheet" href="/site.css">
 </head>
@@ -251,7 +251,7 @@ _HOME_HTML = """
   <main class="shell">
     <section class="hero">
       <div class="eyebrow">Open Collaboration</div>
-      <h1>패치 머신은 외부 기여와 함께 더 똑똑해집니다.</h1>
+      <h1>네고티움은 외부 기여와 함께 더 똑똑해집니다.</h1>
       <p class="lede">
         GitHub Issue와 Discord 제보만으로 문제를 수집하고, PM / Developer / Reviewer
         에이전트가 패치 제안까지 이어가는 자동 SI/SE 실험에 참여하세요.
@@ -269,7 +269,7 @@ _HOME_HTML = """
         <h2>버그 리포트</h2>
         <p>
           재현 단계, 기대 동작, 실제 동작을 Issue나 Discord 메시지로 남기면
-          패치 머신이 분석 큐에 올립니다.
+          네고티움이 분석 큐에 올립니다.
         </p>
       </article>
       <article class="card">
@@ -287,7 +287,7 @@ _HOME_HTML = """
     </section>
   </main>
   <footer>
-    <div class="shell">Patch Machine runs as a FastAPI service and is Docker-ready.</div>
+    <div class="shell">Negotium runs as a FastAPI service and is Docker-ready.</div>
   </footer>
 </body>
 </html>
@@ -299,10 +299,10 @@ _JOIN_HTML = """
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Patch Machine | 참여 방법</title>
+  <title>Negotium | 참여 방법</title>
   <meta
     name="description"
-    content="Patch Machine 외부 참여자가 좋은 제보와 검증 피드백을 남기는 절차입니다."
+    content="Negotium 외부 참여자가 좋은 제보와 검증 피드백을 남기는 절차입니다."
   >
   <link rel="stylesheet" href="/site.css">
 </head>
@@ -411,10 +411,10 @@ def _render_operations(memory: OperationsMemory, *, saved: bool = False) -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Patch Machine | 운영 메모리</title>
+  <title>Negotium | 운영 메모리</title>
   <meta
     name="description"
-    content="Patch Machine 에이전트가 참고할 운영 회사, 프로젝트, 계획 메모리를 설정합니다."
+    content="Negotium 에이전트가 참고할 운영 회사, 프로젝트, 계획 메모리를 설정합니다."
   >
   <link rel="stylesheet" href="/site.css">
 </head>
@@ -422,7 +422,7 @@ def _render_operations(memory: OperationsMemory, *, saved: bool = False) -> str:
   <main class="shell">
     <section class="hero">
       <div class="eyebrow">Operations Memory</div>
-      <h1>패치머신이 지금 운영할 회사를 기억하게 합니다.</h1>
+      <h1>네고티움이 지금 운영할 회사를 기억하게 합니다.</h1>
       <p class="lede">
         이 값은 처음에는 비어 있으며, 저장 후 PM / Developer / Reviewer 에이전트 프롬프트에
         함께 전달됩니다.

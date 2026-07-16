@@ -146,7 +146,7 @@ export default function HiringPage() {
         <p className="eyebrow">Hiring BPA</p>
         <h2>채용/면접 키트 생성</h2>
         <p className="muted">
-          패치머신 영구메모리와 현재 업무 계획을 바탕으로 직무 요구사항, 면접 질문, 온보딩 계획을 생성합니다.
+          네고티움 영구메모리와 현재 업무 계획을 바탕으로 직무 요구사항, 면접 질문, 온보딩 계획을 생성합니다.
         </p>
         <form className="memory-form" onSubmit={handleSubmit}>
           <details className="advanced-panel">

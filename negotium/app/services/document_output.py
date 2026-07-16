@@ -20,10 +20,10 @@ FORMAT_EXTENSIONS = {
     "json": "json",
     "text": "txt",
 }
-# "patchmachine" is accepted for backward compatibility with prompts/skills
+# "negotium" is accepted for backward compatibility with prompts/skills
 # authored before the Negotium rename.
 _FORMAT_DIRECTIVE_RE = re.compile(
-    r"^\s*<!--\s*(?:negotium|patchmachine):format\s*=\s*([a-zA-Z]+)\s*-->\s*", re.IGNORECASE
+    r"^\s*<!--\s*(?:negotium|negotium):format\s*=\s*([a-zA-Z]+)\s*-->\s*", re.IGNORECASE
 )
 
 
