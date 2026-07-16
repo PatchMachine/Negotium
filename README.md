@@ -4,8 +4,12 @@
 LLM 에이전트 기반 **AI 오피스워크 / BPA(Business Process Automation) 시스템**입니다.
 
 회사의 업무, 문서, 인수인계, 채용, 진행상황을 AI가 정리하고 굴러가게 돕습니다.
-민감한 사내 내용은 로컬 LLM으로, 일반 생성 업무는 GPT/Claude/Gemini/Together API로 라우팅할 수 있습니다.
+민감한 사내 내용은 로컬 LLM으로, 일반 생성 업무는 클라우드 API로 라우팅할 수 있습니다.
+기본 클라우드 provider는 **Upstage Solar** (`solar-open2`)이며 GPT/Claude/Gemini/Together도 지원합니다.
 모든 추론 과정과 결정 근거는 Markdown 파일로 저장되어(**MD GitOps**) 누구나 메모장으로 읽고 수정할 수 있습니다.
+
+> 이 프로젝트는 **Patch Machine**에서 **Negotium(네고티움)** 으로 리브랜딩되었습니다.
+> 기존 설치에서 마이그레이션하려면 아래 [Patch Machine에서 마이그레이션](#patch-machine에서-마이그레이션) 절을 참고하세요.
 
 ## 핵심 가치
 
@@ -63,6 +67,32 @@ React 프론트엔드는 `http://localhost:5173`에서 열립니다. 개발 서�
 `http://localhost:8080`의 FastAPI 백엔드로 프록시합니다.
 프론트엔드에는 운영 메모리, LLM 채팅, 업무 현황, 채용/면접, 문서 자동화, 인수인계,
 GitHub/Discord 현황 탭이 포함됩니다.
+
+## Upstage Solar (기본 클라우드 provider)
+
+Negotium의 기본 클라우드 LLM은 Upstage **Solar Open 2** (`solar-open2`)입니다.
+[Upstage Console](https://console.upstage.ai)에서 API 키를 발급받아 설정하면 바로 사용할 수 있습니다.
+
+```bash
+NG_LLM_DEFAULT_ROUTE=cloud
+NG_LLM_PROVIDER=solar
+NG_SOLAR_API_KEY=up_xxx           # console.upstage.ai에서 발급
+NG_SOLAR_MODEL=solar-open2
+NG_SOLAR_BASE_URL=https://api.upstage.ai/v1
+```
+
+Solar는 OpenAI-compatible API로 호출되므로 별도 SDK 없이 동작하며, 키가 없어도
+UI의 provider 목록에는 fallback 모델 목록(`solar-open2` 등)이 표시됩니다.
+관리자 화면(API 키 설정)이나 초기 셋업 마법사에서 키를 저장한 뒤 "모델 목록 확인"으로
+사용 가능한 모델을 라이브로 조회할 수 있습니다.
+
+빠른 동작 확인:
+
+```bash
+curl -s https://api.upstage.ai/v1/chat/completions \
+  -H "Authorization: Bearer $NG_SOLAR_API_KEY" -H "Content-Type: application/json" \
+  -d '{"model":"solar-open2","messages":[{"role":"user","content":"ping"}]}'
+```
 
 ## LLM 채팅
 
@@ -225,6 +255,17 @@ guilds:
         channel_id: "987654321"
         repo: "acme/payments"
 ```
+
+## Patch Machine에서 마이그레이션
+
+Negotium 리브랜딩은 breaking change입니다. 기존 Patch Machine 설치를 이어 쓰려면:
+
+1. **환경 변수**: `.env`의 모든 `PM_` 접두사를 `NG_`로 바꿉니다 (`sed -i 's/^PM_/NG_/' .env`).
+   `PM_LLM_PROVIDER`처럼 문서에만 있고 실제로 읽히지 않던 이름도 이제 `NG_LLM_PROVIDER`로 정상 동작합니다.
+2. **CLI**: `patch-machine serve` → `negotium serve`. 재설치: `uv pip install -e ".[dev]"`.
+3. **인증 헤더**: API를 직접 호출하는 스크립트는 `X-PM-User` → `X-NG-User`.
+4. **작업 디렉터리**: `mv .pm_workspaces .ng_workspaces` (또는 새로 클론 후 초기 세팅).
+5. **archive/**: 그대로 사용 가능합니다. 단, 이제 git이 추적하지 않으므로 별도 백업을 권장합니다.
 
 ## 개발
 

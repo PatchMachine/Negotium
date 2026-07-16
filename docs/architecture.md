@@ -23,6 +23,7 @@ flowchart TB
   OperationsAPI --> LlmGateway["LLM Gateway"]
 
   LlmGateway --> LocalVllm["Embedded vLLM: Qwen3-4B"]
+  LlmGateway --> Solar["Upstage Solar (default)"]
   LlmGateway --> OpenAI["OpenAI GPT"]
   LlmGateway --> Claude["Anthropic Claude"]
   LlmGateway --> Gemini["Google Gemini"]
@@ -223,7 +224,7 @@ flowchart TB
     DockerFrontend["frontend container"]
     DockerBackend["negotium container"]
     DockerFrontend --> DockerBackend
-    DockerBackend --> CloudProviders["GPT, Claude, Gemini, or external vLLM HTTP"]
+    DockerBackend --> CloudProviders["Solar, GPT, Claude, Gemini, or external vLLM HTTP"]
   end
 ```
 
