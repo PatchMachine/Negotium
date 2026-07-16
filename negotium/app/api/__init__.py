@@ -257,18 +257,18 @@ def create_operations_api_router(container: Container) -> APIRouter:
 
     @router.post("/auth/logout")
     async def logout(
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, bool]:
-        token = _extract_token(x_pm_user)
+        token = _extract_token(x_ng_user)
         if token:
             container.auth_store.revoke_token(token)
         return {"ok": True}
 
     @router.get("/auth/me")
     async def me(
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> CurrentUserPayload:
-        user_id = _resolve_authenticated_user(container, x_pm_user)
+        user_id = _resolve_authenticated_user(container, x_ng_user)
         if user_id is None:
             return CurrentUserPayload(authenticated=False)
         return CurrentUserPayload(authenticated=True, user=_user_payload(container, user_id))
@@ -297,9 +297,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/setup/office/analyze")
     async def analyze_initial_office_setup(
         payload: InitialOfficeAnalyzeRequest,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> InitialOfficeSetupResult:
-        actor = _require(container, x_pm_user, "admin:users")
+        actor = _require(container, x_ng_user, "admin:users")
         uploads = _selected_upload_records(container.uploads.list(), payload.upload_ids)
         parsed_files = parse_setup_uploads(uploads, archive_root=container.settings.archive_dir)
         prompt = _initial_office_setup_prompt(
@@ -337,9 +337,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/setup/office/apply")
     async def apply_initial_office_setup(
         payload: InitialOfficeSetupResult,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "admin:users")
+        actor = _require(container, x_ng_user, "admin:users")
         operations_memory, work_memory = _initial_setup_memories_with_recommendations(payload)
         if operations_memory:
             container.operations_memory.write(
@@ -382,35 +382,35 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.get("/memory/permanent/sources")
     async def list_permanent_sources(
         limit: int = 50,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         return {"sources": container.permanent_memory.recent(limit=max(1, min(limit, 200)))}
 
     @router.get("/memory/permanent/recent")
     async def recent_permanent_memory(
         limit: int = 50,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         return {"sources": container.permanent_memory.recent(limit=max(1, min(limit, 200)))}
 
     @router.get("/memory/permanent/search")
     async def search_permanent_memory(
         q: str = "",
         limit: int = 50,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         return {"sources": container.permanent_memory.search(q, limit=max(1, min(limit, 200)))}
 
     @router.get("/memory/readable-sources")
     async def list_readable_sources(
         q: str = "",
         limit: int = 100,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         source_limit = max(1, min(limit, 300))
         sources = (
             container.permanent_memory.search(q, limit=source_limit)
@@ -427,9 +427,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.get("/memory/readable-source")
     async def read_readable_source(
         source_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> ReadableContextSourcePayload:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         try:
             source = container.permanent_memory.read_source(source_id)
         except FileNotFoundError as exc:
@@ -486,33 +486,33 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.delete("/memory/sources")
     async def delete_memory_source_query(
         source_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "admin:users")
+        actor = _require(container, x_ng_user, "admin:users")
         return _delete_memory_source_by_id(source_id, actor)
 
     @router.delete("/memory/sources/{source_id:path}")
     async def delete_memory_source_path(
         source_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "admin:users")
+        actor = _require(container, x_ng_user, "admin:users")
         return _delete_memory_source_by_id(source_id, actor)
 
     @router.post("/memory/readable-context/preview")
     async def preview_readable_context(
         payload: ReadableContextPreviewRequest,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> ReadableContextBundlePayload:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         return _readable_context_bundle(container, payload)
 
     @router.post("/memory/permanent/promote")
     async def promote_permanent_memory(
         payload: PromoteMemoryPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         promoted = container.permanent_memory.promote(
             title=payload.title,
             content=payload.content,
@@ -532,9 +532,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     async def list_conversations(
         user_id: str | None = None,
         limit: int = 100,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "work:read")
+        actor = _require(container, x_ng_user, "work:read")
         requested_user = (
             user_id if container.access_control.has_permission(actor, "admin:users") else actor
         )
@@ -547,18 +547,18 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.get("/memory/volatile")
     async def list_volatile_memory(
         scope: MemoryScope | None = None,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         return {"memories": container.volatile_memory.list(scope=scope)}
 
     @router.get("/memory/volatile/{scope}/{key}")
     async def read_volatile_memory(
         scope: MemoryScope,
         key: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> VolatileMemoryPayload:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         return VolatileMemoryPayload.from_memory(
             container.volatile_memory.read(scope=scope, key=key)
         )
@@ -568,9 +568,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
         scope: MemoryScope,
         key: str,
         payload: VolatileMemoryPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> VolatileMemoryPayload:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         memory = payload.to_memory()
         saved = container.volatile_memory.write(
             VolatileMemory.from_mapping({**memory.to_dict(), "scope": scope, "key": key})
@@ -588,9 +588,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     async def delete_volatile_memory(
         scope: MemoryScope,
         key: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         ok = container.volatile_memory.delete(scope=scope, key=key)
         _audit(
             container,
@@ -604,9 +604,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/memory/volatile/refresh")
     async def refresh_volatile_memory(
         payload: MemoryRefreshRequest,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> VolatileMemoryPayload:
-        actor = _require(container, x_pm_user, "llm:chat")
+        actor = _require(container, x_ng_user, "llm:chat")
         key = payload.key.strip() or actor
         lim = max(1, min(payload.source_limit, 50))
         sources = container.permanent_memory.resolve_sources(
@@ -639,9 +639,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/memory/context/compress")
     async def compress_context_memory(
         payload: ContextCompressRequest,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "llm:chat")
+        actor = _require(container, x_ng_user, "llm:chat")
         key = payload.key.strip() or actor
         lim = max(1, min(payload.source_limit, 50))
         sources = container.permanent_memory.resolve_sources(
@@ -693,17 +693,17 @@ def create_operations_api_router(container: Container) -> APIRouter:
     async def read_compressed_context(
         scope: MemoryScope = "global",
         key: str = "default",
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         return {"context": container.compressed_context.read(scope=scope, key=key).to_dict()}
 
     @router.get("/ai-jobs/recent")
     async def list_ai_jobs(
         limit: int = 30,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         return {
             "jobs": [
                 _ai_job_payload(record).model_dump()
@@ -714,9 +714,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.get("/ai-jobs/{job_id}")
     async def read_ai_job(
         job_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> AiJobStatusPayload:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         record = container.ai_jobs.get(job_id)
         if record is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="AI job not found")
@@ -724,9 +724,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
 
     @router.get("/memory/schema")
     async def list_memory_schema(
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         return {
             "schemas": container.memory_schema.list(),
             "proposals": container.memory_schema.proposals(),
@@ -735,9 +735,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/memory/schema")
     async def upsert_memory_schema(
         payload: MemorySchemaPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "admin:users")
+        actor = _require(container, x_ng_user, "admin:users")
         schema = container.memory_schema.upsert(payload.to_record(actor=actor), actor=actor)
         _audit(
             container,
@@ -751,9 +751,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/memory/schema/propose")
     async def propose_memory_schema(
         payload: MemorySchemaProposalPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         proposal = container.memory_schema.propose(
             actor=actor, mode=payload.mode, proposal=payload.proposal
         )
@@ -769,9 +769,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/memory/schema/proposals/{proposal_id}/approve")
     async def approve_memory_schema(
         proposal_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "admin:users")
+        actor = _require(container, x_ng_user, "admin:users")
         proposal = container.memory_schema.approve(proposal_id, actor=actor)
         _audit(
             container,
@@ -785,9 +785,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/memory/schema/code-proposals")
     async def create_memory_schema_code_proposal(
         payload: MemorySchemaProposalPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "admin:users")
+        actor = _require(container, x_ng_user, "admin:users")
         proposal = container.memory_schema.propose(
             actor=actor, mode="llm_code_write", proposal=payload.proposal
         )
@@ -802,17 +802,17 @@ def create_operations_api_router(container: Container) -> APIRouter:
 
     @router.get("/memory/deletion-requests")
     async def list_deletion_requests(
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "admin:users")
+        _require(container, x_ng_user, "admin:users")
         return {"requests": container.deletion_requests.list()}
 
     @router.post("/memory/deletion-requests")
     async def create_deletion_request(
         payload: DeletionRequestPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         request = container.deletion_requests.create(
             DeletionRequest.create(**payload.model_dump(), requester=actor)
         )
@@ -828,9 +828,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/memory/deletion-requests/{request_id}/approve")
     async def approve_deletion_request(
         request_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "admin:users")
+        actor = _require(container, x_ng_user, "admin:users")
         pending = container.deletion_requests.get(request_id)
         if pending is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="deletion request not found")
@@ -861,9 +861,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/memory/deletion-requests/{request_id}/reject")
     async def reject_deletion_request(
         request_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "admin:users")
+        actor = _require(container, x_ng_user, "admin:users")
         request = container.deletion_requests.decide(request_id, actor=actor, approved=False)
         _audit(
             container,
@@ -877,9 +877,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/agent/plans/generate")
     async def generate_agent_plan(
         payload: AgentPlanRequest,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         memory_refs = payload.memory_refs or [
             str(source["path"]) for source in container.permanent_memory.recent(limit=5)
         ]
@@ -929,17 +929,17 @@ def create_operations_api_router(container: Container) -> APIRouter:
 
     @router.get("/agent/plans")
     async def list_agent_plans(
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         return {"plans": container.agent_execution.list_plans()}
 
     @router.post("/agent/plans/{plan_id}/approve")
     async def approve_agent_plan(
         plan_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "admin:users")
+        actor = _require(container, x_ng_user, "admin:users")
         plan = container.agent_execution.approve_plan(plan_id, actor=actor)
         _audit(
             container,
@@ -953,9 +953,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/agent/plans/{plan_id}/run")
     async def run_agent_plan(
         plan_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         plan = container.agent_execution.read_plan(plan_id)
         if plan.status != "approved" and plan.mode != "plan_only":
             raise HTTPException(
@@ -976,9 +976,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/agent/runs/{run_id}/approve-step")
     async def approve_agent_run_step(
         run_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "admin:users")
+        actor = _require(container, x_ng_user, "admin:users")
         _audit(
             container,
             actor=actor,
@@ -991,9 +991,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/patch-runs")
     async def create_patch_run(
         payload: PatchRunCreatePayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         run = container.patch_runs.create(
             PatchRun.create(
                 repo_id=payload.repo_id,
@@ -1022,17 +1022,17 @@ def create_operations_api_router(container: Container) -> APIRouter:
 
     @router.get("/patch-runs")
     async def list_patch_runs(
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         return {"patch_runs": container.patch_runs.list()}
 
     @router.get("/patch-runs/{patch_id}")
     async def read_patch_run(
         patch_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         try:
             run = container.patch_runs.read(patch_id)
         except ValueError as exc:
@@ -1042,17 +1042,17 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.get("/patch-runs/{patch_id}/events")
     async def list_patch_run_events(
         patch_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         return {"events": container.patch_runs.list_events(patch_id)}
 
     @router.get("/patch-runs/{patch_id}/files")
     async def list_patch_run_files(
         patch_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         try:
             container.patch_runs.read(patch_id)
         except ValueError as exc:
@@ -1063,9 +1063,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     async def read_patch_run_file(
         patch_id: str,
         artifact_path: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         try:
             container.patch_runs.read(patch_id)
             artifact = container.patch_runs.read_artifact(
@@ -1081,9 +1081,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     async def save_patch_plan_markdown(
         patch_id: str,
         payload: PatchPlanMarkdownPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         try:
             run = container.patch_runs.read(patch_id)
         except ValueError as exc:
@@ -1122,9 +1122,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     async def revise_patch_plan_markdown(
         patch_id: str,
         payload: PatchPlanRevisePayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         try:
             run = container.patch_runs.read(patch_id)
         except ValueError as exc:
@@ -1188,9 +1188,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     async def promote_patch_plan_memory(
         patch_id: str,
         payload: PatchPlanPromotePayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         try:
             run = container.patch_runs.read(patch_id)
         except ValueError as exc:
@@ -1232,9 +1232,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/patch-runs/{patch_id}/analyze")
     async def analyze_patch_run_endpoint(
         patch_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         try:
             run = container.patch_runs.read(patch_id)
         except ValueError as exc:
@@ -1263,9 +1263,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     async def approve_patch_plan(
         patch_id: str,
         payload: PatchRunApprovalPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "admin:users")
+        actor = _require(container, x_ng_user, "admin:users")
         status_value = "WAITING_APPROVAL" if payload.decision == "approve" else "CANCELLED"
         try:
             run = container.patch_runs.update(
@@ -1293,9 +1293,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/patch-runs/{patch_id}/draft-diff")
     async def draft_patch_diff(
         patch_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         try:
             run = container.patch_runs.read(patch_id)
         except ValueError as exc:
@@ -1321,9 +1321,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/patch-runs/{patch_id}/write-memory")
     async def write_patch_run_memory(
         patch_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         try:
             run = container.patch_runs.read(patch_id)
         except ValueError as exc:
@@ -1348,9 +1348,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
 
     @router.get("/mcp-hub/tools")
     async def list_mcp_hub_tools(
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         tools = list_tool_descriptors()
         return {
             "tools": tools,
@@ -1362,10 +1362,10 @@ def create_operations_api_router(container: Container) -> APIRouter:
     async def call_mcp_hub_tool(
         tool_name: str,
         payload: McpToolCallPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
         permission = required_permission(tool_name)
-        actor = _require(container, x_pm_user, permission)
+        actor = _require(container, x_ng_user, permission)
         try:
             call_result = call_tool(container, tool_name, payload.arguments)
         except ValueError as exc:
@@ -1398,18 +1398,18 @@ def create_operations_api_router(container: Container) -> APIRouter:
 
     @router.get("/mcp-hub/resources")
     async def list_mcp_hub_resources(
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         resources = list_resources(container)
         return {"resources": resources, "count": len(resources)}
 
     @router.get("/mcp-hub/resources/{resource_uri:path}")
     async def read_mcp_hub_resource(
         resource_uri: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         try:
             return read_resource(container, resource_uri)
         except ValueError as exc:
@@ -1417,27 +1417,27 @@ def create_operations_api_router(container: Container) -> APIRouter:
 
     @router.get("/mcp-hub/prompts")
     async def list_mcp_hub_prompts(
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         prompts = list_prompts()
         return {"prompts": prompts, "count": len(prompts)}
 
     @router.get("/mcp-hub/audit")
     async def list_mcp_hub_audit(
         limit: int = 100,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "admin:users")
+        _require(container, x_ng_user, "admin:users")
         records = container.mcp_audit.list(limit=limit)
         return {"records": records, "count": len(records)}
 
     @router.post("/security/context-firewall/sanitize")
     async def sanitize_context_firewall(
         payload: dict[str, Any],
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "admin:users")
+        actor = _require(container, x_ng_user, "admin:users")
         destination = str(payload.get("destination") or "frontier_llm")
         task_type = str(payload.get("task_type") or "manual_security_test")
         source_uri = str(payload.get("source_uri") or "")
@@ -1462,25 +1462,25 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.get("/security/context-firewall/audit")
     async def list_context_firewall_audit(
         limit: int = 100,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "admin:users")
+        _require(container, x_ng_user, "admin:users")
         records = container.context_firewall.list(limit=limit)
         return {"records": records, "count": len(records)}
 
     @router.get("/security/context-firewall/policy")
     async def read_context_firewall_policy(
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "admin:users")
+        _require(container, x_ng_user, "admin:users")
         return {"policy": default_policy_payload(container.settings.workspace_dir)}
 
     @router.put("/security/context-firewall/policy")
     async def save_context_firewall_policy(
         payload: dict[str, Any],
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "admin:users")
+        actor = _require(container, x_ng_user, "admin:users")
         policy_path = container.settings.workspace_dir / ".patchnote-security.yml"
         body = {"context_firewall": payload.get("context_firewall") or payload}
         with portalocker.Lock(policy_path, "w", encoding="utf-8", timeout=5) as fh:
@@ -1498,9 +1498,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     async def render_mcp_hub_prompt(
         prompt_name: str,
         payload: McpToolCallPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         try:
             prompt = render_mcp_prompt(prompt_name, payload.arguments, container)
         except ValueError as exc:
@@ -1510,14 +1510,14 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/mcp")
     async def call_mcp_json_rpc(
         payload: dict[str, Any],
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
         method = str(payload.get("method") or "")
         raw_params = payload.get("params")
         params: dict[str, Any] = raw_params if isinstance(raw_params, dict) else {}
         if method == "tools/call":
             tool_name = str(params.get("name") or "")
-            actor = _require(container, x_pm_user, required_permission(tool_name))
+            actor = _require(container, x_ng_user, required_permission(tool_name))
             raw_arguments = params.get("arguments")
             arguments: dict[str, Any] = raw_arguments if isinstance(raw_arguments, dict) else {}
             try:
@@ -1546,14 +1546,14 @@ def create_operations_api_router(container: Container) -> APIRouter:
                     "isError": False,
                 },
             }
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         return handle_json_rpc(container, payload)
 
     @router.get("/mcp/sse")
     async def mcp_sse(
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> StreamingResponse:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
 
         async def events() -> AsyncIterator[str]:
             yield 'event: metadata\ndata: {"name":"patchnote-mcp-hub","transport":"sse-skeleton"}\n\n'
@@ -1615,9 +1615,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/llm/local/huggingface/search")
     async def search_local_huggingface_models(
         payload: HuggingFaceModelSearchPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> HuggingFaceModelSearchResultPayload:
-        _require(container, x_pm_user, "admin:api_keys")
+        _require(container, x_ng_user, "admin:api_keys")
         try:
             results = await search_huggingface_models(
                 payload.query,
@@ -1641,9 +1641,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.put("/operations-memory")
     async def write_operations_memory(
         payload: OperationsMemoryPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> OperationsMemoryPayload:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         memory = payload.to_memory()
         container.operations_memory.write(memory)
         _audit(
@@ -1653,17 +1653,17 @@ def create_operations_api_router(container: Container) -> APIRouter:
 
     @router.get("/work-memory")
     async def read_work_memory(
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> WorkMemoryPayload:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         return WorkMemoryPayload.from_memory(container.work_memory.read())
 
     @router.put("/work-memory")
     async def write_work_memory(
         payload: WorkMemoryPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> WorkMemoryPayload:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         memory = container.work_memory.write(payload.to_memory())
         _audit(container, actor=actor, action="work_memory.update", target="work_memory")
         return WorkMemoryPayload.from_memory(memory)
@@ -1686,9 +1686,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.put("/llm/runtime")
     async def write_llm_runtime(
         payload: LlmRuntimePayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> LlmRuntimePayload:
-        actor = _require(container, x_pm_user, "admin:local_llm")
+        actor = _require(container, x_ng_user, "admin:local_llm")
         config = payload.to_config()
         container.llm_runtime.write(config)
         _sync_local_llm_state(container, enabled=config.local_enabled)
@@ -1707,9 +1707,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
 
     @router.post("/llm/local/start")
     async def start_local_llm(
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> LocalLlmStatusPayload:
-        actor = _require(container, x_pm_user, "admin:local_llm")
+        actor = _require(container, x_ng_user, "admin:local_llm")
         if container.embedded_vllm() is None:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
@@ -1737,9 +1737,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
 
     @router.post("/llm/local/stop")
     async def stop_local_llm(
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> LocalLlmStatusPayload:
-        actor = _require(container, x_pm_user, "admin:local_llm")
+        actor = _require(container, x_ng_user, "admin:local_llm")
         runtime = container.llm_runtime.read()
         container.llm_runtime.write(
             LlmRuntimeConfig(
@@ -1758,17 +1758,17 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/llm/chat")
     async def chat(
         payload: ChatRequest,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> ChatResponse:
-        actor = _require(container, x_pm_user, "llm:chat")
+        actor = _require(container, x_ng_user, "llm:chat")
         return await _chat_complete(container, payload, actor)
 
     @router.post("/llm/chat/stream")
     async def chat_stream(
         payload: ChatRequest,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> StreamingResponse:
-        actor = _require(container, x_pm_user, "llm:chat")
+        actor = _require(container, x_ng_user, "llm:chat")
 
         async def events() -> AsyncIterator[str]:
             try:
@@ -1810,9 +1810,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
 
     @router.get("/work-items")
     async def read_work_items(
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> WorkItemsPayload:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         schedule = container.work_schedule.list()
         queue_items = _schedule_to_work_items(
             schedule, plan_status_by_step=_plan_status_by_step(container)
@@ -1828,9 +1828,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/work-schedule/items/{item_id}/run")
     async def run_work_schedule_item(
         item_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         item = container.work_schedule.get(item_id)
         if item is None:
             raise HTTPException(
@@ -1931,9 +1931,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     async def sign_off_work_item(
         item_id: str,
         payload: WorkItemSignOffPayload | None = None,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "work:read")
+        actor = _require(container, x_ng_user, "work:read")
         item = container.work_schedule.get(item_id)
         if item is None:
             raise HTTPException(
@@ -2006,9 +2006,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
 
     @router.get("/process-plans")
     async def list_process_plans(
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> ProcessPlanListPayload:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         items = [
             _process_plan_payload(container, ProcessPlan.from_mapping(raw))
             for raw in container.process_plans.list()
@@ -2018,9 +2018,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.get("/process-plans/{plan_id}")
     async def read_process_plan(
         plan_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> ProcessPlanPayload:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         plan = container.process_plans.get(plan_id)
         if plan is None:
             raise HTTPException(
@@ -2031,9 +2031,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/process-plans/{plan_id}/approve")
     async def approve_process_plan(
         plan_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> ProcessPlanPayload:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         plan = _require_plan(container, plan_id)
         if plan.status not in {"draft", "paused"}:
             raise HTTPException(
@@ -2054,9 +2054,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     async def set_process_plan_mode(
         plan_id: str,
         payload: ProcessPlanModeRequest,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> ProcessPlanPayload:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         plan = _require_plan(container, plan_id)
         if payload.mode not in {"manual", "auto"}:
             raise HTTPException(
@@ -2077,9 +2077,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/process-plans/{plan_id}/pause")
     async def pause_process_plan(
         plan_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> ProcessPlanPayload:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         plan = _require_plan(container, plan_id)
         updated = container.process_plans.upsert(plan.with_status("paused"))
         _audit(
@@ -2094,9 +2094,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/process-plans/{plan_id}/resume")
     async def resume_process_plan(
         plan_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> ProcessPlanPayload:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         plan = _require_plan(container, plan_id)
         if plan.status != "paused":
             raise HTTPException(
@@ -2117,9 +2117,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     async def add_process_step(
         plan_id: str,
         payload: ProcessStepCreatePayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> ProcessPlanPayload:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         plan = _require_editable_plan(container, plan_id)
         item = container.work_schedule.upsert(
             WorkScheduleItem.create(
@@ -2147,9 +2147,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
         plan_id: str,
         step_id: str,
         payload: ProcessStepEditPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> ProcessPlanPayload:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         plan = _require_editable_plan(container, plan_id)
         if step_id not in plan.step_ids:
             raise HTTPException(
@@ -2191,9 +2191,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     async def delete_process_step(
         plan_id: str,
         step_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> ProcessPlanPayload:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         plan = _require_editable_plan(container, plan_id)
         container.work_schedule.delete(step_id)
         remaining = [sid for sid in plan.step_ids if sid != step_id]
@@ -2212,9 +2212,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     async def reorder_process_steps(
         plan_id: str,
         payload: ProcessStepReorderRequest,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> ProcessPlanPayload:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         plan = _require_editable_plan(container, plan_id)
         existing = set(plan.step_ids)
         ordered = [sid for sid in payload.ordered_ids if sid in existing]
@@ -2233,9 +2233,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/work-architecture/generate")
     async def generate_work_architecture(
         payload: WorkArchitectureRequest,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> WorkArchitecturePayload:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         context = _office_context(container) if payload.use_memory else ""
         prompt = render_prompt(
             "office/work_architecture.md.j2",
@@ -2336,23 +2336,23 @@ def create_operations_api_router(container: Container) -> APIRouter:
 
     @router.get("/work-schedule")
     async def list_work_schedule(
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         return {"items": container.work_schedule.list()}
 
     @router.get("/work-schedule/assignment-scope")
     async def work_schedule_assignment_scope(
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "work:read")
+        actor = _require(container, x_ng_user, "work:read")
         return _assignment_scope(container, actor)
 
     @router.get("/org/roster")
     async def read_org_roster(
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         acl = container.access_control.read()
         return {
             "users": [user for user in acl["users"] if user.get("active", True)],
@@ -2363,9 +2363,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/work-schedule/items")
     async def create_work_schedule_item(
         payload: WorkScheduleItemPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         _ensure_owner_in_scope(container, actor, payload.owner_id)
         item = container.work_schedule.upsert(payload.to_record())
         _audit(
@@ -2381,9 +2381,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     async def update_work_schedule_item(
         item_id: str,
         payload: WorkScheduleItemPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         _ensure_owner_in_scope(container, actor, payload.owner_id)
         item = container.work_schedule.upsert(payload.to_record(item_id=item_id))
         _audit(
@@ -2398,9 +2398,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.delete("/work-schedule/items/{item_id}")
     async def delete_work_schedule_item(
         item_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         ok = container.work_schedule.delete(item_id)
         _audit(
             container,
@@ -2414,9 +2414,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/work-schedule/generate")
     async def generate_work_schedule(
         payload: WorkScheduleGenerationRequest,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> GeneratedDocumentPayload:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         prompt = render_prompt(
             "office/work_schedule.md.j2",
             context=_office_context(container),
@@ -2476,17 +2476,17 @@ def create_operations_api_router(container: Container) -> APIRouter:
 
     @router.get("/integrations/config")
     async def read_integration_config(
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> IntegrationConfigPayload:
-        _require(container, x_pm_user, "admin:integrations")
+        _require(container, x_ng_user, "admin:integrations")
         return _integration_config_payload(container)
 
     @router.put("/integrations/github")
     async def upsert_github_connector(
         payload: GitHubConnectorPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> IntegrationConfigPayload:
-        actor = _require(container, x_pm_user, "admin:integrations")
+        actor = _require(container, x_ng_user, "admin:integrations")
         _save_github_secrets(container, payload)
         config = container.integration_config.update_github(
             GitHubConnectorConfig(
@@ -2511,9 +2511,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.put("/integrations/discord")
     async def upsert_discord_connector(
         payload: DiscordConnectorPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> IntegrationConfigPayload:
-        actor = _require(container, x_pm_user, "admin:integrations")
+        actor = _require(container, x_ng_user, "admin:integrations")
         _save_discord_secrets(container, payload)
         bindings: list[DiscordChannelBindingConfig] = []
         for binding in payload.channel_bindings:
@@ -2550,9 +2550,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.get("/archive/documents")
     async def read_archive_document(
         path: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> DocumentReadPayload:
-        _require(container, x_pm_user, "documents:read")
+        _require(container, x_ng_user, "documents:read")
         try:
             return _read_archive_document(container, path)
         except FileNotFoundError as exc:
@@ -2564,24 +2564,24 @@ def create_operations_api_router(container: Container) -> APIRouter:
     async def list_archive_document_index(
         q: str = "",
         limit: int = 200,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "documents:read")
+        _require(container, x_ng_user, "documents:read")
         return {"documents": _archive_document_index(container, q=q, limit=max(1, min(limit, 500)))}
 
     @router.get("/llm/token-limits")
     async def read_token_limits(
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> TokenLimitStatusPayload:
-        _require(container, x_pm_user, "admin:token_limits")
+        _require(container, x_ng_user, "admin:token_limits")
         return _token_limit_status(container)
 
     @router.put("/llm/token-limits")
     async def update_token_limits(
         payload: TokenLimitPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> TokenLimitStatusPayload:
-        actor = _require(container, x_pm_user, "admin:token_limits")
+        actor = _require(container, x_ng_user, "admin:token_limits")
         container.token_usage.write_limits(
             TokenLimitConfig(
                 enforcement_enabled=payload.enforcement_enabled,
@@ -2601,9 +2601,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
 
     @router.get("/patch-records")
     async def list_patch_records(
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, list[PatchRecordPayload]]:
-        _require(container, x_pm_user, "patch_records:read")
+        _require(container, x_ng_user, "patch_records:read")
         return {
             "items": [_patch_record_payload(record) for record in container.patch_records.list()],
         }
@@ -2611,9 +2611,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.get("/patch-records/{record_id}")
     async def read_patch_record(
         record_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> PatchRecordDetailPayload:
-        _require(container, x_pm_user, "patch_records:read")
+        _require(container, x_ng_user, "patch_records:read")
         record = container.patch_records.get(record_id)
         if record is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="패치 기록을 찾을 수 없습니다.")
@@ -2623,9 +2623,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/patch-records")
     async def create_patch_record(
         payload: PatchRecordCreatePayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> PatchRecordDetailPayload:
-        actor = _require(container, x_pm_user, "patch_records:write")
+        actor = _require(container, x_ng_user, "patch_records:write")
         if not payload.title.strip():
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
@@ -2656,9 +2656,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/hr/role-requirements")
     async def create_role_requirements(
         payload: HiringRequest,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> GeneratedDocumentPayload:
-        actor = _require(container, x_pm_user, "documents:write")
+        actor = _require(container, x_ng_user, "documents:write")
         result = await _generate_hiring_document(
             container,
             payload,
@@ -2678,9 +2678,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/hr/interview-kit")
     async def create_interview_kit(
         payload: HiringRequest,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> GeneratedDocumentPayload:
-        actor = _require(container, x_pm_user, "documents:write")
+        actor = _require(container, x_ng_user, "documents:write")
         result = await _generate_hiring_document(
             container,
             payload,
@@ -2700,9 +2700,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/hr/onboarding-plan")
     async def create_onboarding_plan(
         payload: HiringRequest,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> GeneratedDocumentPayload:
-        actor = _require(container, x_pm_user, "documents:write")
+        actor = _require(container, x_ng_user, "documents:write")
         result = await _generate_hiring_document(
             container,
             payload,
@@ -2722,17 +2722,17 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.get("/hr/evaluation/context")
     async def hr_evaluation_context(
         user_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "admin:hr_evaluation")
+        _require(container, x_ng_user, "admin:hr_evaluation")
         return _hr_evaluation_context(container, user_id=user_id)
 
     @router.post("/hr/evaluation/draft")
     async def hr_evaluation_draft(
         payload: HrEvaluationDraftRequest,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "admin:hr_evaluation")
+        actor = _require(container, x_ng_user, "admin:hr_evaluation")
         context = _hr_evaluation_context(
             container, user_id=payload.user_id, work_item_ids=payload.work_item_ids
         )
@@ -2756,9 +2756,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/hr/evaluation/save")
     async def hr_evaluation_save(
         payload: HrEvaluationSaveRequest,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "admin:hr_evaluation")
+        actor = _require(container, x_ng_user, "admin:hr_evaluation")
         from negotium.archive.hr_evaluations import HrEvaluationRecord
 
         context = _hr_evaluation_context(
@@ -2799,17 +2799,17 @@ def create_operations_api_router(container: Container) -> APIRouter:
     async def hr_evaluation_records(
         user_id: str = "",
         limit: int = 100,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "admin:hr_evaluation")
+        _require(container, x_ng_user, "admin:hr_evaluation")
         return {"records": container.hr_evaluations.list_recent(user_id=user_id, limit=limit)}
 
     @router.post("/handover/brief")
     async def create_handover_brief(
         payload: HandoverRequest,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> GeneratedDocumentPayload:
-        actor = _require(container, x_pm_user, "documents:write")
+        actor = _require(container, x_ng_user, "documents:write")
         context = _office_context(container)
         activity_log = _collect_owner_activity(container, payload.outgoing_owner)
         prompt = render_prompt(
@@ -2865,9 +2865,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/documents/generate")
     async def create_office_document(
         payload: OfficeDocumentRequest,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> GeneratedDocumentPayload:
-        actor = _require(container, x_pm_user, "documents:write")
+        actor = _require(container, x_ng_user, "documents:write")
         labels = {
             "meeting_minutes": "회의록",
             "report_draft": "보고서 초안",
@@ -2948,17 +2948,17 @@ def create_operations_api_router(container: Container) -> APIRouter:
 
     @router.get("/skills")
     async def list_skills(
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "work:read")
+        _require(container, x_ng_user, "work:read")
         return {"skills": [skill.to_descriptor() for skill in get_skills().values()]}
 
     @router.post("/skills")
     async def create_skill(
         payload: SkillCreateRequest,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "admin:users")
+        actor = _require(container, x_ng_user, "admin:users")
         skill = Skill(
             id=payload.id.strip(),
             name=payload.name.strip(),
@@ -3013,12 +3013,12 @@ def create_operations_api_router(container: Container) -> APIRouter:
     async def run_skill_endpoint(
         skill_id: str,
         payload: SkillRunRequest,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
         skill = get_skill(skill_id)
         if skill is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="해당 스킬을 찾을 수 없습니다.")
-        actor = _require(container, x_pm_user, skill.required_permission or "work:read")
+        actor = _require(container, x_ng_user, skill.required_permission or "work:read")
 
         async def _completion(prompt: str, image_parts: list[dict[str, Any]] | None) -> str:
             return await _complete_office_task(
@@ -3043,9 +3043,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
 
     @router.get("/admin/api-keys")
     async def list_api_keys(
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "admin:api_keys")
+        _require(container, x_ng_user, "admin:api_keys")
         try:
             providers = _masked_provider_payload(container)
         except ValueError as exc:
@@ -3056,9 +3056,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     async def save_api_key(
         provider: str,
         payload: ApiKeyPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "admin:api_keys")
+        actor = _require(container, x_ng_user, "admin:api_keys")
         try:
             require_provider(provider)
             container.secret_store.upsert(
@@ -3087,9 +3087,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.delete("/admin/api-keys/{provider}")
     async def delete_api_key(
         provider: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "admin:api_keys")
+        actor = _require(container, x_ng_user, "admin:api_keys")
         container.secret_store.delete(provider)
         _audit(
             container, actor=actor, action="api_key.delete", target="api_key", target_id=provider
@@ -3098,17 +3098,17 @@ def create_operations_api_router(container: Container) -> APIRouter:
 
     @router.get("/admin/access-control")
     async def read_access_control(
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, Any]:
-        _require(container, x_pm_user, "admin:users")
+        _require(container, x_ng_user, "admin:users")
         return _access_control_payload(container)
 
     @router.post("/admin/roles")
     async def upsert_role(
         payload: RolePayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, Any]:
-        actor = _require(container, x_pm_user, "admin:users")
+        actor = _require(container, x_ng_user, "admin:users")
         role = payload.to_record()
         _ensure_acl_keeps_admin_access(
             container.access_control.read(),
@@ -3127,9 +3127,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.delete("/admin/roles/{role_id}")
     async def delete_role(
         role_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, Any]:
-        actor = _require(container, x_pm_user, "admin:users")
+        actor = _require(container, x_ng_user, "admin:users")
         _ensure_acl_keeps_admin_access(
             container.access_control.read(),
             delete_role_id=role_id,
@@ -3144,9 +3144,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/admin/users")
     async def upsert_user(
         payload: UserPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, Any]:
-        actor = _require(container, x_pm_user, "admin:users")
+        actor = _require(container, x_ng_user, "admin:users")
         acl = container.access_control.read()
         user = payload.to_record()
         _ensure_acl_keeps_admin_access(
@@ -3166,9 +3166,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/admin/users/create-login")
     async def create_login_user(
         payload: AdminCreateUserPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, Any]:
-        actor = _require(container, x_pm_user, "admin:users")
+        actor = _require(container, x_ng_user, "admin:users")
         acl = container.access_control.read()
         user = payload.to_record()
         _ensure_acl_keeps_admin_access(
@@ -3210,9 +3210,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.delete("/admin/users/{user_id}")
     async def delete_user(
         user_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, Any]:
-        actor = _require(container, x_pm_user, "admin:users")
+        actor = _require(container, x_ng_user, "admin:users")
         _ensure_acl_keeps_admin_access(
             container.access_control.read(),
             delete_user_id=user_id,
@@ -3225,9 +3225,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/admin/departments")
     async def upsert_department(
         payload: DepartmentPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, Any]:
-        actor = _require(container, x_pm_user, "admin:users")
+        actor = _require(container, x_ng_user, "admin:users")
         try:
             container.access_control.upsert_department(payload.to_record())
         except ValueError as exc:
@@ -3244,9 +3244,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.delete("/admin/departments/{department_id}")
     async def delete_department(
         department_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, Any]:
-        actor = _require(container, x_pm_user, "admin:users")
+        actor = _require(container, x_ng_user, "admin:users")
         container.access_control.delete_department(department_id)
         _audit(
             container,
@@ -3260,9 +3260,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/admin/positions")
     async def upsert_position(
         payload: PositionPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, Any]:
-        actor = _require(container, x_pm_user, "admin:users")
+        actor = _require(container, x_ng_user, "admin:users")
         try:
             container.access_control.upsert_position(payload.to_record())
         except ValueError as exc:
@@ -3279,9 +3279,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.delete("/admin/positions/{position_id}")
     async def delete_position(
         position_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, Any]:
-        actor = _require(container, x_pm_user, "admin:users")
+        actor = _require(container, x_ng_user, "admin:users")
         container.access_control.delete_position(position_id)
         _audit(
             container,
@@ -3295,9 +3295,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/admin/department-permissions")
     async def upsert_department_permission(
         payload: DepartmentPermissionPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, Any]:
-        actor = _require(container, x_pm_user, "admin:users")
+        actor = _require(container, x_ng_user, "admin:users")
         try:
             container.access_control.upsert_department_permission(payload.to_record())
         except ValueError as exc:
@@ -3314,9 +3314,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.get("/admin/account-requests")
     async def list_account_requests(
         status_filter: RequestStatus | None = None,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "admin:users")
+        _require(container, x_ng_user, "admin:users")
         return {
             "requests": [
                 request.to_dict()
@@ -3327,17 +3327,17 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.get("/admin/audit-log")
     async def list_audit_log(
         limit: int = 100,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        _require(container, x_pm_user, "admin:users")
+        _require(container, x_ng_user, "admin:users")
         return {"records": container.audit_log.list_recent(limit=max(1, min(limit, 500)))}
 
     @router.post("/admin/account-requests/{request_id}/approve")
     async def approve_account_request(
         request_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        admin_user = _require(container, x_pm_user, "admin:users")
+        admin_user = _require(container, x_ng_user, "admin:users")
         try:
             request = container.auth_store.decide_request(
                 request_id,
@@ -3373,9 +3373,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.post("/admin/account-requests/{request_id}/reject")
     async def reject_account_request(
         request_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        admin_user = _require(container, x_pm_user, "admin:users")
+        admin_user = _require(container, x_ng_user, "admin:users")
         try:
             request = container.auth_store.decide_request(
                 request_id,
@@ -3404,9 +3404,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
         description: Annotated[str, Form()] = "",
         tags: Annotated[str, Form()] = "",
         work_title: Annotated[str, Form()] = "",
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "uploads:write")
+        actor = _require(container, x_ng_user, "uploads:write")
         record = container.uploads.save(
             filename=file.filename or "upload.bin",
             source=file.file,
@@ -3427,9 +3427,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
     @router.delete("/uploads/{upload_id}")
     async def delete_upload(
         upload_id: str,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "uploads:write")
+        actor = _require(container, x_ng_user, "uploads:write")
         ok = container.uploads.delete(upload_id)
         _audit(container, actor=actor, action="upload.delete", target="upload", target_id=upload_id)
         return {"ok": ok}

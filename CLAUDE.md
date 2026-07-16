@@ -51,7 +51,7 @@ Hexagonal (ports-and-adapters). Dependency direction: `domain` ← `application`
 - **`negotium/llm_gateway/`** — optional standalone FastAPI process for external LLM calls only; the main backend delegates to it when `NG_LLM_GATEWAY_URL` is set.
 - **`negotium/skills/<id>/SKILL.md`** — skill definitions (YAML front-matter + body), loaded by `app/services/skill_registry.py`. Single source of truth shared by the HTTP API, MCP hub, CLI, and work-schedule automation.
 - **`negotium/context/`** — repo snapshot, tree-sitter AST indexer, BM25 Markdown retriever used to build agent context.
-- **`frontend/`** — React 19 + TypeScript + Vite console; one page component per feature under `src/components/`, API client in `src/api.ts`. Auth is header-based: requests carry `X-PM-User`, and permissions come from the user's assigned position (position-centric access control, not per-user roles).
+- **`frontend/`** — React 19 + TypeScript + Vite console; one page component per feature under `src/components/`, API client in `src/api.ts`. Auth is header-based: requests carry `X-NG-User`, and permissions come from the user's assigned position (position-centric access control, not per-user roles).
 
 ## Conventions
 

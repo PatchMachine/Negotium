@@ -61,7 +61,7 @@ sequenceDiagram
   participant VLLM as Embedded vLLM
 
   User->>UI: Ask a question in LLM Chat
-  UI->>API: POST /api/llm/chat with X-PM-User
+  UI->>API: POST /api/llm/chat with X-NG-User
   API->>Auth: Check llm:chat permission
   Auth-->>API: Allowed
   API->>Runtime: Read route and provider
@@ -190,7 +190,7 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-  Request["Frontend request"] --> Header["X-PM-User"]
+  Request["Frontend request"] --> Header["X-NG-User"]
   Header --> ACL["AccessControlStore"]
   ACL --> User["UserRecord"]
   User --> Role["RoleRecord"]

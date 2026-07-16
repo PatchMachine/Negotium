@@ -769,7 +769,7 @@ def test_secure_admin_and_upload_endpoints(tmp_path: Path) -> None:
     with TestClient(app) as client:
         denied = client.put(
             "/api/admin/api-keys/openai",
-            headers={"X-PM-User": "missing"},
+            headers={"X-NG-User": "missing"},
             json={"provider": "openai", "api_key": "sk-test-1234567890"},
         )
         saved_key = client.put(
@@ -844,7 +844,7 @@ def test_secure_admin_and_upload_endpoints(tmp_path: Path) -> None:
         )
         lead_token = container.auth_store.authenticate("lead_user", "password-5678")
         assert lead_token is not None
-        synced_headers = {"X-PM-User": f"Bearer {lead_token}"}
+        synced_headers = {"X-NG-User": f"Bearer {lead_token}"}
         scope = client.get("/api/work-schedule/assignment-scope", headers=synced_headers)
         acl = client.get("/api/admin/access-control", headers=headers)
         deleted_position = client.delete("/api/admin/positions/lead", headers=headers)
@@ -1042,4 +1042,4 @@ def _auth_headers(
     )
     token = container.auth_store.authenticate(user_id, password)
     assert token is not None
-    return {"X-PM-User": f"Bearer {token}"}
+    return {"X-NG-User": f"Bearer {token}"}

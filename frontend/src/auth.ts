@@ -19,6 +19,6 @@ export function getAuthHeaders(): Record<string, string> {
   }
   return {
     Authorization: `Bearer ${token}`,
-    'X-PM-User': `Bearer ${token}`,
+    'X-NG-User': `Bearer ${token}`,
   };
 }

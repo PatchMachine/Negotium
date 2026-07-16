@@ -26,9 +26,9 @@ def create_patchops_execution_router(container: Container) -> APIRouter:
     async def apply_patch_run_diff_endpoint(
         patch_id: str,
         payload: McpToolCallPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         try:
             run = container.patch_runs.read(patch_id)
         except ValueError as exc:
@@ -74,9 +74,9 @@ def create_patchops_execution_router(container: Container) -> APIRouter:
     async def run_patch_run_tests(
         patch_id: str,
         payload: McpToolCallPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         try:
             run = container.patch_runs.read(patch_id)
         except ValueError as exc:
@@ -126,9 +126,9 @@ def create_patchops_execution_router(container: Container) -> APIRouter:
     async def analyze_patch_run_test_failure(
         patch_id: str,
         payload: McpToolCallPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         try:
             run = container.patch_runs.read(patch_id)
         except ValueError as exc:
@@ -170,9 +170,9 @@ def create_patchops_execution_router(container: Container) -> APIRouter:
     async def draft_patch_run_pr(
         patch_id: str,
         payload: McpToolCallPayload,
-        x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
-        actor = _require(container, x_pm_user, "memory:write")
+        actor = _require(container, x_ng_user, "memory:write")
         try:
             run = container.patch_runs.read(patch_id)
         except ValueError as exc:
