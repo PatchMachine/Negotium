@@ -22,6 +22,7 @@ import {
 } from '../../api';
 import { setSessionToken } from '../../auth';
 import AiJobStatusBar from '../common/AiJobStatusBar';
+import { SETUP_DRAFT_KEY } from './setupDraft';
 
 type Props = {
   onAuthenticated: (user: AuthUser) => void;
@@ -31,8 +32,6 @@ type Props = {
 type Step = 'admin' | 'llm' | 'profile' | 'files' | 'analyze' | 'review';
 type LlmChoice = 'local' | 'api';
 type ReviewSection = 'memory' | 'agents' | 'templates' | 'workflows' | 'security' | 'integrations' | 'routes';
-
-const SETUP_DRAFT_KEY = 'negotium-initial-setup-draft';
 
 const recommendedLocalModels = [
   {
@@ -165,11 +164,6 @@ function loadSetupDraft(): SetupDraft | null {
   } catch {
     return null;
   }
-}
-
-export function hasIncompleteInitialSetupDraft(): boolean {
-  const draft = loadSetupDraft();
-  return Boolean(draft && draft.step !== 'admin');
 }
 
 function saveSetupDraft(draft: SetupDraft) {

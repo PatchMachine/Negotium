@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Suspense, lazy, useEffect, useState, type ComponentType } from 'react';
 
 import {
   fetchApiStatus,
@@ -9,33 +9,37 @@ import {
   type AuthUser,
   type OperationsMemory,
 } from './api';
-import AccessControlPage from './components/AccessControlPage';
-import AdminSettingsPage from './components/AdminSettingsPage';
 import AppShell from './components/AppShell';
-import AuthPage from './components/AuthPage';
-import ContributorGuide from './components/ContributorGuide';
-import DocumentAutomationPage from './components/DocumentAutomationPage';
-import DocumentsViewerPage from './components/DocumentsViewerPage';
-import HandoverPage from './components/HandoverPage';
-import HiringPage from './components/HiringPage';
-import HomePage from './components/HomePage';
-import IntegrationsPage from './components/IntegrationsPage';
-import LlmChatPage from './components/LlmChatPage';
-import OperationsMemoryForm from './components/OperationsMemoryForm';
-import PersonnelManagementPage from './components/PersonnelManagementPage';
-import ProgressLogPage from './components/ProgressLogPage';
-import SystemStatus from './components/SystemStatus';
-import TokenLimitsPage from './components/TokenLimitsPage';
-import UploadPage from './components/UploadPage';
-import UserProfilePage from './components/UserProfilePage';
-import WorkArchitecturePage from './components/WorkArchitecturePage';
-import WorkItemsPage from './components/WorkItemsPage';
-import WorkMemoryPage from './components/WorkMemoryPage';
-import WorkSchedulePage from './components/WorkSchedulePage';
-import SkillsPage from './components/SkillsPage';
-import WorkflowStatusPage from './components/WorkflowStatusPage';
-import AiAgentPage from './components/ai/AiAgentPage';
-import InitialOfficeSetupWizard, { hasIncompleteInitialSetupDraft } from './components/setup/InitialOfficeSetupWizard';
+import { hasIncompleteInitialSetupDraft } from './components/setup/setupDraft';
+
+// Every page is code-split: only the shell ships in the initial bundle and the
+// active page's chunk loads on demand.
+const AccessControlPage = lazy(() => import('./components/AccessControlPage'));
+const AdminSettingsPage = lazy(() => import('./components/AdminSettingsPage'));
+const AuthPage = lazy(() => import('./components/AuthPage'));
+const ContributorGuide = lazy(() => import('./components/ContributorGuide'));
+const DocumentAutomationPage = lazy(() => import('./components/DocumentAutomationPage'));
+const DocumentsViewerPage = lazy(() => import('./components/DocumentsViewerPage'));
+const HandoverPage = lazy(() => import('./components/HandoverPage'));
+const HiringPage = lazy(() => import('./components/HiringPage'));
+const HomePage = lazy(() => import('./components/HomePage'));
+const IntegrationsPage = lazy(() => import('./components/IntegrationsPage'));
+const LlmChatPage = lazy(() => import('./components/LlmChatPage'));
+const OperationsMemoryForm = lazy(() => import('./components/OperationsMemoryForm'));
+const PersonnelManagementPage = lazy(() => import('./components/PersonnelManagementPage'));
+const ProgressLogPage = lazy(() => import('./components/ProgressLogPage'));
+const SystemStatus = lazy(() => import('./components/SystemStatus'));
+const TokenLimitsPage = lazy(() => import('./components/TokenLimitsPage'));
+const UploadPage = lazy(() => import('./components/UploadPage'));
+const UserProfilePage = lazy(() => import('./components/UserProfilePage'));
+const WorkArchitecturePage = lazy(() => import('./components/WorkArchitecturePage'));
+const WorkItemsPage = lazy(() => import('./components/WorkItemsPage'));
+const WorkMemoryPage = lazy(() => import('./components/WorkMemoryPage'));
+const WorkSchedulePage = lazy(() => import('./components/WorkSchedulePage'));
+const SkillsPage = lazy(() => import('./components/SkillsPage'));
+const WorkflowStatusPage = lazy(() => import('./components/WorkflowStatusPage'));
+const AiAgentPage = lazy(() => import('./components/ai/AiAgentPage'));
+const InitialOfficeSetupWizard = lazy(() => import('./components/setup/InitialOfficeSetupWizard'));
 
 const emptyMemory: OperationsMemory = {
   company_name: '',
@@ -99,11 +103,36 @@ const navItems: NavItem[] = [
   { id: 'token-limits', label: '토큰 사용량·한도', group: '시스템 관리', requiredPermission: 'admin:token_limits' },
 ];
 
+// Pages that take no props render straight from this map; pages needing props
+// (home/profile/dashboard/integrations) are handled explicitly in renderPage.
+const simplePages: Partial<Record<Page, ComponentType>> = {
+  assistant: LlmChatPage,
+  chat: AiAgentPage,
+  progress: ProgressLogPage,
+  work: WorkItemsPage,
+  'work-memory': WorkMemoryPage,
+  'work-architecture': WorkArchitecturePage,
+  'work-schedule': WorkSchedulePage,
+  hiring: HiringPage,
+  documents: DocumentAutomationPage,
+  'documents-viewer': DocumentsViewerPage,
+  handover: HandoverPage,
+  uploads: UploadPage,
+  admin: AdminSettingsPage,
+  access: AccessControlPage,
+  'workflow-status': WorkflowStatusPage,
+  skills: SkillsPage,
+  'token-limits': TokenLimitsPage,
+  personnel: PersonnelManagementPage,
+};
+
 function canAccess(user: AuthUser, item: NavItem): boolean {
   if (!item.requiredPermission) return true;
   const permissions = user.permissions || [];
   return permissions.includes('*') || permissions.includes(item.requiredPermission);
 }
+
+const pageFallback = <section className="panel">로딩 중...</section>;
 
 export default function App() {
   const [memory, setMemory] = useState<OperationsMemory>(emptyMemory);
@@ -160,15 +189,17 @@ export default function App() {
     return (
       <>
         {error ? <div className="alert">API 연결 실패: {error}</div> : null}
-        <InitialOfficeSetupWizard
-          initialUser={currentUser}
-          onAuthenticated={(user) => {
-            setCurrentUser(user);
-            setSetupRequired(false);
-            setResumeInitialSetup(false);
-            void refresh();
-          }}
-        />
+        <Suspense fallback={pageFallback}>
+          <InitialOfficeSetupWizard
+            initialUser={currentUser}
+            onAuthenticated={(user) => {
+              setCurrentUser(user);
+              setSetupRequired(false);
+              setResumeInitialSetup(false);
+              void refresh();
+            }}
+          />
+        </Suspense>
       </>
     );
   }
@@ -177,30 +208,34 @@ export default function App() {
     return (
       <>
         {error ? <div className="alert">API 연결 실패: {error}</div> : null}
-        <AuthPage
-          setupRequired={setupRequired}
-          onAuthenticated={(user) => {
-            setCurrentUser(user);
-            setSetupRequired(false);
-            setResumeInitialSetup(hasIncompleteInitialSetupDraft());
-            void refresh();
-          }}
-        />
+        <Suspense fallback={pageFallback}>
+          <AuthPage
+            setupRequired={setupRequired}
+            onAuthenticated={(user) => {
+              setCurrentUser(user);
+              setSetupRequired(false);
+              setResumeInitialSetup(hasIncompleteInitialSetupDraft());
+              void refresh();
+            }}
+          />
+        </Suspense>
       </>
     );
   }
 
   const visibleNavItems = navItems.filter((item) => canAccess(currentUser, item));
   const activePageAllowed = visibleNavItems.some((item) => item.id === page);
+  const activePage: Page = activePageAllowed ? page : 'profile';
 
-  return (
-    <AppShell page={activePageAllowed ? page : 'profile'} navItems={visibleNavItems} onNavigate={setPage} user={currentUser} onLoggedOut={() => setCurrentUser(null)}>
-      {error ? <div className="alert">API 연결 실패: {error}</div> : null}
-
-      {page === 'home' ? <HomePage memory={memory} status={status} onAction={(next) => setPage(next as Page)} /> : null}
-      {page === 'profile' || !activePageAllowed ? <UserProfilePage user={currentUser} /> : null}
-
-      {page === 'dashboard' ? (
+  function renderPage() {
+    if (activePage === 'home') {
+      return <HomePage memory={memory} status={status} onAction={(next) => setPage(next as Page)} />;
+    }
+    if (activePage === 'profile') {
+      return <UserProfilePage user={currentUser!} />;
+    }
+    if (activePage === 'dashboard') {
+      return (
         <>
           <section className="dashboard-grid">
             <OperationsMemoryForm
@@ -215,26 +250,19 @@ export default function App() {
           </section>
           <ContributorGuide />
         </>
-      ) : null}
-      {page === 'assistant' ? <LlmChatPage /> : null}
-      {page === 'chat' ? <AiAgentPage /> : null}
-      {page === 'progress' ? <ProgressLogPage /> : null}
-      {page === 'work' ? <WorkItemsPage /> : null}
-      {page === 'work-memory' ? <WorkMemoryPage /> : null}
-      {page === 'work-architecture' ? <WorkArchitecturePage /> : null}
-      {page === 'work-schedule' ? <WorkSchedulePage /> : null}
-      {page === 'hiring' ? <HiringPage /> : null}
-      {page === 'documents' ? <DocumentAutomationPage /> : null}
-      {page === 'documents-viewer' ? <DocumentsViewerPage /> : null}
-      {page === 'handover' ? <HandoverPage /> : null}
-      {page === 'integrations' ? <IntegrationsPage permissions={currentUser.permissions || []} /> : null}
-      {page === 'uploads' ? <UploadPage /> : null}
-      {page === 'admin' ? <AdminSettingsPage /> : null}
-      {page === 'access' ? <AccessControlPage /> : null}
-      {page === 'workflow-status' ? <WorkflowStatusPage /> : null}
-      {page === 'skills' ? <SkillsPage /> : null}
-      {page === 'token-limits' ? <TokenLimitsPage /> : null}
-      {page === 'personnel' ? <PersonnelManagementPage /> : null}
+      );
+    }
+    if (activePage === 'integrations') {
+      return <IntegrationsPage permissions={currentUser!.permissions || []} />;
+    }
+    const PageComponent = simplePages[activePage];
+    return PageComponent ? <PageComponent /> : <UserProfilePage user={currentUser!} />;
+  }
+
+  return (
+    <AppShell page={activePage} navItems={visibleNavItems} onNavigate={setPage} user={currentUser} onLoggedOut={() => setCurrentUser(null)}>
+      {error ? <div className="alert">API 연결 실패: {error}</div> : null}
+      <Suspense fallback={pageFallback}>{renderPage()}</Suspense>
     </AppShell>
   );
 }
