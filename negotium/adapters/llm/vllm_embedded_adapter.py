@@ -81,7 +81,7 @@ def _friendly_engine_error(exc: BaseException) -> str:
     if "Cannot re-initialize CUDA in forked subprocess" in raw:
         return (
             "vLLM EngineCore가 fork 방식으로 CUDA를 다시 초기화하려다 실패했습니다. "
-            "PM_VLLM_WORKER_MULTIPROC_METHOD=spawn 으로 실행해야 합니다. "
+            "NG_VLLM_WORKER_MULTIPROC_METHOD=spawn 으로 실행해야 합니다. "
             "프로세스를 완전히 종료한 뒤 다시 시작하세요."
         )
     return raw

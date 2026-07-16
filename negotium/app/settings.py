@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,7 +15,7 @@ class GitHubSettings(BaseSettings):
     allowed_repos: list[str] = Field(default_factory=list)
     trigger_label: str = "negotium"
 
-    model_config = SettingsConfigDict(env_prefix="PM_GITHUB_")
+    model_config = SettingsConfigDict(env_prefix="NG_GITHUB_")
 
 
 class DiscordSettings(BaseSettings):
@@ -23,14 +23,19 @@ class DiscordSettings(BaseSettings):
     guild_allowlist: list[str] = Field(default_factory=list)
     channel_map_path: Path = Path("./config/channel_map.yml")
 
-    model_config = SettingsConfigDict(env_prefix="PM_DISCORD_")
+    model_config = SettingsConfigDict(env_prefix="NG_DISCORD_")
 
 
 class LlmSettings(BaseSettings):
-    default_route: Literal["cloud", "local"] = "cloud"
+    # The documented env names are NG_LLM_DEFAULT_ROUTE / NG_LLM_PROVIDER /
+    # NG_LLM_GATEWAY_URL / NG_LOCAL_LLM_BASE_URL; the aliases also accept the
+    # bare prefix-derived form (NG_DEFAULT_ROUTE, ...) for continuity.
+    default_route: Literal["cloud", "local"] = Field(
+        "cloud", validation_alias=AliasChoices("NG_LLM_DEFAULT_ROUTE", "NG_DEFAULT_ROUTE")
+    )
     provider: Literal[
         "solar", "openai", "vllm", "ollama", "anthropic", "gemini", "together", "fake"
-    ] = "solar"
+    ] = Field("solar", validation_alias=AliasChoices("NG_LLM_PROVIDER", "NG_PROVIDER"))
     solar_api_key: str = ""
     solar_model: str = "solar-open2"
     solar_base_url: str = "https://api.upstage.ai/v1"
@@ -54,16 +59,21 @@ class LlmSettings(BaseSettings):
     vllm_trust_remote_code: bool = True
     vllm_preload_on_startup: bool = True
     vllm_worker_multiproc_method: Literal["spawn", "fork"] = "spawn"
-    local_base_url: str = "http://localhost:8000/v1"
-    gateway_url: str = ""
+    local_base_url: str = Field(
+        "http://localhost:8000/v1",
+        validation_alias=AliasChoices("NG_LOCAL_LLM_BASE_URL", "NG_LOCAL_BASE_URL"),
+    )
+    gateway_url: str = Field(
+        "", validation_alias=AliasChoices("NG_LLM_GATEWAY_URL", "NG_GATEWAY_URL")
+    )
 
-    model_config = SettingsConfigDict(env_prefix="PM_")
+    model_config = SettingsConfigDict(env_prefix="NG_", populate_by_name=True)
 
 
 class Settings(BaseSettings):
     """Top-level settings container.
 
-    Nested sub-settings each read their own ``PM_*`` prefix directly; we only
+    Nested sub-settings each read their own ``NG_*`` prefix directly; we only
     need to compose them once at startup and pass the whole object into the DI
     container.
     """
@@ -85,7 +95,7 @@ class Settings(BaseSettings):
     llm: LlmSettings = Field(default_factory=LlmSettings)
 
     model_config = SettingsConfigDict(
-        env_prefix="PM_",
+        env_prefix="NG_",
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",

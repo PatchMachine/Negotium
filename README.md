@@ -40,7 +40,7 @@ negotium serve
 
 백엔드 API와 기존 서버 렌더링 페이지는 FastAPI 서버에서 제공됩니다.
 개발 모드에서는 API 키 암호화용 개발 키가 자동 적용됩니다. 운영 배포에서는 반드시 `.env`에
-충분히 긴 `PM_SECRET_KEY`를 직접 설정하세요.
+충분히 긴 `NG_SECRET_KEY`를 직접 설정하세요.
 
 - 외부 참여 안내: `http://localhost:8080/`
 - 참여 방법: `http://localhost:8080/join`
@@ -70,22 +70,22 @@ GitHub/Discord 현황 탭이 포함됩니다.
 vLLM은 별도 프로세스/컨테이너 없이 FastAPI 백엔드 안에 임베드되어 GPU에서 직접 로드됩니다.
 
 ```bash
-PM_LLM_DEFAULT_ROUTE=local
-PM_LLM_PROVIDER=vllm
-PM_VLLM_MODE=embedded             # FastAPI 내부에서 vllm.LLM로 직접 로드
-PM_VLLM_MODEL=Qwen/Qwen3-4B
-PM_VLLM_DTYPE=bfloat16
-PM_VLLM_MAX_MODEL_LEN=8192
-PM_VLLM_GPU_MEMORY_UTILIZATION=0.9
+NG_LLM_DEFAULT_ROUTE=local
+NG_LLM_PROVIDER=vllm
+NG_VLLM_MODE=embedded             # FastAPI 내부에서 vllm.LLM로 직접 로드
+NG_VLLM_MODEL=Qwen/Qwen3-4B
+NG_VLLM_DTYPE=bfloat16
+NG_VLLM_MAX_MODEL_LEN=8192
+NG_VLLM_GPU_MEMORY_UTILIZATION=0.9
 ```
 
-외부에 OpenAI 호환 vLLM 서버를 별도로 띄우고 싶다면 `PM_VLLM_MODE=http`로 두고
-`PM_VLLM_BASE_URL`을 가리키면 됩니다.
+외부에 OpenAI 호환 vLLM 서버를 별도로 띄우고 싶다면 `NG_VLLM_MODE=http`로 두고
+`NG_VLLM_BASE_URL`을 가리키면 됩니다.
 
-GPT, Claude, Gemini, Together API는 각각 `PM_OPENAI_API_KEY`, `PM_ANTHROPIC_API_KEY`,
-`PM_GEMINI_API_KEY`, `PM_TOGETHER_API_KEY`를 설정하면 프론트엔드의 LLM 채팅 탭에서 provider를 바꿔 호출할 수 있습니다.
-Together는 OpenAI-compatible 엔드포인트를 사용하며 기본값은 `PM_TOGETHER_BASE_URL=https://api.together.ai/v1`,
-기본 모델은 `PM_TOGETHER_MODEL=openai/gpt-oss-20b`입니다.
+GPT, Claude, Gemini, Together API는 각각 `NG_OPENAI_API_KEY`, `NG_ANTHROPIC_API_KEY`,
+`NG_GEMINI_API_KEY`, `NG_TOGETHER_API_KEY`를 설정하면 프론트엔드의 LLM 채팅 탭에서 provider를 바꿔 호출할 수 있습니다.
+Together는 OpenAI-compatible 엔드포인트를 사용하며 기본값은 `NG_TOGETHER_BASE_URL=https://api.together.ai/v1`,
+기본 모델은 `NG_TOGETHER_MODEL=openai/gpt-oss-20b`입니다.
 API 설정 화면은 OpenAI, Anthropic, Gemini, Together의 모델 목록 API를 호출해 최신 모델을 불러옵니다.
 아직 키를 저장하지 않은 상태에서도 입력 중인 키로 “모델 목록 확인”을 눌러 live 목록을 확인할 수 있습니다.
 채팅은 `archive/operations_memory.json`, `archive/work_memory.json`, `archive/current_status.md`,
@@ -95,7 +95,7 @@ API 설정 화면은 OpenAI, Anthropic, Gemini, Together의 모델 목록 API를
 
 ```bash
 negotium llm-gateway --port 8090
-PM_LLM_GATEWAY_URL=http://localhost:8090 negotium serve
+NG_LLM_GATEWAY_URL=http://localhost:8090 negotium serve
 ```
 
 게이트웨이는 GPT/Claude/Gemini/Together/vLLM HTTP 호출, 공급자별 모델 목록 조회, API 키 저장소 조회만 담당합니다.
@@ -110,7 +110,7 @@ uv venv --python 3.11 .venv && source .venv/bin/activate
 uv pip install -e ".[dev,local-ai]"
 # flash-attn은 CUDA 빌드가 까다로워 build isolation 없이 별도 설치합니다.
 uv pip install --no-build-isolation "flash-attn>=2.6"
-cp .env.example .env              # PM_VLLM_MODE=embedded 등 확인
+cp .env.example .env              # NG_VLLM_MODE=embedded 등 확인
 negotium serve
 ```
 
@@ -203,13 +203,13 @@ docker compose -f docker/docker-compose.yml up --build
 ```
 
 Docker 이미지에는 vLLM/CUDA 스택이 포함되지 않습니다. 컨테이너에서 백엔드를 띄우면
-`PM_VLLM_MODE=http`로 강제되고, 로컬 LLM은 사용하지 않은 채 GPT/Claude/Gemini/Together API
+`NG_VLLM_MODE=http`로 강제되고, 로컬 LLM은 사용하지 않은 채 GPT/Claude/Gemini/Together API
 라우트만 동작합니다. 사내 비공개 모델을 vLLM으로 직접 돌려야 한다면 위의
 "로컬 GPU 머신에서 vLLM 임베드 실행" 절을 따라 호스트에서 실행하세요.
 
 컨테이너가 올라오면 `http://localhost:5173`에서 React 프론트엔드를 확인할 수 있습니다.
 FastAPI 백엔드는 `http://localhost:8080`에서 계속 제공됩니다.
-LLM 게이트웨이는 `http://localhost:8090`에서 별도로 뜨며, 메인 백엔드는 `PM_LLM_GATEWAY_URL`로
+LLM 게이트웨이는 `http://localhost:8090`에서 별도로 뜨며, 메인 백엔드는 `NG_LLM_GATEWAY_URL`로
 게이트웨이에 LLM 호출을 위임합니다.
 `archive/`, `config/`, 작업 디렉터리는 compose 설정에 따라 호스트와 연결됩니다.
 

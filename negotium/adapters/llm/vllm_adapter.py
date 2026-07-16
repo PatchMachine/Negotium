@@ -78,7 +78,7 @@ class VllmProvider(LlmProvider):
                     raise VllmConnectionError(
                         f"vLLM HTTP 서버({self._base_url})에 연결할 수 없습니다. "
                         "로컬 GPU 임베드 모드는 Docker 백엔드가 아니라 호스트에서 "
-                        "`PM_VLLM_MODE=embedded uv run negotium serve`로 실행해야 합니다."
+                        "`NG_VLLM_MODE=embedded uv run negotium serve`로 실행해야 합니다."
                     ) from exc
                 self._log.info(
                     "llm.vllm.waiting_for_server",

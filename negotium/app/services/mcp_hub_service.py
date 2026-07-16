@@ -1073,7 +1073,7 @@ def _github_tool(container: Any, tool_name: str, arguments: dict[str, Any]) -> d
     configured = bool(container.settings.github.app_token)
     base = {"configured": configured, "provider": "github", "tool": tool_name}
     if not configured:
-        return {**base, "ok": False, "reason": "PM_GITHUB_APP_TOKEN is not configured", "items": []}
+        return {**base, "ok": False, "reason": "NG_GITHUB_APP_TOKEN is not configured", "items": []}
     if tool_name == "github.list_issues":
         return {
             **base,
@@ -1127,7 +1127,7 @@ def _discord_tool(container: Any, tool_name: str, arguments: dict[str, Any]) -> 
         return {
             **base,
             "ok": False,
-            "reason": "PM_DISCORD_BOT_TOKEN is not configured",
+            "reason": "NG_DISCORD_BOT_TOKEN is not configured",
             "items": [],
         }
     if tool_name == "discord.get_thread":

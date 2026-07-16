@@ -82,7 +82,7 @@ class LlmGateway(LlmProvider):
         if self.local is None:
             raise RuntimeError(
                 "local LLM route requested but no local provider is configured. "
-                "Configure PM_LLM_PROVIDER=ollama|vllm in Phase 4.",
+                "Configure NG_LLM_PROVIDER=ollama|vllm in Phase 4.",
             )
         return self.local
 

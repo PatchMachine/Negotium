@@ -91,7 +91,7 @@ stateDiagram-v2
 
 ```mermaid
 flowchart TB
-  Start["Backend startup"] --> ModeCheck{"PM_VLLM_MODE"}
+  Start["Backend startup"] --> ModeCheck{"NG_VLLM_MODE"}
 
   ModeCheck -->|"embedded"| HostMode["Host Python process"]
   HostMode --> Spawn["VLLM_WORKER_MULTIPROC_METHOD=spawn"]
@@ -99,7 +99,7 @@ flowchart TB
   LoadModel --> Ready["Local LLM running"]
 
   ModeCheck -->|"http"| HttpMode["External vLLM HTTP server"]
-  HttpMode --> BaseURL["PM_VLLM_BASE_URL"]
+  HttpMode --> BaseURL["NG_VLLM_BASE_URL"]
   BaseURL --> HttpReady["OpenAI-compatible API"]
 
   Ready --> Chat["LLM Chat"]
@@ -109,11 +109,11 @@ flowchart TB
 Recommended local GPU mode:
 
 ```bash
-PM_LLM_PROVIDER=vllm \
-PM_LLM_DEFAULT_ROUTE=local \
-PM_VLLM_MODE=embedded \
-PM_VLLM_PRELOAD_ON_STARTUP=true \
-PM_VLLM_WORKER_MULTIPROC_METHOD=spawn \
+NG_LLM_PROVIDER=vllm \
+NG_LLM_DEFAULT_ROUTE=local \
+NG_VLLM_MODE=embedded \
+NG_VLLM_PRELOAD_ON_STARTUP=true \
+NG_VLLM_WORKER_MULTIPROC_METHOD=spawn \
 uv run negotium serve
 ```
 

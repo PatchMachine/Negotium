@@ -112,7 +112,7 @@ class SecretStore:
 
     def _write_payload(self, payload: dict[str, Any]) -> None:
         if not self._master_key:
-            raise ValueError("PM_SECRET_KEY is required to store API keys")
+            raise ValueError("NG_SECRET_KEY is required to store API keys")
         self._path.parent.mkdir(parents=True, exist_ok=True)
         salt = secrets.token_bytes(16)
         nonce = secrets.token_bytes(16)
@@ -132,7 +132,7 @@ class SecretStore:
 
     def _derive_key(self, salt: bytes) -> bytes:
         if not self._master_key:
-            raise ValueError("PM_SECRET_KEY is required to read API keys")
+            raise ValueError("NG_SECRET_KEY is required to read API keys")
         return hashlib.pbkdf2_hmac("sha256", self._master_key.encode("utf-8"), salt, 200_000)
 
 

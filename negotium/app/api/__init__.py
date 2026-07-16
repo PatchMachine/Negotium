@@ -1715,7 +1715,7 @@ def create_operations_api_router(container: Container) -> APIRouter:
                 status.HTTP_400_BAD_REQUEST,
                 detail=(
                     "현재 백엔드는 vLLM 임베드 모드가 아닙니다. Docker 백엔드는 로컬 GPU 모델을 "
-                    "직접 올릴 수 없으니 호스트에서 PM_VLLM_MODE=embedded 로 negotium serve를 "
+                    "직접 올릴 수 없으니 호스트에서 NG_VLLM_MODE=embedded 로 negotium serve를 "
                     "실행하세요."
                 ),
             )
@@ -4726,7 +4726,7 @@ def _local_llm_status(container: Container) -> LocalLlmStatusPayload:
             loaded=False,
             message=(
                 "현재 백엔드는 로컬 GPU 임베드 모드가 아닙니다. Docker 백엔드에서는 모델을 직접 "
-                "올릴 수 없으니 호스트에서 PM_VLLM_MODE=embedded 로 실행하세요."
+                "올릴 수 없으니 호스트에서 NG_VLLM_MODE=embedded 로 실행하세요."
             ),
         )
     raw = provider.status()
