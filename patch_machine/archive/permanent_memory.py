@@ -59,16 +59,10 @@ class PermanentMemoryStore:
         return [source.to_dict() for source in sources[:limit]]
 
     def search(self, query: str, *, limit: int = 50) -> list[dict[str, object]]:
-        needle = query.strip().lower()
+        tokens = query.strip().lower().split()
         sources = self._scan_sources()
-        if needle:
-            sources = [
-                source
-                for source in sources
-                if needle in source.title.lower()
-                or needle in source.excerpt.lower()
-                or needle in source.path.lower()
-            ]
+        if tokens:
+            sources = [source for source in sources if _matches_tokens(source, tokens)]
         sources.sort(key=lambda source: source.updated_at, reverse=True)
         return [source.to_dict() for source in sources[:limit]]
 
@@ -221,6 +215,16 @@ class PermanentMemoryStore:
                 if value:
                     tombstoned.add(value)
         return tombstoned
+
+
+def _matches_tokens(source: PermanentMemorySource, tokens: list[str]) -> bool:
+    """Every query token must appear in the title, excerpt, or path.
+
+    Separators are collapsed so e.g. token "patchops" matches path "patch_ops/...".
+    """
+    haystack = f"{source.title}\n{source.excerpt}\n{source.path}".lower()
+    compact = haystack.replace("_", "").replace("-", "")
+    return all(token in haystack or token.replace("_", "").replace("-", "") in compact for token in tokens)
 
 
 def _kind_for(path: Path, archive_dir: Path) -> SourceKind:

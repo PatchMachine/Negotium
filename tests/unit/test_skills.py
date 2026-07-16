@@ -107,7 +107,9 @@ async def test_run_prompt_skill_writes_doc(tmp_path: Path, monkeypatch: pytest.M
     assert container.audit_log.records
 
 
-async def test_run_skill_missing_required_input(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_run_skill_missing_required_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _write_skills(tmp_path)
     monkeypatch.setattr(
         "patch_machine.app.services.skill_runtime.get_skill",
@@ -131,13 +133,9 @@ async def test_run_tool_skill_delegates(tmp_path: Path, monkeypatch: pytest.Monk
         captured["args"] = args
         return SimpleNamespace(result={"hits": []}, guard_findings=[])
 
-    monkeypatch.setattr(
-        "patch_machine.app.services.skill_runtime.call_tool", _fake_call_tool
-    )
+    monkeypatch.setattr("patch_machine.app.services.skill_runtime.call_tool", _fake_call_tool)
     container = _container(tmp_path)
-    result = await run_skill(
-        container, "test.tool_skill", {"query": "login bug"}, actor="tester"
-    )
+    result = await run_skill(container, "test.tool_skill", {"query": "login bug"}, actor="tester")
     assert captured["tool"] == "memory.search_issues"
     assert captured["args"] == {"query": "login bug"}
     assert result.executor == "tool"

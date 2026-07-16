@@ -111,6 +111,9 @@ module = [
     "pytesseract",
     "PIL",
     "PIL.*",
+    "transformers",
+    "vllm",
+    "torch",
 ]
 ignore_missing_imports = true
 

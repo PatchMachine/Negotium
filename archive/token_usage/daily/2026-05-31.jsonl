@@ -1,2 +1,0 @@
-{"actor": "", "completion_tokens": 1600, "model": "gpt-5.4-mini", "occurred_at": "2026-05-31T15:56:55.906563+00:00", "prompt_tokens": 689, "provider": "openai", "task": "document_generation", "total_tokens": 2289}
-{"actor": "", "completion_tokens": 1600, "model": "gpt-5.4-mini", "occurred_at": "2026-05-31T20:30:50.695213+00:00", "prompt_tokens": 1146, "provider": "openai", "task": "document_generation", "total_tokens": 2746}

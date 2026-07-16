@@ -74,12 +74,12 @@ from patch_machine.app.schemas.core import (
     MemorySchemaProposalPayload,
     OfficeDocumentRequest,
     OperationsMemoryPayload,
-    PatchRecordCreatePayload,
-    PatchRecordDetailPayload,
-    PatchRecordPayload,
     PatchPlanMarkdownPayload,
     PatchPlanPromotePayload,
     PatchPlanRevisePayload,
+    PatchRecordCreatePayload,
+    PatchRecordDetailPayload,
+    PatchRecordPayload,
     PatchRunApprovalPayload,
     PatchRunCreatePayload,
     PatchRunPayload,
@@ -450,7 +450,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
             try:
                 deleted = container.permanent_memory.read_source(source_id, max_chars=1)
             except FileNotFoundError as read_exc:
-                raise HTTPException(status.HTTP_404_NOT_FOUND, detail="source not found") from read_exc
+                raise HTTPException(
+                    status.HTTP_404_NOT_FOUND, detail="source not found"
+                ) from read_exc
             except ValueError as read_exc:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(read_exc)) from read_exc
             physical_deleted = False
@@ -833,7 +835,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
         if pending is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="deletion request not found")
         if pending.status != "pending":
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="deletion request already decided")
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, detail="deletion request already decided"
+            )
         source_id = pending.source_path or pending.target_id
         try:
             container.permanent_memory.delete_source(source_id)
@@ -1088,7 +1092,11 @@ def create_operations_api_router(container: Container) -> APIRouter:
         updated = container.patch_runs.save(
             run.with_updates(
                 status="PLAN_CREATED",
-                artifacts={**run.artifacts, "plan_path": artifact["path"], "plan_markdown": payload.content},
+                artifacts={
+                    **run.artifacts,
+                    "plan_path": artifact["path"],
+                    "plan_markdown": payload.content,
+                },
             )
         )
         container.patch_runs.append_event(
@@ -1104,7 +1112,11 @@ def create_operations_api_router(container: Container) -> APIRouter:
             target="patch_run",
             target_id=patch_id,
         )
-        return {"ok": True, "patch_run": updated.to_dict(), "file": container.patch_runs.read_artifact(patch_id, "plan.md")}
+        return {
+            "ok": True,
+            "patch_run": updated.to_dict(),
+            "file": container.patch_runs.read_artifact(patch_id, "plan.md"),
+        }
 
     @router.post("/patch-runs/{patch_id}/plan-md/revise")
     async def revise_patch_plan_markdown(
@@ -1120,7 +1132,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
         current = payload.current_content.strip()
         if not current:
             try:
-                current = str(container.patch_runs.read_artifact(patch_id, "plan.md").get("content") or "")
+                current = str(
+                    container.patch_runs.read_artifact(patch_id, "plan.md").get("content") or ""
+                )
             except (FileNotFoundError, ValueError):
                 current = ""
         sources = _collect_plan_source_files(container, payload.source_refs)
@@ -1135,7 +1149,11 @@ def create_operations_api_router(container: Container) -> APIRouter:
         updated = container.patch_runs.save(
             run.with_updates(
                 status="PLAN_CREATED",
-                artifacts={**run.artifacts, "plan_path": artifact["path"], "plan_markdown": revised},
+                artifacts={
+                    **run.artifacts,
+                    "plan_path": artifact["path"],
+                    "plan_markdown": revised,
+                },
             )
         )
         summary = (
@@ -1160,7 +1178,11 @@ def create_operations_api_router(container: Container) -> APIRouter:
             target="patch_run",
             target_id=patch_id,
         )
-        return {"ok": True, "patch_run": updated.to_dict(), "file": container.patch_runs.read_artifact(patch_id, "plan.md")}
+        return {
+            "ok": True,
+            "patch_run": updated.to_dict(),
+            "file": container.patch_runs.read_artifact(patch_id, "plan.md"),
+        }
 
     @router.post("/patch-runs/{patch_id}/plan-md/promote-memory")
     async def promote_patch_plan_memory(
@@ -1811,9 +1833,13 @@ def create_operations_api_router(container: Container) -> APIRouter:
         actor = _require(container, x_pm_user, "memory:write")
         item = container.work_schedule.get(item_id)
         if item is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="해당 작업을 찾을 수 없습니다.")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="해당 작업을 찾을 수 없습니다."
+            )
         if item.status == "done":
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="이미 완료된 단계입니다.")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="이미 완료된 단계입니다."
+            )
         owning_plan = container.process_plans.find_by_architecture(item.source_architecture_id)
         if owning_plan is not None and owning_plan.status not in {"approved", "running"}:
             raise HTTPException(
@@ -1868,9 +1894,7 @@ def create_operations_api_router(container: Container) -> APIRouter:
         if result_path not in notes:
             notes = f"{notes} / 실행 결과: {result_path}" if notes else f"실행 결과: {result_path}"
         updated = container.work_schedule.upsert(
-            WorkScheduleItem.create(
-                **{**item.to_dict(), "status": "done", "notes": notes}
-            )
+            WorkScheduleItem.create(**{**item.to_dict(), "status": "done", "notes": notes})
         )
         plan_payload: dict[str, Any] = {}
         if owning_plan is not None:
@@ -1912,7 +1936,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
         actor = _require(container, x_pm_user, "work:read")
         item = container.work_schedule.get(item_id)
         if item is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="해당 단계를 찾을 수 없습니다.")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="해당 단계를 찾을 수 없습니다."
+            )
         signer = _user_display_name(container, actor)
         note = (payload.note if payload else "").strip()
         # Attach a completion record file: prefer the assignee's note, else any
@@ -1997,7 +2023,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
         _require(container, x_pm_user, "work:read")
         plan = container.process_plans.get(plan_id)
         if plan is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계획을 찾을 수 없습니다.")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="계획을 찾을 수 없습니다."
+            )
         return _process_plan_payload(container, plan, include_markdown=True)
 
     @router.post("/process-plans/{plan_id}/approve")
@@ -2013,7 +2041,13 @@ def create_operations_api_router(container: Container) -> APIRouter:
                 detail="초안 또는 일시정지 상태의 계획만 승인할 수 있습니다.",
             )
         updated = container.process_plans.upsert(plan.with_status("approved", approved_by=actor))
-        _audit(container, actor=actor, action="process_plan.approve", target="process_plan", target_id=plan_id)
+        _audit(
+            container,
+            actor=actor,
+            action="process_plan.approve",
+            target="process_plan",
+            target_id=plan_id,
+        )
         return _process_plan_payload(container, updated, include_markdown=True)
 
     @router.post("/process-plans/{plan_id}/mode")
@@ -2025,7 +2059,10 @@ def create_operations_api_router(container: Container) -> APIRouter:
         actor = _require(container, x_pm_user, "memory:write")
         plan = _require_plan(container, plan_id)
         if payload.mode not in {"manual", "auto"}:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="mode는 manual 또는 auto여야 합니다.")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="mode는 manual 또는 auto여야 합니다.",
+            )
         updated = container.process_plans.upsert(plan.with_mode(payload.mode))
         _audit(
             container,
@@ -2045,7 +2082,13 @@ def create_operations_api_router(container: Container) -> APIRouter:
         actor = _require(container, x_pm_user, "memory:write")
         plan = _require_plan(container, plan_id)
         updated = container.process_plans.upsert(plan.with_status("paused"))
-        _audit(container, actor=actor, action="process_plan.pause", target="process_plan", target_id=plan_id)
+        _audit(
+            container,
+            actor=actor,
+            action="process_plan.pause",
+            target="process_plan",
+            target_id=plan_id,
+        )
         return _process_plan_payload(container, updated, include_markdown=True)
 
     @router.post("/process-plans/{plan_id}/resume")
@@ -2056,9 +2099,18 @@ def create_operations_api_router(container: Container) -> APIRouter:
         actor = _require(container, x_pm_user, "memory:write")
         plan = _require_plan(container, plan_id)
         if plan.status != "paused":
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="일시정지 상태의 계획만 재개할 수 있습니다.")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="일시정지 상태의 계획만 재개할 수 있습니다.",
+            )
         updated = container.process_plans.upsert(plan.with_status("running"))
-        _audit(container, actor=actor, action="process_plan.resume", target="process_plan", target_id=plan_id)
+        _audit(
+            container,
+            actor=actor,
+            action="process_plan.resume",
+            target="process_plan",
+            target_id=plan_id,
+        )
         return _process_plan_payload(container, updated, include_markdown=True)
 
     @router.post("/process-plans/{plan_id}/steps")
@@ -2100,12 +2152,18 @@ def create_operations_api_router(container: Container) -> APIRouter:
         actor = _require(container, x_pm_user, "memory:write")
         plan = _require_editable_plan(container, plan_id)
         if step_id not in plan.step_ids:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="단계를 찾을 수 없습니다.")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="단계를 찾을 수 없습니다."
+            )
         item = container.work_schedule.get(step_id)
         if item is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="단계를 찾을 수 없습니다.")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="단계를 찾을 수 없습니다."
+            )
         if item.status == "done":
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="완료된 단계는 수정할 수 없습니다.")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="완료된 단계는 수정할 수 없습니다."
+            )
         overrides = item.to_dict()
         if payload.title is not None:
             overrides["title"] = payload.title
@@ -2163,7 +2221,13 @@ def create_operations_api_router(container: Container) -> APIRouter:
         # Keep any steps the client omitted at the tail to avoid accidental loss.
         ordered.extend(sid for sid in plan.step_ids if sid not in ordered)
         updated = _resequence_plan(container, plan, ordered)
-        _audit(container, actor=actor, action="process_plan.reorder", target="process_plan", target_id=plan_id)
+        _audit(
+            container,
+            actor=actor,
+            action="process_plan.reorder",
+            target="process_plan",
+            target_id=plan_id,
+        )
         return _process_plan_payload(container, updated, include_markdown=True)
 
     @router.post("/work-architecture/generate")
@@ -2189,7 +2253,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
             input_summary=payload.objective,
         )
         try:
-            raw_markdown = await _complete_office_task(container, prompt, task="document_generation")
+            raw_markdown = await _complete_office_task(
+                container, prompt, task="document_generation"
+            )
             markdown, _ = _extract_process_steps(raw_markdown)
             steps = await _generate_process_steps(
                 container,
@@ -2234,7 +2300,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
         }
         work_memory = container.work_memory.read()
         if queue:
-            next_action = f"AI 설계 검토/수정 후 승인 필요: {len(queue)}단계 (프로세스 설계에서 승인)"
+            next_action = (
+                f"AI 설계 검토/수정 후 승인 필요: {len(queue)}단계 (프로세스 설계에서 승인)"
+            )
         else:
             next_action = f"업무 프로세스 설계 검토: {path}"
         container.work_memory.write(
@@ -2713,7 +2781,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
             markdown=_hr_evaluation_markdown(draft_record, context=context),
         )
         record = container.hr_evaluations.append(
-            HrEvaluationRecord.from_mapping({**draft_record.to_dict(), "document_path": document_path})
+            HrEvaluationRecord.from_mapping(
+                {**draft_record.to_dict(), "document_path": document_path}
+            )
         )
         _audit(
             container,
@@ -2780,7 +2850,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
             )
             if created:
                 bullets = "\n".join(f"- {title}" for title in created)
-                markdown = f"{markdown}\n\n## 신규 담당자 인수 업무 (작업 스케줄 등록됨)\n{bullets}\n"
+                markdown = (
+                    f"{markdown}\n\n## 신규 담당자 인수 업무 (작업 스케줄 등록됨)\n{bullets}\n"
+                )
         result = GeneratedDocumentPayload(
             title=payload.work_title,
             markdown=markdown,
@@ -2815,7 +2887,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
                 ),
             )
         readable_context = readable_bundle.markdown if readable_bundle else ""
-        used_sources = [source.id for source in readable_bundle.used_sources] if readable_bundle else []
+        used_sources = (
+            [source.id for source in readable_bundle.used_sources] if readable_bundle else []
+        )
 
         provider, route = _resolve_runtime_task(container, "document_generation")
         model = _resolve_task_model(container, "document_generation", provider, route)
@@ -2855,7 +2929,9 @@ def create_operations_api_router(container: Container) -> APIRouter:
                 markdown=body,
                 output_format=resolved_format,
             )
-            job = _finish_ai_job(container, job, status="succeeded", result_path=path, used_sources=used_sources)
+            job = _finish_ai_job(
+                container, job, status="succeeded", result_path=path, used_sources=used_sources
+            )
         except Exception as exc:
             _finish_ai_job(container, job, status="failed", error=str(exc))
             raise
@@ -3187,7 +3263,6 @@ def create_operations_api_router(container: Container) -> APIRouter:
         x_pm_user: str | None = Header(default=None, alias="X-PM-User"),
     ) -> dict[str, Any]:
         actor = _require(container, x_pm_user, "admin:users")
-        acl = container.access_control.read()
         try:
             container.access_control.upsert_position(payload.to_record())
         except ValueError as exc:
@@ -3816,9 +3891,7 @@ async def _chat_run_slash(
 
     job = _start_ai_job(container, task=f"skill:{skill_id}", actor=actor, input_summary=message)
     try:
-        result = await run_skill(
-            container, skill_id, inputs, actor=actor, completion=_completion
-        )
+        result = await run_skill(container, skill_id, inputs, actor=actor, completion=_completion)
         job = _finish_ai_job(container, job, status="succeeded")
     except SkillError as exc:
         _finish_ai_job(container, job, status="failed", error=str(exc))
@@ -3996,7 +4069,9 @@ def _ensure_acl_keeps_admin_access(
 def _ensure_role_exists(acl: dict[str, Any], role_id: str) -> None:
     if not role_id:
         return
-    role_ids = {str(role.get("id") or "") for role in acl.get("roles", []) if isinstance(role, dict)}
+    role_ids = {
+        str(role.get("id") or "") for role in acl.get("roles", []) if isinstance(role, dict)
+    }
     if role_id not in role_ids:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"unknown role: {role_id}")
 
@@ -4046,9 +4121,7 @@ def _position_rank(container: Container, user_id: str | None) -> int:
     return _as_int(raw_rank)
 
 
-def _descendant_department_ids(
-    departments: list[dict[str, object]], roots: set[str]
-) -> set[str]:
+def _descendant_department_ids(departments: list[dict[str, object]], roots: set[str]) -> set[str]:
     children: dict[str, list[str]] = {}
     for dept in departments:
         parent = str(dept.get("parent_id") or "")
@@ -4148,8 +4221,7 @@ def _collect_owner_activity(container: Container, owner: str, *, limit: int = 30
 
     try:
         jobs = [
-            _ai_job_payload(record).model_dump()
-            for record in container.ai_jobs.recent(limit=200)
+            _ai_job_payload(record).model_dump() for record in container.ai_jobs.recent(limit=200)
         ]
     except Exception:
         jobs = []
@@ -4195,7 +4267,8 @@ def _hr_evaluation_context(
         item
         for item in container.work_schedule.list()
         if (selected_ids and str(item.get("id") or "") in selected_ids)
-        or str(item.get("owner_name") or "") in {str(user.get("id") or ""), str(user.get("display_name") or "")}
+        or str(item.get("owner_name") or "")
+        in {str(user.get("id") or ""), str(user.get("display_name") or "")}
         or str(item.get("owner_id") or "") == user_id
         or str(item.get("assignee_id") or "") == user_id
     ][:30]
@@ -4209,11 +4282,7 @@ def _hr_evaluation_context(
         for entry in container.audit_log.list_recent(limit=100)
         if str(entry.get("actor") or "") == user_id or str(entry.get("target_id") or "") == user_id
     ][:20]
-    source_refs = [
-        f"work_schedule:{item.get('id')}"
-        for item in related_work
-        if item.get("id")
-    ]
+    source_refs = [f"work_schedule:{item.get('id')}" for item in related_work if item.get("id")]
     return {
         "employee": user,
         "department": departments.get(str(user.get("department") or ""), {}),
@@ -4226,10 +4295,14 @@ def _hr_evaluation_context(
 
 
 def _hr_evaluation_markdown(record: Any, *, context: dict[str, object]) -> str:
-    employee = context.get("employee") if isinstance(context.get("employee"), dict) else {}
-    department = context.get("department") if isinstance(context.get("department"), dict) else {}
-    position = context.get("position") if isinstance(context.get("position"), dict) else {}
-    work_items = context.get("work_items") if isinstance(context.get("work_items"), list) else []
+    employee_raw = context.get("employee")
+    employee: dict[str, Any] = employee_raw if isinstance(employee_raw, dict) else {}
+    department_raw = context.get("department")
+    department: dict[str, Any] = department_raw if isinstance(department_raw, dict) else {}
+    position_raw = context.get("position")
+    position: dict[str, Any] = position_raw if isinstance(position_raw, dict) else {}
+    work_items_raw = context.get("work_items")
+    work_items: list[Any] = work_items_raw if isinstance(work_items_raw, list) else []
     employee_name = str(employee.get("display_name") or record.user_id)
     department_name = str(department.get("name") or employee.get("department") or "미배정")
     position_name = str(position.get("name") or employee.get("position_id") or "미지정")
@@ -4682,7 +4755,11 @@ async def _generate_hiring_document(
     instruction: str,
 ) -> GeneratedDocumentPayload:
     target_context = _hiring_target_context(container, payload)
-    workload_context = _hiring_workload_context(container, payload) if payload.include_workload else "업무량 컨텍스트 제외"
+    workload_context = (
+        _hiring_workload_context(container, payload)
+        if payload.include_workload
+        else "업무량 컨텍스트 제외"
+    )
     prompt = render_prompt(
         "office/hiring_document.md.j2",
         context=_office_context(container),
@@ -4724,8 +4801,18 @@ async def _generate_hiring_document(
 
 def _hiring_target_context(container: Container, payload: HiringRequest) -> str:
     acl = container.access_control.read()
-    dept = next((item for item in acl.get("departments", []) if str(item.get("id")) == payload.department_id), None)
-    position = next((item for item in acl.get("positions", []) if str(item.get("id")) == payload.position_id), None)
+    dept = next(
+        (
+            item
+            for item in acl.get("departments", [])
+            if str(item.get("id")) == payload.department_id
+        ),
+        None,
+    )
+    position = next(
+        (item for item in acl.get("positions", []) if str(item.get("id")) == payload.position_id),
+        None,
+    )
     lines = [
         f"- 대상 부서: {dept.get('name') if dept else '(미지정)'}",
         f"- 대상 직급/등급: {position.get('name') if position else '(미지정)'}",
@@ -4745,7 +4832,14 @@ def _hiring_target_context(container: Container, payload: HiringRequest) -> str:
 
 def _hiring_workload_context(container: Container, payload: HiringRequest) -> str:
     acl = container.access_control.read()
-    dept = next((item for item in acl.get("departments", []) if str(item.get("id")) == payload.department_id), None)
+    dept = next(
+        (
+            item
+            for item in acl.get("departments", [])
+            if str(item.get("id")) == payload.department_id
+        ),
+        None,
+    )
     dept_name = str(dept.get("name") or "") if dept else ""
     dept_user_ids = {
         str(user.get("id"))
@@ -4760,7 +4854,11 @@ def _hiring_workload_context(container: Container, payload: HiringRequest) -> st
             if str(item.get("owner_id") or "") in dept_user_ids
             or payload.department_id.lower()
             in f"{item.get('title') or ''} {item.get('notes') or ''}".lower()
-            or (dept_name and dept_name.lower() in f"{item.get('title') or ''} {item.get('notes') or ''}".lower())
+            or (
+                dept_name
+                and dept_name.lower()
+                in f"{item.get('title') or ''} {item.get('notes') or ''}".lower()
+            )
         ]
     if not items:
         return "- 현재 연결된 업무 스케줄 항목이 없습니다. work_memory와 조직 메모리를 기준으로 판단하세요."
@@ -4796,9 +4894,7 @@ def _resolve_runtime_task(container: Container, task: str) -> tuple[LlmProviderN
     return task_route.provider, route
 
 
-def _resolve_runtime_model(
-    container: Container, provider: LlmProviderName, route: LlmRoute
-) -> str:
+def _resolve_runtime_model(container: Container, provider: LlmProviderName, route: LlmRoute) -> str:
     """Default model for a provider/route when no per-task override is set."""
 
     runtime = container.llm_runtime.read()
@@ -4945,9 +5041,7 @@ async def _run_step_skill(
         "audience": item.owner_name,
         "query": item.title,
     }
-    run_result = await run_skill(
-        container, skill_id, inputs, actor=actor, completion=_completion
-    )
+    run_result = await run_skill(container, skill_id, inputs, actor=actor, completion=_completion)
     markdown = run_result.output_text or json.dumps(
         run_result.tool_result, ensure_ascii=False, indent=2
     )
@@ -5076,7 +5170,9 @@ async def _revise_patch_plan_markdown(
             ]
         )
     revised = await _complete_patchops_task(container, prompt, task="patch_planning")
-    return revised.strip() or current.strip() or f"# 코딩 에이전트 계획서\n\n## 요청\n{run.request}\n"
+    return (
+        revised.strip() or current.strip() or f"# 코딩 에이전트 계획서\n\n## 요청\n{run.request}\n"
+    )
 
 
 async def _complete_with_provider(
@@ -5324,7 +5420,9 @@ def _llm_provider_http_error(provider: LlmProviderName, exc: Exception) -> HTTPE
         if status_code in {400, 401, 403, 404, 422}:
             hint = ""
             low = detail.lower()
-            if "model" in low and ("invalid" in low or "not found" in low or "does not exist" in low):
+            if "model" in low and (
+                "invalid" in low or "not found" in low or "does not exist" in low
+            ):
                 hint = (
                     " — 설정된 모델 ID가 올바르지 않습니다. 'API 키·로컬 에이전트' 관리에서"
                     " 해당 제공자의 모델을 유효한 값으로 변경하세요."
@@ -5368,7 +5466,7 @@ def _fallback_office_task_markdown(prompt: str, *, task: str, diagnostic: str = 
             "",
             "> 외부 LLM이 빈 응답을 반환해 로컬 fallback 초안을 생성했습니다.",
             f"> task: `{task}`",
-            *( [f"> diagnostic: `{diagnostic}`"] if diagnostic else [] ),
+            *([f"> diagnostic: `{diagnostic}`"] if diagnostic else []),
             "",
             "## 핵심 요약",
             f"- 입력 주제: {title}",
@@ -5451,7 +5549,10 @@ def _org_roster_markdown(container: Container) -> str:
     acl = container.access_control.read()
     users = acl.get("users", [])
     departments = acl.get("departments", [])
-    roles_by_id = {str(role.get("id")): str(role.get("name") or role.get("id")) for role in acl.get("roles", [])}
+    roles_by_id = {
+        str(role.get("id")): str(role.get("name") or role.get("id"))
+        for role in acl.get("roles", [])
+    }
     positions = acl.get("positions", [])
     positions_by_id = {
         str(position.get("id")): str(position.get("name") or position.get("id"))
@@ -5476,7 +5577,11 @@ def _org_roster_markdown(container: Container) -> str:
             ]
             lead_id = str(dept.get("lead_user_id") or "")
             lead = next(
-                (str(user.get("display_name") or user.get("id")) for user in users if str(user.get("id")) == lead_id),
+                (
+                    str(user.get("display_name") or user.get("id"))
+                    for user in users
+                    if str(user.get("id")) == lead_id
+                ),
                 "",
             )
             member_text = ", ".join(members) if members else "구성원 미지정"
@@ -5505,7 +5610,9 @@ def _org_roster_markdown(container: Container) -> str:
                 (str(dept.get("name")) for dept in departments if str(dept.get("id")) == dept_id),
                 "부서 미배정",
             )
-            role_name = roles_by_id.get(str(user.get("role_id") or ""), str(user.get("role_id") or ""))
+            role_name = roles_by_id.get(
+                str(user.get("role_id") or ""), str(user.get("role_id") or "")
+            )
             position_name = positions_by_id.get(str(user.get("position_id") or ""), "")
             position_text = f" · 직급 {position_name}" if position_name else ""
             title = str(user.get("title") or "")
@@ -5748,7 +5855,9 @@ async def _create_handover_tasks(
             str(step.get("output") or "").strip(),
         ]
         notes = " / ".join(part for part in note_parts if part)
-        notes = f"{notes}\n인수인계 출처: {source_path}" if notes else f"인수인계 출처: {source_path}"
+        notes = (
+            f"{notes}\n인수인계 출처: {source_path}" if notes else f"인수인계 출처: {source_path}"
+        )
         item = container.work_schedule.upsert(
             WorkScheduleItem.create(
                 title=title,
@@ -5792,7 +5901,8 @@ async def _generate_process_steps(
     )
     attempts = [
         base_prompt,
-        base_prompt + "\n\n중요: 직전 출력이 형식에 맞지 않았습니다. 오직 JSON 객체 하나만 출력하세요.",
+        base_prompt
+        + "\n\n중요: 직전 출력이 형식에 맞지 않았습니다. 오직 JSON 객체 하나만 출력하세요.",
     ]
     for prompt in attempts:
         try:
@@ -5901,7 +6011,8 @@ async def _generate_agent_plan_steps(
     )
     attempts = [
         base_prompt,
-        base_prompt + "\n\n중요: 직전 출력이 형식에 맞지 않았습니다. 오직 JSON 객체 하나만 출력하세요.",
+        base_prompt
+        + "\n\n중요: 직전 출력이 형식에 맞지 않았습니다. 오직 JSON 객체 하나만 출력하세요.",
     ]
     for prompt in attempts:
         try:
@@ -6084,7 +6195,9 @@ def _schedule_to_work_items(
     return items
 
 
-def _resequence_plan(container: Container, plan: ProcessPlan, ordered_ids: list[str]) -> ProcessPlan:
+def _resequence_plan(
+    container: Container, plan: ProcessPlan, ordered_ids: list[str]
+) -> ProcessPlan:
     """Reassign queue_order + linear dependencies for a plan's steps and persist."""
 
     by_id = {str(entry.get("id")): entry for entry in container.work_schedule.list()}
@@ -6109,7 +6222,9 @@ def _resequence_plan(container: Container, plan: ProcessPlan, ordered_ids: list[
 def _require_plan(container: Container, plan_id: str) -> ProcessPlan:
     plan = container.process_plans.get(plan_id)
     if plan is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계획을 찾을 수 없습니다.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="계획을 찾을 수 없습니다."
+        )
     return plan
 
 
@@ -6332,12 +6447,20 @@ def _archive_document_index(container: Container, *, q: str, limit: int) -> list
     archive_root = container.settings.archive_dir.resolve()
     if not archive_root.exists():
         return []
-    query = q.strip().lower()
+    query_tokens = q.strip().lower().split()
     docs: list[dict[str, object]] = []
     for path in archive_root.rglob("*"):
         if not path.is_file() or path.name.startswith("."):
             continue
-        if path.suffix.lower() not in {".md", ".markdown", ".txt", ".json", ".patch", ".yaml", ".yml"}:
+        if path.suffix.lower() not in {
+            ".md",
+            ".markdown",
+            ".txt",
+            ".json",
+            ".patch",
+            ".yaml",
+            ".yml",
+        }:
             continue
         try:
             rel = path.relative_to(archive_root).as_posix()
@@ -6348,7 +6471,11 @@ def _archive_document_index(container: Container, *, q: str, limit: int) -> list
         title, excerpt = _archive_document_title_excerpt(path)
         kind = _archive_document_kind(rel)
         haystack = f"{title} {excerpt} {rel} {kind}".lower()
-        if query and query not in haystack:
+        compact = haystack.replace("_", "").replace("-", "")
+        if query_tokens and not all(
+            token in haystack or token.replace("_", "").replace("-", "") in compact
+            for token in query_tokens
+        ):
             continue
         stat = path.stat()
         docs.append(

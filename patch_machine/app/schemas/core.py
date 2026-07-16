@@ -819,7 +819,11 @@ class PositionPayload(BaseModel):
             name=self.name.strip(),
             level=self.level,
             description=self.description.strip(),
-            permissions=[permission for permission in self.permissions if permission in ALL_PERMISSIONS or permission == "*"],
+            permissions=[
+                permission
+                for permission in self.permissions
+                if permission in ALL_PERMISSIONS or permission == "*"
+            ],
             display_order=self.display_order,
             restrict_title_assignment=self.restrict_title_assignment,
         )

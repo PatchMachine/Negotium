@@ -126,9 +126,7 @@ async def _run_prompt_skill(
     )
 
 
-async def _run_tool_skill(
-    container: Any, skill: Skill, inputs: dict[str, Any]
-) -> SkillRunResult:
+async def _run_tool_skill(container: Any, skill: Skill, inputs: dict[str, Any]) -> SkillRunResult:
     if not skill.tool:
         raise SkillError(f"skill '{skill.id}' has no bound tool")
     call_result = call_tool(container, skill.tool, dict(inputs))

@@ -136,9 +136,7 @@ def skill_list() -> None:
 @skill_app.command("run")
 def skill_run(
     skill_id: str = typer.Argument(..., help="Skill id to run."),
-    inputs: list[str] = typer.Option(
-        [], "--input", "-i", help="Input as key=value (repeatable)."
-    ),
+    inputs: list[str] = typer.Option([], "--input", "-i", help="Input as key=value (repeatable)."),
     actor: str = typer.Option("cli", help="Actor name for the audit log."),
 ) -> None:
     """Run a skill with key=value inputs."""

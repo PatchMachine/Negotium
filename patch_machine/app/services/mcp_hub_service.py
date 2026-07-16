@@ -113,7 +113,11 @@ TOOL_POLICIES: dict[str, dict[str, Any]] = {
     "hf.search_models": {"permission": "work:read", "scopes": ["hf:read"], "risk": "low"},
     "hf.get_model_info": {"permission": "work:read", "scopes": ["hf:read"], "risk": "low"},
     "hf.list_recommended_models": {"permission": "work:read", "scopes": ["hf:read"], "risk": "low"},
-    "hf.set_local_model": {"permission": "admin:local_llm", "scopes": ["hf:write"], "risk": "medium"},
+    "hf.set_local_model": {
+        "permission": "admin:local_llm",
+        "scopes": ["hf:write"],
+        "risk": "medium",
+    },
     "public_reference.search_cases": {
         "permission": "work:read",
         "scopes": ["public_reference:read"],
@@ -443,9 +447,7 @@ def _agent_generate_plan(container: Any, arguments: dict[str, Any]) -> dict[str,
     objective = str(arguments.get("objective") or arguments.get("text") or "").strip()
     if not objective:
         raise ValueError("objective is required")
-    memory_refs = [
-        str(source["path"]) for source in container.permanent_memory.recent(limit=5)
-    ]
+    memory_refs = [str(source["path"]) for source in container.permanent_memory.recent(limit=5)]
     schedule_refs = [str(item["id"]) for item in container.work_schedule.list()[:10]]
     steps = _agent_plan_steps(objective, schedule_refs, memory_refs)
     plan = container.agent_execution.save_plan(
@@ -560,7 +562,9 @@ def _patch_apply_diff(container: Any, arguments: dict[str, Any]) -> dict[str, An
         "ok": True,
         "apply": apply,
         "execution": result,
-        "next_step": "patch.run_tests 로 테스트를 실행하세요." if apply else "승인 후 apply=true 로 적용",
+        "next_step": "patch.run_tests 로 테스트를 실행하세요."
+        if apply
+        else "승인 후 apply=true 로 적용",
     }
 
 
@@ -1216,7 +1220,9 @@ def _hf_tool(container: Any, tool_name: str, arguments: dict[str, Any]) -> dict[
     raise ValueError(f"unknown Hugging Face MCP tool: {tool_name}")
 
 
-def _public_reference_tool(container: Any, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+def _public_reference_tool(
+    container: Any, tool_name: str, arguments: dict[str, Any]
+) -> dict[str, Any]:
     if tool_name == "public_reference.search_cases":
         return {
             "ok": True,

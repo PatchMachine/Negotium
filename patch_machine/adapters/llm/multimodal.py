@@ -34,9 +34,7 @@ def to_openai_content(content: str | list[ContentPart]) -> str | list[dict[str, 
         elif part.get("type") == "image":
             mime = str(part.get("mime") or "image/png")
             data = str(part.get("data") or "")
-            parts.append(
-                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}}
-            )
+            parts.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}})
         elif part.get("type") == "audio":
             parts.append(
                 {

@@ -612,7 +612,10 @@ def render_plan_markdown(
             str(docs_payload.get("pr_description") or "아직 PR 초안이 생성되지 않았습니다."),
             "",
             "## Internal Patch Note",
-            str(docs_payload.get("internal_patch_note") or "아직 내부 패치 노트가 생성되지 않았습니다."),
+            str(
+                docs_payload.get("internal_patch_note")
+                or "아직 내부 패치 노트가 생성되지 않았습니다."
+            ),
             "",
             "## Context Sources",
             *(f"- `{path}`" for path in context.get("candidate_files", [])[:20]),

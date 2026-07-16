@@ -24,6 +24,5 @@ workspaces/
 .idea/
 .vscode/
 
-# Do NOT ignore archive/ - GitOps source of truth
-archive/secrets/
-archive/uploads/
+# Runtime data (user PII, job logs, generated documents) — never commit
+archive/

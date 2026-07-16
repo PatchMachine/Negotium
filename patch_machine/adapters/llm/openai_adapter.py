@@ -20,9 +20,7 @@ _COMPLETION_TOKENS_PREFIXES = (
     "gpt-5",
     "gpt-6",
 )
-_COMPLETION_TOKENS_KEYWORDS = (
-    "reasoning",
-)
+_COMPLETION_TOKENS_KEYWORDS = ("reasoning",)
 
 
 def _model_uses_completion_tokens_param(model: str) -> bool:
@@ -41,12 +39,8 @@ def _model_uses_completion_tokens_param(model: str) -> bool:
     return any(keyword in name for keyword in _COMPLETION_TOKENS_KEYWORDS)
 
 
-_UNSUPPORTED_PARAM_RE = re.compile(
-    r"Unsupported parameter:\s*'?(?P<param>[\w_]+)'?", re.IGNORECASE
-)
-_UNSUPPORTED_VALUE_PARAM_RE = re.compile(
-    r"Unsupported value:.*?'(?P<param>[\w_]+)'", re.IGNORECASE
-)
+_UNSUPPORTED_PARAM_RE = re.compile(r"Unsupported parameter:\s*'?(?P<param>[\w_]+)'?", re.IGNORECASE)
+_UNSUPPORTED_VALUE_PARAM_RE = re.compile(r"Unsupported value:.*?'(?P<param>[\w_]+)'", re.IGNORECASE)
 
 
 def _extract_unsupported_param(message: str) -> str | None:

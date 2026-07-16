@@ -1,6 +1,0 @@
-{
-  "daily_total_tokens": 200000,
-  "enforcement_enabled": true,
-  "monthly_total_tokens": 4000000,
-  "per_request_max_tokens": 32000
-}

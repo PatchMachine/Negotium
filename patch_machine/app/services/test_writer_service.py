@@ -65,10 +65,14 @@ def generate_test_plan(arguments: dict[str, Any]) -> dict[str, Any]:
                 "title": title,
                 "type": str(arguments.get("requirement_type") or "regression"),
                 "expected_before_patch": "fail_when_reproducible",
-                "target_behavior": str(arguments.get("then") or "Reported behavior no longer occurs."),
+                "target_behavior": str(
+                    arguments.get("then") or "Reported behavior no longer occurs."
+                ),
             }
         ],
-        "notes": ["MVP generates a plan and diff draft only; test file writes remain approval-gated."],
+        "notes": [
+            "MVP generates a plan and diff draft only; test file writes remain approval-gated."
+        ],
     }
 
 
@@ -137,7 +141,10 @@ def _repo_files(root: Path) -> list[str]:
         rel = path.relative_to(root)
         if any(part in SKIP_DIRS for part in rel.parts):
             continue
-        if path.suffix.lower() not in TEST_SUFFIXES and path.name not in {"pyproject.toml", "package.json"}:
+        if path.suffix.lower() not in TEST_SUFFIXES and path.name not in {
+            "pyproject.toml",
+            "package.json",
+        }:
             continue
         files.append(rel.as_posix())
         if len(files) >= 600:

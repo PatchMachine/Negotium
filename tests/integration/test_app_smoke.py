@@ -194,8 +194,9 @@ def test_chat_replays_history_and_supports_slash_and_stream(tmp_path: Path) -> N
     assert second.status_code == 200
     # The second call must replay the first turn (user + assistant) into the prompt.
     second_call_messages = fake.calls[1]
-    replayed = "\n".join(message.content for message in second_call_messages
-                         if isinstance(message.content, str))
+    replayed = "\n".join(
+        message.content for message in second_call_messages if isinstance(message.content, str)
+    )
     assert "내 이름은 지호야" in replayed
     assert "첫 번째 응답입니다." in replayed
     assert second.json()["used_history"] >= 2
@@ -283,7 +284,9 @@ def test_patchops_execution_router_endpoints_shape(tmp_path: Path) -> None:
             json={"arguments": {}},
         )
         files = client.get(f"/api/patch-runs/{run.id}/files", headers=headers)
-        traversal = client.get(f"/api/patch-runs/{run.id}/files/%2E%2E/runs/{run.id}.json", headers=headers)
+        traversal = client.get(
+            f"/api/patch-runs/{run.id}/files/%2E%2E/runs/{run.id}.json", headers=headers
+        )
 
     assert applied.status_code == 200
     assert applied.json()["execution"]["policy"]["files"] == ["frontend/src/App.tsx"]
@@ -306,16 +309,24 @@ def test_patchops_plan_and_artifact_files_are_created(tmp_path: Path) -> None:
     )
     container.llm = FakeLlmProvider(
         [
-            ScriptedResponse(text='[{"question":"수정 범위는?","priority":"high","needs_human":false}]'),
+            ScriptedResponse(
+                text='[{"question":"수정 범위는?","priority":"high","needs_human":false}]'
+            ),
             ScriptedResponse(
                 text='{"goal":"문구 수정","target_files":["app.py"],"patch_steps":["app.py 수정"],"risk_level":"low","test_plan":["python -m pytest -q"],"approval_required":true}'
             ),
             ScriptedResponse(
                 text='{"diff_draft":"diff --git a/app.py b/app.py\\n--- a/app.py\\n+++ b/app.py\\n@@ -1 +1 @@\\n-print(\\u0027hello\\u0027)\\n+print(\\u0027hi\\u0027)\\n","verification_commands":["python -m pytest -q"]}'
             ),
-            ScriptedResponse(text='{"pr_description":"## Summary\\n- Update app","internal_patch_note":"# Note","customer_release_note":"Updated."}'),
-            ScriptedResponse(text='{"test_plan":["python -m pytest -q"],"test_diff_draft":"diff --git a/test_app.py b/test_app.py\\n--- /dev/null\\n+++ b/test_app.py\\n@@ -0,0 +1 @@\\n+def test_app(): pass\\n"}'),
-            ScriptedResponse(text="# 코딩 에이전트 계획서\n\n## 수정됨\n- 저장 API와 AI 수정 API 확인"),
+            ScriptedResponse(
+                text='{"pr_description":"## Summary\\n- Update app","internal_patch_note":"# Note","customer_release_note":"Updated."}'
+            ),
+            ScriptedResponse(
+                text='{"test_plan":["python -m pytest -q"],"test_diff_draft":"diff --git a/test_app.py b/test_app.py\\n--- /dev/null\\n+++ b/test_app.py\\n@@ -0,0 +1 @@\\n+def test_app(): pass\\n"}'
+            ),
+            ScriptedResponse(
+                text="# 코딩 에이전트 계획서\n\n## 수정됨\n- 저장 API와 AI 수정 API 확인"
+            ),
         ]
     )
     headers = _auth_headers(container)
@@ -346,7 +357,10 @@ def test_patchops_plan_and_artifact_files_are_created(tmp_path: Path) -> None:
         revised = client.post(
             f"/api/patch-runs/{run_id}/plan-md/revise",
             headers=headers,
-            json={"instruction": "체크리스트를 추가해줘", "current_content": "# 직접 수정한 plan.md\n"},
+            json={
+                "instruction": "체크리스트를 추가해줘",
+                "current_content": "# 직접 수정한 plan.md\n",
+            },
         )
         memory = client.get("/api/memory/permanent/search?q=PatchOps%20plan", headers=headers)
         docs = client.get("/api/archive/document-index?q=PatchOps&limit=20", headers=headers)

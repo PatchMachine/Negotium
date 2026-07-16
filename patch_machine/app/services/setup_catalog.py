@@ -298,7 +298,9 @@ def _first_14_days(
     if profile is not None:
         priority_text = (profile.automation_priorities or "").strip()
         if priority_text:
-            actions.append(f"5일차: 사용자가 지정한 우선 자동화 대상부터 적용합니다 — {priority_text}")
+            actions.append(
+                f"5일차: 사용자가 지정한 우선 자동화 대상부터 적용합니다 — {priority_text}"
+            )
         recurring = (profile.recurring_workflows or "").strip()
         if recurring:
             actions.append(f"7일차: 반복 업무/회의에 운영 템플릿을 연결합니다 — {recurring}")
@@ -323,12 +325,38 @@ def _augment_integrations_from_profile(
         ("linear", {"id": "jira", "name": "Jira/Linear", "reason": "사용자가 도구로 지정"}),
         ("github", {"id": "github", "name": "GitHub", "reason": "사용자가 도구로 지정"}),
         ("gitlab", {"id": "github", "name": "GitHub/GitLab", "reason": "사용자가 도구로 지정"}),
-        ("hubspot", {"id": "hubspot", "name": "HubSpot/Salesforce", "reason": "사용자가 도구로 지정"}),
-        ("salesforce", {"id": "hubspot", "name": "HubSpot/Salesforce", "reason": "사용자가 도구로 지정"}),
-        ("zendesk", {"id": "zendesk", "name": "Zendesk/Intercom", "reason": "사용자가 도구로 지정"}),
-        ("intercom", {"id": "zendesk", "name": "Zendesk/Intercom", "reason": "사용자가 도구로 지정"}),
-        ("google", {"id": "google_workspace", "name": "Google Workspace", "reason": "사용자가 도구로 지정"}),
-        ("drive", {"id": "google_workspace", "name": "Google Workspace", "reason": "사용자가 도구로 지정"}),
+        (
+            "hubspot",
+            {"id": "hubspot", "name": "HubSpot/Salesforce", "reason": "사용자가 도구로 지정"},
+        ),
+        (
+            "salesforce",
+            {"id": "hubspot", "name": "HubSpot/Salesforce", "reason": "사용자가 도구로 지정"},
+        ),
+        (
+            "zendesk",
+            {"id": "zendesk", "name": "Zendesk/Intercom", "reason": "사용자가 도구로 지정"},
+        ),
+        (
+            "intercom",
+            {"id": "zendesk", "name": "Zendesk/Intercom", "reason": "사용자가 도구로 지정"},
+        ),
+        (
+            "google",
+            {
+                "id": "google_workspace",
+                "name": "Google Workspace",
+                "reason": "사용자가 도구로 지정",
+            },
+        ),
+        (
+            "drive",
+            {
+                "id": "google_workspace",
+                "name": "Google Workspace",
+                "reason": "사용자가 도구로 지정",
+            },
+        ),
         (
             "microsoft",
             {"id": "microsoft_365", "name": "Microsoft 365", "reason": "사용자가 도구로 지정"},

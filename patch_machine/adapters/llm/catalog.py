@@ -251,7 +251,9 @@ async def _openai_models(*, api_key: str, base_url: str) -> list[str]:
         for model in response.json().get("data", [])
         if isinstance(model, dict) and isinstance(model.get("id"), str)
     ]
-    return _chat_model_order("openai", [model_id for model_id in ids if _is_openai_chat_model(model_id)])
+    return _chat_model_order(
+        "openai", [model_id for model_id in ids if _is_openai_chat_model(model_id)]
+    )
 
 
 def _is_openai_chat_model(model_id: str) -> bool:
