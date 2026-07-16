@@ -1,8 +1,8 @@
-from patch_machine.app.initial_setup import ParsedSetupFile
-from patch_machine.app.schemas import CompanyProfilePayload, InitialOfficeAnalyzeRequest
-from patch_machine.app.services.office_setup_service import parse_initial_setup_result
-from patch_machine.app.services.setup_catalog import recommend_patchnote_setup
-from patch_machine.prompts import render
+from negotium.app.initial_setup import ParsedSetupFile
+from negotium.app.schemas import CompanyProfilePayload, InitialOfficeAnalyzeRequest
+from negotium.app.services.office_setup_service import parse_initial_setup_result
+from negotium.app.services.setup_catalog import recommend_patchnote_setup
+from negotium.prompts import render
 
 
 def test_prompt_store_renders_context_compression_prompt() -> None:

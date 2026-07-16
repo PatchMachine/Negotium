@@ -8,8 +8,8 @@ from typing import Any
 
 import pytest
 
-from patch_machine.app.services.skill_registry import get_skills, load_skills
-from patch_machine.app.services.skill_runtime import SkillError, run_skill
+from negotium.app.services.skill_registry import get_skills, load_skills
+from negotium.app.services.skill_runtime import SkillError, run_skill
 
 SKILL_PROMPT = """---
 id: test.prompt_skill
@@ -84,7 +84,7 @@ def test_builtin_skills_are_loadable() -> None:
 async def test_run_prompt_skill_writes_doc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write_skills(tmp_path)
     monkeypatch.setattr(
-        "patch_machine.app.services.skill_runtime.get_skill",
+        "negotium.app.services.skill_runtime.get_skill",
         lambda sid: load_skills(tmp_path).get(sid),
     )
     container = _container(tmp_path)
@@ -112,7 +112,7 @@ async def test_run_skill_missing_required_input(
 ) -> None:
     _write_skills(tmp_path)
     monkeypatch.setattr(
-        "patch_machine.app.services.skill_runtime.get_skill",
+        "negotium.app.services.skill_runtime.get_skill",
         lambda sid: load_skills(tmp_path).get(sid),
     )
     container = _container(tmp_path)
@@ -123,7 +123,7 @@ async def test_run_skill_missing_required_input(
 async def test_run_tool_skill_delegates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write_skills(tmp_path)
     monkeypatch.setattr(
-        "patch_machine.app.services.skill_runtime.get_skill",
+        "negotium.app.services.skill_runtime.get_skill",
         lambda sid: load_skills(tmp_path).get(sid),
     )
     captured: dict[str, Any] = {}
@@ -133,7 +133,7 @@ async def test_run_tool_skill_delegates(tmp_path: Path, monkeypatch: pytest.Monk
         captured["args"] = args
         return SimpleNamespace(result={"hits": []}, guard_findings=[])
 
-    monkeypatch.setattr("patch_machine.app.services.skill_runtime.call_tool", _fake_call_tool)
+    monkeypatch.setattr("negotium.app.services.skill_runtime.call_tool", _fake_call_tool)
     container = _container(tmp_path)
     result = await run_skill(container, "test.tool_skill", {"query": "login bug"}, actor="tester")
     assert captured["tool"] == "memory.search_issues"

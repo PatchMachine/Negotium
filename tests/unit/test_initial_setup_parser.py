@@ -5,7 +5,7 @@ from pathlib import Path
 
 from openpyxl import Workbook
 
-from patch_machine.app.initial_setup import parse_setup_file
+from negotium.app.initial_setup import parse_setup_file
 
 
 def test_parse_setup_csv_extracts_rows_and_sensitive_hint(tmp_path: Path) -> None:

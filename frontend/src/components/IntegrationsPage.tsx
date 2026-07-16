@@ -30,7 +30,7 @@ type IntegrationTab = 'overview' | 'connectors' | 'mcp' | 'audit';
 const DEFAULT_GITHUB_FORM: GitHubConnectorConfig = {
   enabled: false,
   allowed_repos: [],
-  trigger_label: 'patch-machine',
+  trigger_label: 'negotium',
   webhook_secret: '',
   app_token: '',
   webhook_secret_present: false,
@@ -278,7 +278,7 @@ function GithubConnectorForm({
     try {
       const next = await saveGithubConnector({
         ...form,
-        trigger_label: form.trigger_label.trim() || 'patch-machine',
+        trigger_label: form.trigger_label.trim() || 'negotium',
         allowed_repos: form.allowed_repos.map((repo) => repo.trim()).filter(Boolean),
         event_forms: form.event_forms.map((item) => item.trim()).filter(Boolean),
       });

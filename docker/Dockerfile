@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY pyproject.toml README.md ./
-COPY patch_machine ./patch_machine
+COPY negotium ./negotium
 COPY templates ./templates
 COPY config ./config
 
@@ -29,4 +29,4 @@ RUN adduser --disabled-password --gecos "" patchmachine \
 USER patchmachine
 EXPOSE 8080
 
-CMD ["patch-machine", "serve"]
+CMD ["negotium", "serve"]

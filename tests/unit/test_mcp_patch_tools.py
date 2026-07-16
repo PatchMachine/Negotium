@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from patch_machine.app.container import Container
-from patch_machine.app.services.mcp_hub_service import call_tool
-from patch_machine.app.settings import Settings
+from negotium.app.container import Container
+from negotium.app.services.mcp_hub_service import call_tool
+from negotium.app.settings import Settings
 
 
 def test_agent_generate_plan_tool(tmp_path: Path) -> None:

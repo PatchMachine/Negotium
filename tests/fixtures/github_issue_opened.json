@@ -7,7 +7,7 @@
     "user": {"login": "qa-tester", "type": "User"},
     "labels": [
       {"name": "bug"},
-      {"name": "patch-machine"}
+      {"name": "negotium"}
     ],
     "html_url": "https://github.com/acme/payments/issues/42"
   },

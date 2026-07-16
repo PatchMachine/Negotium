@@ -8,7 +8,7 @@ Patch Machine is an AI Office BPA system that combines a React console, a FastAP
 flowchart TB
   User["Users: owner, manager, staff, viewer"] --> Frontend["React Frontend: localhost:5173"]
 
-  Frontend -->|"REST API"| FastAPI["FastAPI Backend: patch-machine serve"]
+  Frontend -->|"REST API"| FastAPI["FastAPI Backend: negotium serve"]
 
   FastAPI --> OperationsAPI["Operations API"]
   FastAPI --> ContributorSite["Contributor Site"]
@@ -114,7 +114,7 @@ PM_LLM_DEFAULT_ROUTE=local \
 PM_VLLM_MODE=embedded \
 PM_VLLM_PRELOAD_ON_STARTUP=true \
 PM_VLLM_WORKER_MULTIPROC_METHOD=spawn \
-uv run patch-machine serve
+uv run negotium serve
 ```
 
 Docker mode is for the frontend and non-GPU backend operation. It does not load the embedded local GPU model.
@@ -214,14 +214,14 @@ Default roles:
 ```mermaid
 flowchart TB
   subgraph HostGpu["Host GPU Mode"]
-    HostBackend["uv run patch-machine serve"]
+    HostBackend["uv run negotium serve"]
     HostBackend --> EmbeddedVllm["Embedded vLLM on RTX GPU"]
     HostFrontend["npm run dev --prefix frontend"] --> HostBackend
   end
 
   subgraph DockerMode["Docker Compose Mode"]
     DockerFrontend["frontend container"]
-    DockerBackend["patch-machine container"]
+    DockerBackend["negotium container"]
     DockerFrontend --> DockerBackend
     DockerBackend --> CloudProviders["GPT, Claude, Gemini, or external vLLM HTTP"]
   end

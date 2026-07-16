@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from patch_machine.domain.entities import IssueEvent, RepoRef
+from negotium.domain.entities import IssueEvent, RepoRef
 
 
 @pytest.fixture
@@ -24,7 +24,7 @@ def sample_issue(sample_repo: RepoRef) -> IssueEvent:
         title="결제 환불 시 idempotency key 가 재사용되어 중복 환불",
         body="최근 고객이 동일 트랜잭션으로 2회 환불된 사례가 있습니다. /api/refund 경로의 처리 로직을 확인해주세요.",
         author="qa-tester",
-        labels=["bug", "patch-machine"],
+        labels=["bug", "negotium"],
     )
 
 

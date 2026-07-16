@@ -6,14 +6,14 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from patch_machine.adapters.llm.fake_adapter import FakeLlmProvider, ScriptedResponse
-from patch_machine.app.container import Container
-from patch_machine.app.main import create_app
-from patch_machine.app.settings import Settings
-from patch_machine.archive.access_control import UserRecord
-from patch_machine.archive.llm_runtime import LlmRuntimeConfig
-from patch_machine.archive.operations_memory import OperationsMemory
-from patch_machine.archive.patch_runs import PatchRun
+from negotium.adapters.llm.fake_adapter import FakeLlmProvider, ScriptedResponse
+from negotium.app.container import Container
+from negotium.app.main import create_app
+from negotium.app.settings import Settings
+from negotium.archive.access_control import UserRecord
+from negotium.archive.llm_runtime import LlmRuntimeConfig
+from negotium.archive.operations_memory import OperationsMemory
+from negotium.archive.patch_runs import PatchRun
 
 
 def test_health_endpoint_reports_queue_state() -> None:

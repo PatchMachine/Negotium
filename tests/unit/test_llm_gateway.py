@@ -5,10 +5,10 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from patch_machine.adapters.llm import catalog
-from patch_machine.adapters.llm.fake_adapter import FakeLlmProvider, ScriptedResponse
-from patch_machine.adapters.llm.gateway import LlmGateway
-from patch_machine.domain.ports import LlmMessage
+from negotium.adapters.llm import catalog
+from negotium.adapters.llm.fake_adapter import FakeLlmProvider, ScriptedResponse
+from negotium.adapters.llm.gateway import LlmGateway
+from negotium.domain.ports import LlmMessage
 
 
 async def test_default_route_uses_cloud_provider() -> None:

@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any
 
-from patch_machine.app.services.patchops_service import (
+from negotium.app.services.patchops_service import (
     apply_policy_to_plan,
     context_policy,
     fallback_plan,
@@ -11,7 +11,7 @@ from patch_machine.app.services.patchops_service import (
     parse_json_object,
     redact_secrets,
 )
-from patch_machine.archive.patch_runs import PatchRun, PatchRunStore
+from negotium.archive.patch_runs import PatchRun, PatchRunStore
 
 
 def test_patch_run_store_roundtrip_and_events(tmp_path: Path) -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from patch_machine.archive.llm_runtime import LlmRuntimeConfig, LlmRuntimeStore, LlmTaskRoute
+from negotium.archive.llm_runtime import LlmRuntimeConfig, LlmRuntimeStore, LlmTaskRoute
 
 
 def test_runtime_task_routes_roundtrip(tmp_path: Path) -> None:

@@ -5,8 +5,8 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from patch_machine.adapters.llm.vllm_adapter import VllmConnectionError, VllmProvider
-from patch_machine.domain.ports import LlmMessage
+from negotium.adapters.llm.vllm_adapter import VllmConnectionError, VllmProvider
+from negotium.domain.ports import LlmMessage
 
 
 async def test_vllm_provider_posts_openai_compatible_payload() -> None:

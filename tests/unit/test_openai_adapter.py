@@ -7,11 +7,11 @@ from typing import Any
 
 import pytest
 
-from patch_machine.adapters.llm.openai_adapter import (
+from negotium.adapters.llm.openai_adapter import (
     OpenAiProvider,
     _model_uses_completion_tokens_param,
 )
-from patch_machine.domain.ports import LlmMessage
+from negotium.domain.ports import LlmMessage
 
 
 @dataclass

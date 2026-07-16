@@ -1,10 +1,10 @@
 services:
-  patch-machine:
+  negotium:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: patch-machine:0.1.0
-    container_name: patch-machine
+    image: negotium:0.1.0
+    container_name: negotium
     restart: unless-stopped
     env_file:
       - path: ../.env
@@ -17,7 +17,7 @@ services:
       PM_DISCORD_CHANNEL_MAP_PATH: /app/config/channel_map.yml
       # The Docker image does not ship the heavy local LLM stack. To run
       # vLLM (Qwen3-4B etc.), launch the backend on the GPU host directly
-      # with `uv pip install -e '.[dev,local-ai]'` + `uv run patch-machine serve`.
+      # with `uv pip install -e '.[dev,local-ai]'` + `uv run negotium serve`.
       PM_LLM_PROVIDER: openai
       PM_LLM_DEFAULT_ROUTE: cloud
       PM_VLLM_MODE: http
@@ -38,8 +38,8 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: patch-machine:0.1.0
-    container_name: patch-machine-llm-gateway
+    image: negotium:0.1.0
+    container_name: negotium-llm-gateway
     restart: unless-stopped
     env_file:
       - path: ../.env
@@ -53,7 +53,7 @@ services:
       - ../archive:/app/archive
     ports:
       - "8090:8090"
-    command: patch-machine llm-gateway
+    command: negotium llm-gateway
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health').read()"]
       interval: 30s
@@ -64,13 +64,13 @@ services:
     build:
       context: ..
       dockerfile: docker/frontend.Dockerfile
-    image: patch-machine-frontend:0.1.0
-    container_name: patch-machine-frontend
+    image: negotium-frontend:0.1.0
+    container_name: negotium-frontend
     restart: unless-stopped
     depends_on:
-      - patch-machine
+      - negotium
     environment:
-      VITE_API_PROXY_TARGET: http://patch-machine:8080
+      VITE_API_PROXY_TARGET: http://negotium:8080
     volumes:
       - ../frontend:/app
       - frontend-node-modules:/app/node_modules

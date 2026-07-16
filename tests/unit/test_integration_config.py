@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from patch_machine.archive.integration_config import (
+from negotium.archive.integration_config import (
     DiscordChannelBindingConfig,
     DiscordConnectorConfig,
     GitHubConnectorConfig,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from patch_machine.archive.patch_records import PatchRecordStore
+from negotium.archive.patch_records import PatchRecordStore
 
 
 def test_patch_record_round_trip_writes_markdown_and_index(archive_tmp: Path) -> None:
@@ -15,7 +15,7 @@ def test_patch_record_round_trip_writes_markdown_and_index(archive_tmp: Path) ->
         summary="GitHub/Discord 외부 설정 폼을 도입했습니다.",
         request="이슈 #42 의 요청 사항",
         plan=["스토어 추가", "API 연결", "UI 폼"],
-        changed_files=["patch_machine/app/api/__init__.py"],
+        changed_files=["negotium/app/api/__init__.py"],
         verification=["uv run ruff check 통과"],
         follow_ups=["Notion 커넥터"],
         tags=["connector", "ui"],
@@ -39,7 +39,7 @@ def test_patch_record_round_trip_writes_markdown_and_index(archive_tmp: Path) ->
     markdown = store.read_markdown(record.record_id)
     assert markdown is not None
     assert "외부 커넥터 폼 추가" in markdown
-    assert "patch_machine/app/api/__init__.py" in markdown
+    assert "negotium/app/api/__init__.py" in markdown
 
 
 def test_patch_record_handles_string_inputs(archive_tmp: Path) -> None:

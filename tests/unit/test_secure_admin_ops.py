@@ -6,25 +6,25 @@ from pathlib import Path
 
 import pytest
 
-from patch_machine.app.reset_state import reset_system_state
-from patch_machine.archive.access_control import (
+from negotium.app.reset_state import reset_system_state
+from negotium.archive.access_control import (
     AccessControlStore,
     DepartmentRecord,
     PositionRecord,
     UserRecord,
 )
-from patch_machine.archive.agent_execution import AgentExecutionStore, AgentPlan
-from patch_machine.archive.audit_log import AuditLogStore
-from patch_machine.archive.auth_store import AuthStore
-from patch_machine.archive.context_compressor import CompressedContext, CompressedContextStore
-from patch_machine.archive.conversation_store import ConversationRecord, ConversationStore
-from patch_machine.archive.deletion_requests import DeletionRequest, DeletionRequestStore
-from patch_machine.archive.memory_schema import MemorySchema, MemorySchemaStore
-from patch_machine.archive.permanent_memory import PermanentMemoryStore
-from patch_machine.archive.secret_store import ApiKeyRecord, SecretStore
-from patch_machine.archive.uploads import UploadStore
-from patch_machine.archive.volatile_memory import VolatileMemory, VolatileMemoryStore
-from patch_machine.archive.work_memory import (
+from negotium.archive.agent_execution import AgentExecutionStore, AgentPlan
+from negotium.archive.audit_log import AuditLogStore
+from negotium.archive.auth_store import AuthStore
+from negotium.archive.context_compressor import CompressedContext, CompressedContextStore
+from negotium.archive.conversation_store import ConversationRecord, ConversationStore
+from negotium.archive.deletion_requests import DeletionRequest, DeletionRequestStore
+from negotium.archive.memory_schema import MemorySchema, MemorySchemaStore
+from negotium.archive.permanent_memory import PermanentMemoryStore
+from negotium.archive.secret_store import ApiKeyRecord, SecretStore
+from negotium.archive.uploads import UploadStore
+from negotium.archive.volatile_memory import VolatileMemory, VolatileMemoryStore
+from negotium.archive.work_memory import (
     WorkMemory,
     WorkMemoryStore,
     WorkScheduleItem,

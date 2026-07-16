@@ -5,16 +5,16 @@ from __future__ import annotations
 import base64
 from pathlib import Path
 
-from patch_machine.adapters.llm.catalog import model_supports_audio, model_supports_vision
-from patch_machine.adapters.llm.multimodal import (
+from negotium.adapters.llm.catalog import model_supports_audio, model_supports_vision
+from negotium.adapters.llm.multimodal import (
     to_anthropic_content,
     to_gemini_parts,
     to_openai_content,
     to_text,
 )
-from patch_machine.app.services.attachment_service import extract_attachment
-from patch_machine.app.services.document_output import resolve_output_format, write_generated_doc
-from patch_machine.domain.ports import audio_part, flatten_message_text, image_part, text_part
+from negotium.app.services.attachment_service import extract_attachment
+from negotium.app.services.document_output import resolve_output_format, write_generated_doc
+from negotium.domain.ports import audio_part, flatten_message_text, image_part, text_part
 
 _PNG_1PX = base64.b64encode(
     base64.b64decode(

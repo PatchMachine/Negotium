@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from patch_machine.app.api import _resolve_runtime_model, _resolve_task_model
-from patch_machine.app.container import Container
-from patch_machine.app.settings import Settings
-from patch_machine.archive.llm_runtime import LlmRuntimeConfig, LlmTaskRoute
+from negotium.app.api import _resolve_runtime_model, _resolve_task_model
+from negotium.app.container import Container
+from negotium.app.settings import Settings
+from negotium.archive.llm_runtime import LlmRuntimeConfig, LlmTaskRoute
 
 
 def test_resolve_runtime_model_prefers_local_model(tmp_path: Path) -> None:

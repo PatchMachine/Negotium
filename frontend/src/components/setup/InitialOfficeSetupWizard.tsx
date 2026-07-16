@@ -32,7 +32,7 @@ type Step = 'admin' | 'llm' | 'profile' | 'files' | 'analyze' | 'review';
 type LlmChoice = 'local' | 'api';
 type ReviewSection = 'memory' | 'agents' | 'templates' | 'workflows' | 'security' | 'integrations' | 'routes';
 
-const SETUP_DRAFT_KEY = 'patch-machine-initial-setup-draft';
+const SETUP_DRAFT_KEY = 'negotium-initial-setup-draft';
 
 const recommendedLocalModels = [
   {
@@ -150,7 +150,7 @@ function loadSetupDraft(): SetupDraft | null {
       step: parsed.step,
       admin: parsed.admin || { user_id: '', display_name: '', title: '시스템 관리자' },
       llmChoice: parsed.llmChoice || 'local',
-      provider: parsed.provider || 'openai',
+      provider: parsed.provider || 'solar',
       model: parsed.model || '',
       localModel: parsed.localModel || 'Qwen/Qwen3-4B',
       localModelQuery: parsed.localModelQuery || 'Qwen',

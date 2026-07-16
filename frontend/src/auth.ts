@@ -1,4 +1,4 @@
-const TOKEN_KEY = 'patch-machine-session-token';
+const TOKEN_KEY = 'negotium-session-token';
 
 export function getSessionToken(): string {
   return localStorage.getItem(TOKEN_KEY) || '';

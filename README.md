@@ -35,7 +35,7 @@ Office Form   --+                         |
 uv venv --python 3.11 .venv && source .venv/bin/activate
 uv pip install -e ".[dev]"
 cp .env.example .env          # 값 채워 넣기
-patch-machine serve
+negotium serve
 ```
 
 백엔드 API와 기존 서버 렌더링 페이지는 FastAPI 서버에서 제공됩니다.
@@ -94,8 +94,8 @@ API 설정 화면은 OpenAI, Anthropic, Gemini, Together의 모델 목록 API를
 외부 LLM 호출만 별도 프로세스로 분리하려면 경량 게이트웨이를 실행합니다.
 
 ```bash
-patch-machine llm-gateway --port 8090
-PM_LLM_GATEWAY_URL=http://localhost:8090 patch-machine serve
+negotium llm-gateway --port 8090
+PM_LLM_GATEWAY_URL=http://localhost:8090 negotium serve
 ```
 
 게이트웨이는 GPT/Claude/Gemini/Together/vLLM HTTP 호출, 공급자별 모델 목록 조회, API 키 저장소 조회만 담당합니다.
@@ -111,7 +111,7 @@ uv pip install -e ".[dev,local-ai]"
 # flash-attn은 CUDA 빌드가 까다로워 build isolation 없이 별도 설치합니다.
 uv pip install --no-build-isolation "flash-attn>=2.6"
 cp .env.example .env              # PM_VLLM_MODE=embedded 등 확인
-patch-machine serve
+negotium serve
 ```
 
 첫 요청에서 모델 가중치 로딩 + CUDA 그래프 캡처가 일어나기 때문에 수십 초~수 분이 걸릴 수 있습니다.
@@ -147,23 +147,23 @@ AI 업무 아키텍처 생성 결과는 `archive/work_architecture/`에 Markdown
 ### 초기화 CLI 명세
 
 초기화는 Patch Machine 백엔드가 설치된 호스트에서 실행합니다. 개발 환경에서는 저장소 루트에서
-가상환경을 활성화한 뒤 실행하고, Docker 환경에서는 `patch-machine` 이미지/컨테이너 안에서 실행합니다.
+가상환경을 활성화한 뒤 실행하고, Docker 환경에서는 `negotium` 이미지/컨테이너 안에서 실행합니다.
 
 ```bash
 # 로컬 개발 환경
 cd /path/to/PatchMachine_Core_Engine
 source .venv/bin/activate
-patch-machine reset-state --yes --actor admin
+negotium reset-state --yes --actor admin
 
 # uv로 실행하는 경우
-uv run patch-machine reset-state --yes --actor admin
+uv run negotium reset-state --yes --actor admin
 ```
 
 Docker Compose로 띄운 경우에는 archive 볼륨을 공유하는 백엔드 컨테이너에서 실행합니다.
 
 ```bash
-docker compose -f docker/docker-compose.yml run --rm patch-machine \
-  patch-machine reset-state --yes --actor admin
+docker compose -f docker/docker-compose.yml run --rm negotium \
+  negotium reset-state --yes --actor admin
 ```
 
 옵션은 다음과 같습니다.
@@ -175,7 +175,7 @@ docker compose -f docker/docker-compose.yml run --rm patch-machine \
 예를 들어 내부 메모리와 계정/API 키만 초기화하고 작업 디렉터리는 남기려면 다음처럼 실행합니다.
 
 ```bash
-patch-machine reset-state --yes --actor admin --no-include-workspaces
+negotium reset-state --yes --actor admin --no-include-workspaces
 ```
 
 이 명령은 `archive/`의 운영 메모리, 권한, 인증 세션, API 키 저장소, 업로드, 생성 문서,
@@ -230,7 +230,7 @@ guilds:
 
 ```bash
 ruff check . && ruff format --check .
-mypy patch_machine
+mypy negotium
 pytest -q
 ```
 

@@ -1,14 +1,14 @@
 from pathlib import Path
 
-from patch_machine.app.services.issue_memory_service import (
+from negotium.app.services.issue_memory_service import (
     capture_issue_event,
     capture_manual_issue,
     issue_memory_tool_descriptors,
     redact_issue_payload,
     search_issue_memory,
 )
-from patch_machine.archive.issue_memory import IssueMemoryStore
-from patch_machine.domain.entities import IssueEvent, RepoRef
+from negotium.archive.issue_memory import IssueMemoryStore
+from negotium.domain.entities import IssueEvent, RepoRef
 
 
 def test_issue_memory_capture_normalizes_and_clusters(tmp_path: Path) -> None:
