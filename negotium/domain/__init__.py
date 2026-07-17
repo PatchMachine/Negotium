@@ -1,29 +1,11 @@
-"""Domain layer: framework/IO-agnostic core entities, value objects, and ports."""
+"""Domain layer: framework/IO-agnostic core value objects and ports."""
 
-from negotium.domain.entities import (
-    IssueEvent,
-    PatchProposal,
-    RepoRef,
-    ReviewVerdict,
-    WorkSpec,
-)
-from negotium.domain.ports import (
-    ArchiveStore,
-    CodeRepository,
-    IssueSource,
-    LlmProvider,
-    Notifier,
-)
+from negotium.domain.entities import LlmRoute
+from negotium.domain.ports import LlmMessage, LlmProvider, LlmResponse
 
 __all__ = [
-    "ArchiveStore",
-    "CodeRepository",
-    "IssueEvent",
-    "IssueSource",
+    "LlmMessage",
     "LlmProvider",
-    "Notifier",
-    "PatchProposal",
-    "RepoRef",
-    "ReviewVerdict",
-    "WorkSpec",
+    "LlmResponse",
+    "LlmRoute",
 ]

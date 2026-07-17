@@ -8,10 +8,7 @@ from fastapi import APIRouter
 from negotium.app.api._shared import (
     _build_chat_messages,
     _complete_office_task,
-    _complete_patchops_task,
     _complete_with_provider,
-    _fetch_discord_status,
-    _fetch_github_status,
     _generate_hiring_document,
     _initial_office_setup_prompt,
     _is_slash_command,
@@ -32,7 +29,6 @@ from negotium.app.api.documents import create_documents_router
 from negotium.app.api.integrations import create_integrations_router
 from negotium.app.api.llm import create_llm_router
 from negotium.app.api.memory import create_memory_router
-from negotium.app.api.patchops_execution import create_patchops_execution_router
 from negotium.app.api.setup import create_setup_router
 from negotium.app.api.uploads import create_uploads_router
 from negotium.app.api.work import create_work_router
@@ -41,10 +37,7 @@ from negotium.app.container import Container
 __all__ = [
     "_build_chat_messages",
     "_complete_office_task",
-    "_complete_patchops_task",
     "_complete_with_provider",
-    "_fetch_discord_status",
-    "_fetch_github_status",
     "_generate_hiring_document",
     "_initial_office_setup_prompt",
     "_is_slash_command",
@@ -65,7 +58,6 @@ __all__ = [
     "create_llm_router",
     "create_memory_router",
     "create_operations_api_router",
-    "create_patchops_execution_router",
     "create_setup_router",
     "create_uploads_router",
     "create_work_router",
@@ -75,7 +67,6 @@ __all__ = [
 def create_operations_api_router(container: Container) -> APIRouter:
     """Create frontend-facing API routes bound to the app container."""
     router = APIRouter(prefix="/api", tags=["frontend-api"])
-    router.include_router(create_patchops_execution_router(container))
     router.include_router(create_auth_router(container))
     router.include_router(create_setup_router(container))
     router.include_router(create_uploads_router(container))

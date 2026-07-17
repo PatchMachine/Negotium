@@ -9,23 +9,6 @@ from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class GitHubSettings(BaseSettings):
-    webhook_secret: str = "change-me"
-    app_token: str = ""
-    allowed_repos: list[str] = Field(default_factory=list)
-    trigger_label: str = "negotium"
-
-    model_config = SettingsConfigDict(env_prefix="NG_GITHUB_")
-
-
-class DiscordSettings(BaseSettings):
-    bot_token: str = ""
-    guild_allowlist: list[str] = Field(default_factory=list)
-    channel_map_path: Path = Path("./config/channel_map.yml")
-
-    model_config = SettingsConfigDict(env_prefix="NG_DISCORD_")
-
-
 class LlmSettings(BaseSettings):
     # The documented env names are NG_LLM_DEFAULT_ROUTE / NG_LLM_PROVIDER /
     # NG_LLM_GATEWAY_URL / NG_LOCAL_LLM_BASE_URL; the aliases also accept the
@@ -86,12 +69,8 @@ class Settings(BaseSettings):
     http_port: int = 8080
     llm_gateway_host: str = "0.0.0.0"
     llm_gateway_port: int = 8090
-    event_queue_size: int = 100
-    max_self_correction: int = 2
     secret_key: str = ""
 
-    github: GitHubSettings = Field(default_factory=GitHubSettings)
-    discord: DiscordSettings = Field(default_factory=DiscordSettings)
     llm: LlmSettings = Field(default_factory=LlmSettings)
 
     model_config = SettingsConfigDict(

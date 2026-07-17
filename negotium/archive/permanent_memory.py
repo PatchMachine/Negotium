@@ -21,7 +21,6 @@ SourceKind = Literal[
     "document",
     "conversation",
     "promoted_memory",
-    "patch_record",
     "upload",
     "token_usage",
     "unknown",
@@ -241,21 +240,12 @@ def _kind_for(path: Path, archive_dir: Path) -> SourceKind:
         return "conversation"
     if parts[:2] == ("memory", "promoted") and path.suffix == ".md":
         return "promoted_memory"
-    if parts and parts[0] == "patch_records" and path.suffix in {".md", ".jsonl"}:
-        return "patch_record"
     if (
         parts
         and parts[0] == "uploads"
         and path.suffix in {".md", ".markdown", ".txt", ".json", ".jsonl", ".yaml", ".yml"}
     ):
         return "upload"
-    if parts[:2] == ("patch_ops", "workspaces") and path.suffix in {
-        ".md",
-        ".patch",
-        ".txt",
-        ".json",
-    }:
-        return "document"
     if (
         parts
         and parts[0] in {"documents", "hr", "handover", "work_architecture"}

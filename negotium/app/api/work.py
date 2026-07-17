@@ -70,8 +70,6 @@ def create_work_router(container: Container) -> APIRouter:
         memory = container.operations_memory.read()
         return ApiStatusPayload(
             ok=True,
-            queue_size=container.bus.size,
-            queue_capacity=container.bus.capacity,
             metrics=container.metrics.snapshot(),
             operations_memory_configured=any(memory.to_dict().values()),
         )
@@ -80,8 +78,6 @@ def create_work_router(container: Container) -> APIRouter:
     async def read_progress() -> ProgressPayload:
         return ProgressPayload(
             current_status_md=container.archive.status.read(),
-            queue_size=container.bus.size,
-            queue_capacity=container.bus.capacity,
             recent_logs=_recent_logs(container.settings.archive_dir, limit=8),
         )
 
