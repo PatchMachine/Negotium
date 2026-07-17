@@ -44,6 +44,8 @@ export default function DocumentAutomationPage() {
   const [attachmentIds, setAttachmentIds] = useState<string[]>([]);
   const [uploadBusy, setUploadBusy] = useState(false);
   const [uploadError, setUploadError] = useState('');
+  const [generateTasks, setGenerateTasks] = useState(false);
+  const [participants, setParticipants] = useState('');
 
   async function refreshUploads() {
     try {
@@ -108,6 +110,8 @@ export default function DocumentAutomationPage() {
         token_budget: 6000,
         attachment_ids: attachmentIds,
         output_format: outputFormat,
+        generate_tasks: draft.document_type === 'meeting_minutes' && generateTasks,
+        participants,
       });
       setResult(next);
       setJob(next.ai_job ?? null);
@@ -181,6 +185,28 @@ export default function DocumentAutomationPage() {
               onChange={(event) => setDraft({ ...draft, source_text: event.target.value })}
             />
           </label>
+          {draft.document_type === 'meeting_minutes' ? (
+            <>
+              <label className="switch-row">
+                <input
+                  type="checkbox"
+                  checked={generateTasks}
+                  onChange={(event) => setGenerateTasks(event.target.checked)}
+                />
+                <span>액션 아이템을 업무 배정에 자동 등록</span>
+              </label>
+              {generateTasks ? (
+                <label>
+                  담당자
+                  <input
+                    value={participants}
+                    placeholder="예: 김담당 (업무 배정 화면의 작업자 이름)"
+                    onChange={(event) => setParticipants(event.target.value)}
+                  />
+                </label>
+              ) : null}
+            </>
+          ) : null}
           <label>
             출력 형식
             <select
@@ -215,6 +241,19 @@ export default function DocumentAutomationPage() {
                   <li key={index}>{note}</li>
                 ))}
               </ul>
+            ) : null}
+            {result.created_tasks && result.created_tasks.length > 0 ? (
+              <div className="panel-inset">
+                <p className="eyebrow">업무 배정 등록됨</p>
+                <ul className="muted small">
+                  {result.created_tasks.map((task) => (
+                    <li key={task.id}>
+                      {task.title} — {task.owner_name || '담당 미지정'}
+                    </li>
+                  ))}
+                </ul>
+                <p className="muted small">업무 배정 화면에서 순서/담당자를 조정할 수 있습니다.</p>
+              </div>
             ) : null}
             <pre className="status-pre">{result.markdown}</pre>
           </>

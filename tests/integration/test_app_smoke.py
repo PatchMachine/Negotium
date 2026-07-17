@@ -13,6 +13,7 @@ from negotium.app.settings import Settings
 from negotium.archive.access_control import UserRecord
 from negotium.archive.llm_runtime import LlmRuntimeConfig
 from negotium.archive.operations_memory import OperationsMemory
+from negotium.archive.work_memory import WorkScheduleItem
 
 
 def test_health_endpoint_reports_metrics() -> None:
@@ -332,6 +333,100 @@ def test_ai_office_generation_endpoints_write_archive_docs(tmp_path: Path) -> No
     assert document.status_code == 200
     assert document.json()["path"].startswith("documents/")
     assert (archive_dir / hiring.json()["path"]).exists()
+
+
+def test_meeting_minutes_action_items_become_work_schedule(tmp_path: Path) -> None:
+    archive_dir = tmp_path / "archive"
+    container = Container.build(
+        Settings(env="test", archive_dir=archive_dir, workspace_dir=tmp_path / "workspaces")
+    )
+    container.llm = FakeLlmProvider(
+        responses=[
+            ScriptedResponse(text="## 회의록\n- 결정: 주간보고 자동화\n- 액션: 보고서 초안 정리"),
+            ScriptedResponse(
+                text=(
+                    '{"steps": ['
+                    '{"name": "보고서 초안 정리", "automation": "AI 초안 생성", '
+                    '"reviewer": "김담당", "output": "주간 보고 초안"},'
+                    '{"name": "고객사 회신", "automation": "", "reviewer": "", "output": "회신 메일"}'
+                    "]}"
+                )
+            ),
+        ]
+    )
+    container.llm_runtime.write(
+        LlmRuntimeConfig(
+            default_route="api", default_provider="fake", local_enabled=True, api_enabled=True
+        )
+    )
+    headers = _auth_headers(container)
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        minutes = client.post(
+            "/api/documents/generate",
+            headers=headers,
+            json={
+                "document_type": "meeting_minutes",
+                "title": "주간 운영 회의",
+                "source_text": "주간보고 자동화를 결정. 김담당이 보고서 초안 정리.",
+                "audience": "운영팀",
+                "generate_tasks": True,
+                "participants": "김담당",
+            },
+        )
+        schedule = client.get("/api/work-schedule", headers=headers)
+
+    assert minutes.status_code == 200
+    created = minutes.json()["created_tasks"]
+    assert len(created) == 2
+    assert created[0]["title"].startswith("[1단계]")
+    titles = [item["title"] for item in schedule.json()["items"]]
+    assert any("보고서 초안 정리" in title for title in titles)
+    assert any("고객사 회신" in title for title in titles)
+    # Steps are sequentially dependent: step 2 waits on step 1.
+    second = next(item for item in schedule.json()["items"] if "고객사 회신" in item["title"])
+    assert second["dependencies"]
+
+
+def test_weekly_report_collects_schedule_and_writes_document(tmp_path: Path) -> None:
+    archive_dir = tmp_path / "archive"
+    container = Container.build(
+        Settings(env="test", archive_dir=archive_dir, workspace_dir=tmp_path / "workspaces")
+    )
+    container.llm = FakeLlmProvider(
+        responses=[ScriptedResponse(text="# 주간 업무 보고\n- 완료 1건, 진행 1건")]
+    )
+    container.llm_runtime.write(
+        LlmRuntimeConfig(
+            default_route="api", default_provider="fake", local_enabled=True, api_enabled=True
+        )
+    )
+    headers = _auth_headers(container)
+    container.work_schedule.upsert(
+        WorkScheduleItem.create(title="문서 자동화 세팅", owner_name="이재석", status="done")
+    )
+    container.work_schedule.upsert(
+        WorkScheduleItem.create(title="주간보고 검토", owner_name="이민우", status="in_progress")
+    )
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        report = client.post("/api/reports/weekly", headers=headers)
+
+    assert report.status_code == 200
+    assert report.json()["path"].startswith("documents/")
+    assert "주간 업무 보고" in report.json()["markdown"]
+    assert (archive_dir / report.json()["path"]).exists()
+    # The prompt fed to the LLM must contain the live schedule state.
+    prompt_text = "\n".join(
+        str(message.content)
+        for call in container.llm.calls
+        for message in call
+        if isinstance(message.content, str)
+    )
+    assert "문서 자동화 세팅" in prompt_text
+    assert "이민우" in prompt_text
 
 
 def test_office_document_generation_falls_back_when_llm_returns_empty(tmp_path: Path) -> None:

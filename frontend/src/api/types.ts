@@ -401,6 +401,7 @@ export type GeneratedDocument = {
   ai_job?: AiJobStatus;
   output_format?: string;
   attachment_notes?: string[];
+  created_tasks?: WorkScheduleItem[];
 };
 
 export type HandoverRequest = {
@@ -425,6 +426,8 @@ export type OfficeDocumentRequest = {
   token_budget?: number;
   attachment_ids?: string[];
   output_format?: OfficeDocumentOutputFormat;
+  generate_tasks?: boolean;
+  participants?: string;
 };
 
 export type ApiKeyInfo = {

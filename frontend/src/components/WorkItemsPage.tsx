@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import {
+  createWeeklyReport,
   fetchCurrentUser,
   fetchWorkItems,
   readArchiveDocument,
@@ -27,6 +28,8 @@ export default function WorkItemsPage() {
   const [preview, setPreview] = useState<DocumentRead | null>(null);
   const [previewError, setPreviewError] = useState('');
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [reportBusy, setReportBusy] = useState(false);
+  const [reportPath, setReportPath] = useState('');
 
   async function refresh() {
     try {
@@ -237,6 +240,33 @@ export default function WorkItemsPage() {
           <p className="muted small">
             md 경로를 누르면 현재 AI/업무가 생성한 계획과 산출물을 바로 열람합니다.
           </p>
+          <div className="switch-row">
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={reportBusy}
+              onClick={() => {
+                setReportBusy(true);
+                setReportPath('');
+                createWeeklyReport()
+                  .then((doc) => {
+                    setReportPath(doc.path);
+                    setMessage('주간 업무 보고서를 생성했습니다.');
+                  })
+                  .catch((err) =>
+                    setMessage(err instanceof Error ? err.message : '주간보고 생성 실패'),
+                  )
+                  .finally(() => setReportBusy(false));
+              }}
+            >
+              {reportBusy ? '주간보고 생성 중...' : '주간보고 자동 생성'}
+            </button>
+            {reportPath ? (
+              <button type="button" className="secondary-button" onClick={() => void openDocument(reportPath)}>
+                생성된 보고서 열기
+              </button>
+            ) : null}
+          </div>
           <pre className="status-pre">{workItems?.bottleneck_summary ?? '병목 요약을 불러오는 중...'}</pre>
 
           <h3>프로세스 단계 큐</h3>

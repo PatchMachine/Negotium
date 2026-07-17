@@ -496,6 +496,7 @@ class GeneratedDocumentPayload(BaseModel):
     ai_job: dict[str, Any] = Field(default_factory=dict)
     output_format: str = "markdown"
     attachment_notes: list[str] = Field(default_factory=list)
+    created_tasks: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class HandoverRequest(BaseModel):
@@ -518,6 +519,9 @@ class OfficeDocumentRequest(BaseModel):
     token_budget: int = 4000
     attachment_ids: list[str] = Field(default_factory=list)
     output_format: Literal["auto", "markdown", "html", "csv", "json", "text"] = "auto"
+    # meeting_minutes only: also turn action items into work-schedule assignments.
+    generate_tasks: bool = False
+    participants: str = ""
 
 
 class SkillRunRequest(BaseModel):

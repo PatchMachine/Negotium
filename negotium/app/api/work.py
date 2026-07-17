@@ -28,6 +28,7 @@ from negotium.app.api._shared import (
     _require_editable_plan,
     _require_plan,
     _resequence_plan,
+    _resolve_output_format,
     _run_step_skill,
     _schedule_to_work_items,
     _start_ai_job,
@@ -97,6 +98,88 @@ def create_work_router(container: Container) -> APIRouter:
         items = queue_items + logs
         summary = _summarize_queue(queue_items) or _summarize_bottlenecks(logs)
         return WorkItemsPayload(items=items, bottleneck_summary=summary)
+
+    @router.post("/reports/weekly")
+    async def create_weekly_report(
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
+    ) -> GeneratedDocumentPayload:
+        """One-click weekly manager report from accumulated work state.
+
+        Gathers the live work schedule, queue/bottleneck summaries, and recent
+        archive logs, then asks the document LLM for a manager-facing report.
+        """
+        actor = _require(container, x_ng_user, "documents:write")
+        schedule = container.work_schedule.list()
+        queue_items = _schedule_to_work_items(
+            schedule, plan_status_by_step=_plan_status_by_step(container)
+        )
+        logs = _recent_logs(container.settings.archive_dir, limit=12)
+
+        by_status: dict[str, list[dict[str, object]]] = {}
+        for item in schedule:
+            by_status.setdefault(str(item.get("status") or "todo"), []).append(item)
+        source_lines: list[str] = ["## 업무 스케줄 현황"]
+        for status_key in ("done", "in_progress", "blocked", "todo", "cancelled"):
+            rows = by_status.get(status_key, [])
+            if not rows:
+                continue
+            source_lines.append(f"### {status_key} ({len(rows)}건)")
+            for row in rows[:20]:
+                owner = str(row.get("owner_name") or row.get("owner_id") or "미배정")
+                note = str(row.get("completion_record") or row.get("notes") or "").strip()
+                line = f"- {row.get('title')} (담당: {owner})"
+                if note:
+                    line += f" — {note[:160]}"
+                source_lines.append(line)
+        queue_summary = _summarize_queue(queue_items)
+        if queue_summary:
+            source_lines += ["", "## 프로세스 큐 요약", queue_summary]
+        source_lines += ["", "## 병목 요약", _summarize_bottlenecks(logs)]
+        if logs:
+            source_lines += ["", "## 최근 기록"]
+            source_lines += [f"- {log.get('path')}" for log in logs[:8]]
+        source_text = "\n".join(source_lines)
+
+        title = "주간 업무 보고"
+        prompt = render_prompt(
+            "office/document_generation.md.j2",
+            context=_office_context(container),
+            readable_context="",
+            attachment_context="",
+            document_label="주간 업무 보고서",
+            title=title,
+            audience="경영진/관리자",
+            source_text=source_text,
+            output_format="markdown",
+        ).strip()
+        job = _start_ai_job(
+            container,
+            task="document_generation",
+            actor=actor,
+            input_summary=f"weekly_report: 스케줄 {len(schedule)}건, 로그 {len(logs)}건",
+        )
+        try:
+            raw = await _complete_office_task(container, prompt, task="document_generation")
+            resolved_format, body = _resolve_output_format(raw, requested="markdown")
+            path = _write_generated_doc(
+                container.settings.archive_dir,
+                folder="documents",
+                slug=f"weekly_report_{title}",
+                markdown=body,
+                output_format=resolved_format,
+            )
+            job = _finish_ai_job(container, job, status="succeeded", result_path=path)
+        except Exception as exc:
+            _finish_ai_job(container, job, status="failed", error=str(exc))
+            raise
+        _audit(container, actor=actor, action="document.create", target="document", target_id=path)
+        return GeneratedDocumentPayload(
+            title=title,
+            markdown=body,
+            path=path,
+            ai_job=_ai_job_payload(job).model_dump(),
+            output_format=resolved_format,
+        )
 
     @router.post("/work-schedule/items/{item_id}/run")
     async def run_work_schedule_item(
