@@ -38,7 +38,6 @@ const WorkMemoryPage = lazy(() => import('./components/WorkMemoryPage'));
 const WorkSchedulePage = lazy(() => import('./components/WorkSchedulePage'));
 const SkillsPage = lazy(() => import('./components/SkillsPage'));
 const WorkflowStatusPage = lazy(() => import('./components/WorkflowStatusPage'));
-const AiAgentPage = lazy(() => import('./components/ai/AiAgentPage'));
 const InitialOfficeSetupWizard = lazy(() => import('./components/setup/InitialOfficeSetupWizard'));
 
 const emptyMemory: OperationsMemory = {
@@ -57,7 +56,6 @@ type Page =
   | 'home'
   | 'profile'
   | 'dashboard'
-  | 'chat'
   | 'assistant'
   | 'skills'
   | 'progress'
@@ -93,7 +91,6 @@ const navItems: NavItem[] = [
   { id: 'documents', label: '문서 자동화', group: '오피스워크' },
   { id: 'documents-viewer', label: '문서 열람', group: '오피스워크', requiredPermission: 'documents:read' },
   { id: 'handover', label: '인수인계', group: '오피스워크' },
-  { id: 'chat', label: '코딩 에이전트 계획서 작성', group: '오피스워크' },
   { id: 'dashboard', label: '회사 운영 설정', group: '조직·운영 관리', requiredPermission: 'memory:write' },
   { id: 'personnel', label: '인사관리', group: '조직·운영 관리', requiredPermission: 'admin:users' },
   { id: 'uploads', label: '업로드', group: '시스템 관리', requiredPermission: 'uploads:write' },
@@ -107,7 +104,6 @@ const navItems: NavItem[] = [
 // (home/profile/dashboard/integrations) are handled explicitly in renderPage.
 const simplePages: Partial<Record<Page, ComponentType>> = {
   assistant: LlmChatPage,
-  chat: AiAgentPage,
   progress: ProgressLogPage,
   work: WorkItemsPage,
   'work-memory': WorkMemoryPage,

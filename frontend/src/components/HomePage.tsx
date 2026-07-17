@@ -9,7 +9,6 @@ export default function HomePage({
   status: ApiStatus | null;
   onAction: (page: string) => void;
 }) {
-  const queue = status ? `${status.queue_size}/${status.queue_capacity}` : '-';
   const memoryState = status?.operations_memory_configured ? '설정 완료' : '초기 상태';
   return (
     <section>
@@ -30,7 +29,7 @@ export default function HomePage({
         </article>
         <article className="guide-card">
           <p className="eyebrow">시스템 상태</p>
-          <h3>큐 {queue} · 메모리 {memoryState}</h3>
+          <h3>API {status?.ok ? '정상' : '확인 중'} · 메모리 {memoryState}</h3>
           <p>최근 업무 로그와 병목 요약을 업무 현황 페이지에서 확인할 수 있습니다.</p>
           <button type="button" onClick={() => onAction('work')}>업무 현황 보기</button>
         </article>

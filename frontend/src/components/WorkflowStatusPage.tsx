@@ -5,14 +5,12 @@ import {
   fetchAiJobs,
   fetchLlmRuntime,
   fetchLocalLlmStatus,
-  fetchPatchRuns,
   fetchProgress,
   fetchTokenLimits,
   type AgentPlan,
   type AiJobStatus,
   type LlmRuntime,
   type LocalLlmStatus,
-  type PatchRun,
   type ProgressPayload,
   type TokenLimitStatus,
 } from '../api';
@@ -20,7 +18,6 @@ import {
 type WorkflowSnapshot = {
   jobs: AiJobStatus[];
   plans: AgentPlan[];
-  patchRuns: PatchRun[];
   progress: ProgressPayload | null;
   runtime: LlmRuntime | null;
   localLlm: LocalLlmStatus | null;
@@ -30,7 +27,6 @@ type WorkflowSnapshot = {
 const EMPTY_SNAPSHOT: WorkflowSnapshot = {
   jobs: [],
   plans: [],
-  patchRuns: [],
   progress: null,
   runtime: null,
   localLlm: null,
@@ -45,16 +41,15 @@ export default function WorkflowStatusPage() {
   async function refresh() {
     setLoading(true);
     setMessage('');
-    const [jobs, plans, patchRuns, progress, runtime, localLlm, tokenLimits] = await Promise.all([
+    const [jobs, plans, progress, runtime, localLlm, tokenLimits] = await Promise.all([
       fetchAiJobs(80).then((payload) => payload.jobs).catch(() => []),
       fetchAgentPlans().then((payload) => payload.plans).catch(() => []),
-      fetchPatchRuns().then((payload) => payload.patch_runs).catch(() => []),
       fetchProgress().catch(() => null),
       fetchLlmRuntime().catch(() => null),
       fetchLocalLlmStatus().catch(() => null),
       fetchTokenLimits().catch(() => null),
     ]);
-    setSnapshot({ jobs, plans, patchRuns, progress, runtime, localLlm, tokenLimits });
+    setSnapshot({ jobs, plans, progress, runtime, localLlm, tokenLimits });
     setLoading(false);
   }
 
@@ -70,7 +65,6 @@ export default function WorkflowStatusPage() {
   const runningJobs = snapshot.jobs.filter((job) => job.status === 'running' || job.status === 'queued');
   const failedJobs = snapshot.jobs.filter((job) => job.status === 'failed');
   const runningPlans = snapshot.plans.filter((plan) => ['approved', 'running'].includes(plan.status));
-  const activePatchRuns = snapshot.patchRuns.filter((run) => !['completed', 'failed', 'pr_drafted'].includes(run.status));
 
   const nodeCards = useMemo(
     () => [
@@ -96,16 +90,10 @@ export default function WorkflowStatusPage() {
         risk: 'plan run timeline API는 아직 제한적이므로 plan 상태 중심으로 봅니다.',
       },
       {
-        title: '코딩 에이전트 계획서 작성',
-        status: `${activePatchRuns.length} active`,
-        detail: `runs ${snapshot.patchRuns.length}`,
-        risk: activePatchRuns[0]?.status || '코딩 에이전트 계획서 작성 화면의 상세 event와 연결됩니다.',
-      },
-      {
-        title: 'Queue',
-        status: `${snapshot.progress?.queue_size ?? 0}/${snapshot.progress?.queue_capacity ?? 0}`,
-        detail: `${snapshot.progress?.recent_logs.length ?? 0} recent logs`,
-        risk: '진행 로그 archive와 queue 상태를 집계합니다.',
+        title: 'Progress Logs',
+        status: `${snapshot.progress?.recent_logs.length ?? 0} recent`,
+        detail: '진행 로그 archive를 집계합니다.',
+        risk: '최근 로그가 비어 있으면 업무 기록이 쌓이고 있는지 확인하세요.',
       },
       {
         title: 'Local LLM',
@@ -114,7 +102,7 @@ export default function WorkflowStatusPage() {
         risk: snapshot.localLlm?.error || snapshot.localLlm?.message || 'local route 사용 시 loaded 상태를 확인하세요.',
       },
     ],
-    [activePatchRuns, documentRoute, failedJobs, runningJobs, runningPlans, snapshot],
+    [documentRoute, failedJobs, runningJobs, runningPlans, snapshot],
   );
 
   return (
@@ -124,7 +112,7 @@ export default function WorkflowStatusPage() {
           <p className="eyebrow">Admin workflow observability</p>
           <h2>워크플로우 상태</h2>
           <p className="muted">
-            문서 생성, AI job, Agent plan, 코딩 에이전트 계획서 작성, queue, LLM route를 한 화면에서 확인합니다. 빈 출력 fallback이 발생하면
+            문서 생성, AI job, Agent plan, LLM route를 한 화면에서 확인합니다. 빈 출력 fallback이 발생하면
             문서 생성 route와 최근 token/job 기록부터 확인하세요.
           </p>
           <button type="button" className="secondary-button" disabled={loading} onClick={() => void refresh()}>
@@ -142,8 +130,8 @@ export default function WorkflowStatusPage() {
             <span>Failed jobs</span>
           </div>
           <div className="compact-stat">
-            <strong>{activePatchRuns.length}</strong>
-            <span>Active patch runs</span>
+            <strong>{runningPlans.length}</strong>
+            <span>Active plans</span>
           </div>
         </div>
       </div>
