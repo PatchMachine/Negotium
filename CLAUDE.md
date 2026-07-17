@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Negotium (네고티움, formerly "Patch Machine") — an LLM-agent based AI office-work / BPA system for non-IT companies. GitHub Issues and Discord messages flow through agents into patch proposals; office features (hiring, handover, document automation, work scheduling) run in the same console. There is **no database**: the `archive/` directory of Markdown/JSON/JSONL files is the single source of truth ("MD GitOps"). Sensitive work routes to a local vLLM model; general work routes to cloud providers. The **default cloud provider is Upstage Solar** (`solar-open2`, OpenAI-compatible API at https://api.upstage.ai/v1); OpenAI/Anthropic/Gemini/Together are also supported.
+Negotium (네고티움, formerly "Patch Machine") — an LLM-agent office-work / BPA console for non-IT Korean SMBs. The product is a closed daily loop: meeting minutes → auto work assignments → work status/weekly report → handover kits → hiring kits. There is **no database**: the `archive/` directory of Markdown/JSON/JSONL files is the single source of truth ("MD GitOps"). Sensitive work routes to a local vLLM model; general work routes to cloud providers. The **default cloud provider is Upstage Solar** (`solar-open2`, OpenAI-compatible API at https://api.upstage.ai/v1); OpenAI/Anthropic/Gemini/Together are also supported.
+
+The former developer-tool surface (coding-agent patch pipeline, GitHub/Discord ingestion, patchops) was removed in the office pivot — do not reintroduce it. Historical archives may still contain `YYYY/MM` patch logs; reading them stays supported.
 
 ## Commands
 
@@ -20,12 +22,12 @@ mypy negotium
 
 # Tests (pytest, asyncio_mode=auto — async tests need no marker)
 pytest -q
-pytest tests/unit/test_graph.py -q                 # single file
-pytest tests/unit/test_graph.py::test_name -q     # single test
+pytest tests/integration/test_app_smoke.py -q      # end-to-end office flows (FakeLLM)
+pytest tests/unit/test_llm_gateway.py::test_name -q
 
 # Run backend (FastAPI on :8080)
 negotium serve
-# Other CLI: llm-gateway --port 8090 | reindex | reset-state --yes --actor <name> | skill list/run | replay
+# Other CLI: llm-gateway --port 8090 | reset-state --yes --actor <name> | skill list/run
 
 # Frontend (React+Vite on :5173, proxies /api and /health to :8080; needs Node 20+)
 npm install --prefix frontend
@@ -40,30 +42,32 @@ Pre-commit runs ruff (with `--fix`), ruff-format, and strict mypy.
 
 ## Architecture
 
-Hexagonal (ports-and-adapters). Dependency direction: `domain` ← `application`/`agents` ← `adapters`/`archive` ← `app` (composition root).
-
-- **`negotium/domain/`** — `entities.py` (IssueEvent, WorkSpec, PatchProposal, ReviewVerdict, RepoRef), `events.py`, and `ports.py`: `Protocol` interfaces (IssueSource, CodeRepository, LlmProvider, …) that every adapter implements.
-- **`negotium/adapters/`** — implementations of the ports: `ingestion/` (GitHub webhook router, Discord bot, channel map), `llm/` (openai, anthropic, gemini, vllm HTTP, vllm embedded in-process, ollama, `fake_adapter.py` for tests, plus `gateway.py` which does local/cloud routing and `catalog.py` with provider metadata/model listing), `notifier/`, `vcs/`. **Solar reuses `OpenAiProvider`** with a different base_url — no dedicated adapter.
-- **`negotium/application/`** — `event_bus.py` and `orchestrator.py`. Patch flow: GitHub/Discord event → EventBus → Orchestrator → AgentGraph → ArchiveWriter → `archive/YYYY/MM/*.md`.
-- **`negotium/agents/`** — PM → Developer → Reviewer agent pipeline wired as a langgraph graph in `graph.py`; self-correction loop bounded by `NG_MAX_SELF_CORRECTION`. Prompts live in `negotium/prompts/` (Jinja via `prompts/store.py`).
-- **`negotium/archive/`** — one file-backed store class per concern (access control, secrets, audit log, operations memory, volatile memory, uploads, …). Shared locked-file persistence helpers live in `archive/_store.py` (`read_json_file`/`write_json_file`/`append_jsonl_line`/`iter_jsonl_records`) — use them instead of hand-rolling portalocker+json. Stores persist to `archive/` at the repo root (or `NG_ARCHIVE_DIR`); this is the persistence layer, not code to move to a DB.
-- **`negotium/app/`** — FastAPI app (`main.py`), Typer CLI (`cli.py`), settings (`settings.py`, pydantic-settings with `NG_` env prefix), business services in `services/`, and `container.py` — the composition root where all adapters/stores/agents get wired together. New dependencies (including new LLM providers) get wired here.
-- **`negotium/app/api/`** — the frontend REST API, split by domain: `auth.py`, `setup.py`, `uploads.py`, `documents.py` (incl. /hr), `integrations.py` (incl. /mcp-hub), `llm.py`, `work.py`, `agent.py` (incl. /patch-runs, /skills, /ai-jobs), `admin.py`, `memory.py`, plus `patchops_execution.py`. Each exposes `create_<domain>_router(container)`; `__init__.py` aggregates them under `/api` and re-exports legacy helper names for services/CLI. Cross-domain helpers live in `api/_shared.py`.
+- **`negotium/domain/`** — `LlmRoute`, and `ports.py` with the `LlmProvider`/`LlmMessage`/`LlmResponse` protocol every LLM adapter implements (incl. multimodal ContentPart helpers).
+- **`negotium/adapters/llm/`** — providers (openai, anthropic, gemini, vllm HTTP, vllm embedded in-process, ollama, `fake_adapter.py` for tests), `gateway.py` (local/cloud routing + secret-pattern force-local), `catalog.py` (provider metadata + live model listing). **Solar reuses `OpenAiProvider`** with a different base_url — no dedicated adapter.
+- **`negotium/archive/`** — one file-backed store class per concern (access control, secrets, audit log, operations/permanent/volatile memory, work schedule, process plans, HR evaluations, MCP audit/sessions, …). Shared locked-file persistence helpers live in `archive/_store.py` — use them instead of hand-rolling portalocker+json. Stores persist to `archive/` at the repo root (or `NG_ARCHIVE_DIR`).
+- **`negotium/app/`** — FastAPI app (`main.py`), Typer CLI (`cli.py`), settings (`settings.py`, pydantic-settings with `NG_` env prefix), business services in `services/` (LLM/chat, documents, memory, MCP hub, skills, context firewall), and `container.py` — the composition root wiring stores + LLM gateway.
+- **`negotium/app/api/`** — the frontend REST API split by domain: `auth.py`, `setup.py`, `uploads.py`, `documents.py` (documents + /hr), `integrations.py` (MCP hub), `llm.py`, `work.py` (work-schedule/process-plans/status/progress/handover + **/reports/weekly**), `agent.py` (office agent plans, ai-jobs, skills), `admin.py`, `memory.py`. Each exposes `create_<domain>_router(container)`; `__init__.py` aggregates them under `/api`. Cross-domain helpers live in `api/_shared.py` — notably `_complete_office_task` (single LLM entry point, task-routed, empty-response fallback) and the step engine `_generate_process_steps` + `_enqueue_process_steps` (turns any markdown into ordered, dependency-chained WorkScheduleItems; used by meeting minutes, handover, and process design).
 - **`negotium/llm_gateway/`** — optional standalone FastAPI process for external LLM calls only; the main backend delegates to it when `NG_LLM_GATEWAY_URL` is set.
-- **`negotium/skills/<id>/SKILL.md`** — skill definitions (YAML front-matter + body), loaded by `app/services/skill_registry.py`. Single source of truth shared by the HTTP API, MCP hub, CLI, and work-schedule automation.
-- **`negotium/context/`** — repo snapshot, tree-sitter AST indexer, BM25 Markdown retriever used to build agent context.
-- **`frontend/`** — React 19 + TypeScript + Vite console; one page component per feature under `src/components/`, API client in `src/api.ts`. Auth is header-based: requests carry `X-NG-User`, and permissions come from the user's assigned position (position-centric access control, not per-user roles).
+- **`negotium/skills/<id>/SKILL.md`** — office skill definitions (YAML front-matter + body), loaded by `services/skill_registry.py`; shared by the HTTP API, MCP hub, and CLI.
+- **`frontend/`** — React 19 + TypeScript + Vite console; every page is lazy-loaded (see App.tsx page map), API client split by domain under `src/api/` with an index barrel. Auth is header-based: requests carry `X-NG-User`; permissions come from the user's assigned position.
+
+## Core office loops (what must keep working)
+
+1. 회의록→업무배정: `POST /api/documents/generate` with `document_type=meeting_minutes, generate_tasks=true, participants=...` → minutes doc + work-schedule items (integration test `test_meeting_minutes_action_items_become_work_schedule`).
+2. 주간보고: `POST /api/reports/weekly` gathers schedule + bottleneck summaries + recent logs → manager report (`test_weekly_report_collects_schedule_and_writes_document`).
+3. 인수인계: `POST /api/handover/brief` (auto-gathers outgoing owner's activity, optionally creates follow-up tasks).
+4. 채용/면접: `POST /api/hr/{role-requirements,interview-kit,onboarding-plan}`.
+All four funnel through `_complete_office_task` with the 6 `LlmTaskName` routes (`memory_summary, agent_planning, document_generation, hiring, handover, chat`) so per-task provider/model overrides apply uniformly.
 
 ## Adding an LLM provider
 
-Follow the `solar`/`together` pattern (OpenAI-compatible providers reuse `OpenAiProvider`). Touchpoints: `app/settings.py` (fields + provider Literal), `app/container.py` `_build_llm`, `adapters/llm/catalog.py` (ProviderName, PROVIDERS, requires_api_key set, `_openai_compatible_models` branch), **`archive/llm_runtime.py` `KNOWN_PROVIDERS`** (forgetting this silently downgrades routes to vllm), `archive/secret_store.py` `list_masked`, `app/api/_shared.py` (`_settings_api_key`, `_default_base_url`, `_resolve_runtime_model`, `_complete_with_provider`, `_firewall_destination`), `llm_gateway/app.py`, `app/schemas/core.py`, `services/context_firewall_service.py` FRONTIER_DESTINATIONS, frontend `api.ts` LlmProviderName + hardcoded provider lists in AdminSettingsPage/AiAgentPage/LlmTaskRoutingPanel/InitialOfficeSetupWizard, `.env.example`.
+Follow the `solar`/`together` pattern (OpenAI-compatible providers reuse `OpenAiProvider`). Touchpoints: `app/settings.py` (fields + provider Literal), `app/container.py` `_build_llm`, `adapters/llm/catalog.py` (ProviderName, PROVIDERS, requires_api_key set, `_openai_compatible_models` branch), **`archive/llm_runtime.py` `KNOWN_PROVIDERS`** (forgetting this silently downgrades routes to vllm), `archive/secret_store.py` `list_masked`, `app/api/_shared.py` (`_settings_api_key`, `_default_base_url`, `_resolve_runtime_model`, `_complete_with_provider`, `_firewall_destination`), `llm_gateway/app.py`, `app/schemas/core.py`, `services/context_firewall_service.py` FRONTIER_DESTINATIONS, frontend `api.ts` LlmProviderName + hardcoded provider lists in AdminSettingsPage/LlmTaskRoutingPanel/InitialOfficeSetupWizard, `.env.example`.
 
 ## Conventions
 
 - mypy runs `--strict`; adapters that duck-type into untyped SDKs are exempted via explicit per-module overrides in `pyproject.toml` — add new boundary adapters there rather than loosening global settings.
-- Tests use `FakeLlmProvider` and monkeypatched `httpx.AsyncClient` (respx only in the vllm adapter tests); coverage intentionally omits the vllm/ollama adapters.
+- Tests use `FakeLlmProvider` (ScriptedResponse) and monkeypatched `httpx.AsyncClient`; coverage intentionally omits the vllm/ollama adapters.
 - `archive/` is runtime data (user PII) — gitignored, never commit or lint it. `tests/fixtures/` is also excluded from ruff/mypy.
-- Env vars use the `NG_` prefix (`NG_GITHUB_*`, `NG_DISCORD_*` nested). `NG_LLM_PROVIDER`/`NG_LLM_DEFAULT_ROUTE`/`NG_LLM_GATEWAY_URL`/`NG_LOCAL_LLM_BASE_URL` work via validation aliases in `LlmSettings`.
-- "PM" in `agents/pm.py` means Project Manager (agent role), and `patchops`/`patch_*` are product feature names — none of these are the old brand; do not rename them.
-- README and most product docs are written in Korean; `docs/architecture.md` has mermaid diagrams of the system, request flow, and LLM runtime modes.
+- Env vars use the `NG_` prefix. `NG_LLM_PROVIDER`/`NG_LLM_DEFAULT_ROUTE`/`NG_LLM_GATEWAY_URL`/`NG_LOCAL_LLM_BASE_URL` work via validation aliases in `LlmSettings`.
+- README and most product docs are written in Korean.
 - Generated documents honor a leading `<!-- negotium:format=markdown|html|csv|json|text -->` directive (legacy `patchmachine:` still parsed).
