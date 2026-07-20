@@ -94,6 +94,37 @@ from negotium.prompts import render as render_prompt
 
 _PRELOAD_TASKS: set[asyncio.Task[None]] = set()
 
+# Office-task completion token budgets. Non-reasoning models emit content
+# directly, so a small first-attempt budget keeps latency low. Reasoning models
+# (see ``_is_reasoning_model``) spend a large, unpredictable share of the budget
+# on hidden reasoning before any content — a small budget gets fully consumed and
+# returns empty, forcing a wasted second call. Give them the generous budget up
+# front so a single call suffices.
+_OFFICE_MAX_TOKENS = 1600
+_OFFICE_REASONING_MAX_TOKENS = 6000
+
+# Concern A (reasoning): models that reason before emitting content. Kept
+# separate from Concern B (general routing / empty-response retry) on purpose —
+# this only decides the first-attempt token budget, not which provider is used.
+_REASONING_MODEL_PREFIXES = ("o1", "o3", "o4", "o5", "gpt-5", "gpt-6")
+_REASONING_MODEL_KEYWORDS = ("reasoning", "solar-open")
+
+
+def _is_reasoning_model(model: str) -> bool:
+    """Return True when the model reasons (hidden tokens) before emitting content.
+
+    Covers OpenAI ``o*``/``gpt-5*`` and Upstage Solar ``solar-open*`` reasoning
+    models. Non-reasoning models (``solar-pro*``, ``solar-mini``, classic chat
+    models) return False and keep the fast small first-attempt budget.
+    """
+
+    name = (model or "").strip().lower()
+    if not name:
+        return False
+    if name.startswith(_REASONING_MODEL_PREFIXES):
+        return True
+    return any(keyword in name for keyword in _REASONING_MODEL_KEYWORDS)
+
 
 def _selected_upload_records(
     records: list[dict[str, str]], upload_ids: list[str]
@@ -1638,19 +1669,26 @@ async def _complete_office_task(
         ),
         LlmMessage("user", user_content),
     ]
+    # Concern A — reasoning models get the generous budget up front so a single
+    # call suffices; non-reasoning models keep the low-latency small budget.
+    first_max_tokens = (
+        _OFFICE_REASONING_MAX_TOKENS if _is_reasoning_model(model) else _OFFICE_MAX_TOKENS
+    )
     response = await _complete_with_provider(
         container,
         messages,
         provider=provider,
         route=route,
         temperature=0.2,
-        max_tokens=1600,
+        max_tokens=first_max_tokens,
         task=task,
         model=model,
     )
     text = response.text.strip()
     if text:
         return text
+    # Concern B — provider-agnostic safety net: any model that still returns
+    # empty (rate slice, truncation, transient) gets one generous retry.
     try:
         retry = await _complete_with_provider(
             container,
@@ -1658,7 +1696,7 @@ async def _complete_office_task(
             provider=provider,
             route=route,
             temperature=0.2,
-            max_tokens=6000,
+            max_tokens=max(_OFFICE_REASONING_MAX_TOKENS, first_max_tokens),
             task=task,
             model=model,
         )
@@ -1794,10 +1832,17 @@ async def _complete_with_provider(
             )
             return sanitized
         saved = container.secret_store.read(provider)
-        if saved and saved.api_key and provider == "openai" and route != "local":
+        saved_model = saved.model if saved else ""
+        saved_base_url = saved.base_url if saved else ""
+        # Concern B (general routing): accept a key supplied via settings/.env, not
+        # only one stored in the archive secret_store. Without this, .env-only keys
+        # skip every per-provider branch and fall through to the container-default
+        # model, silently ignoring the per-task model override.
+        api_key = (saved.api_key if saved else "") or _settings_api_key(container, provider)
+        if api_key and provider == "openai" and route != "local":
             response = await OpenAiProvider(
-                api_key=saved.api_key,
-                model=effective_model or saved.model or container.settings.llm.openai_model,
+                api_key=api_key,
+                model=effective_model or saved_model or container.settings.llm.openai_model,
                 base_url=default_base_url("openai"),
             ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
             sanitized = sanitize_llm_response(
@@ -1812,10 +1857,10 @@ async def _complete_with_provider(
                 response=sanitized,
             )
             return sanitized
-        if saved and saved.api_key and provider == "anthropic" and route != "local":
+        if api_key and provider == "anthropic" and route != "local":
             response = await AnthropicProvider(
-                api_key=saved.api_key,
-                model=effective_model or saved.model or container.settings.llm.anthropic_model,
+                api_key=api_key,
+                model=effective_model or saved_model or container.settings.llm.anthropic_model,
                 base_url=default_base_url("anthropic"),
             ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
             sanitized = sanitize_llm_response(
@@ -1830,10 +1875,10 @@ async def _complete_with_provider(
                 response=sanitized,
             )
             return sanitized
-        if saved and saved.api_key and provider == "gemini" and route != "local":
+        if api_key and provider == "gemini" and route != "local":
             response = await GeminiProvider(
-                api_key=saved.api_key,
-                model=effective_model or saved.model or container.settings.llm.gemini_model,
+                api_key=api_key,
+                model=effective_model or saved_model or container.settings.llm.gemini_model,
                 base_url=default_base_url("gemini"),
             ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
             sanitized = sanitize_llm_response(
@@ -1848,11 +1893,11 @@ async def _complete_with_provider(
                 response=sanitized,
             )
             return sanitized
-        if saved and saved.api_key and provider == "solar" and route != "local":
+        if api_key and provider == "solar" and route != "local":
             response = await OpenAiProvider(
-                api_key=saved.api_key,
-                model=effective_model or saved.model or container.settings.llm.solar_model,
-                base_url=saved.base_url or container.settings.llm.solar_base_url,
+                api_key=api_key,
+                model=effective_model or saved_model or container.settings.llm.solar_model,
+                base_url=saved_base_url or container.settings.llm.solar_base_url,
             ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
             sanitized = sanitize_llm_response(
                 response, destination=destination, task_type=str(provider)
@@ -1866,11 +1911,11 @@ async def _complete_with_provider(
                 response=sanitized,
             )
             return sanitized
-        if saved and saved.api_key and provider == "together" and route != "local":
+        if api_key and provider == "together" and route != "local":
             response = await OpenAiProvider(
-                api_key=saved.api_key,
-                model=effective_model or saved.model or container.settings.llm.together_model,
-                base_url=saved.base_url or container.settings.llm.together_base_url,
+                api_key=api_key,
+                model=effective_model or saved_model or container.settings.llm.together_model,
+                base_url=saved_base_url or container.settings.llm.together_base_url,
             ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
             sanitized = sanitize_llm_response(
                 response, destination=destination, task_type=str(provider)
