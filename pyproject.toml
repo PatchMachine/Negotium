@@ -13,6 +13,7 @@ dependencies = [
     "uvicorn[standard]>=0.27",
     "pydantic>=2.6",
     "pydantic-settings>=2.2",
+    "python-dotenv>=1.0",
     "httpx>=0.27",
     "openai>=1.30",
     "portalocker>=2.8",

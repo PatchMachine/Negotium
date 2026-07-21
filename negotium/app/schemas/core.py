@@ -432,7 +432,7 @@ class DocumentReadPayload(BaseModel):
 
 class TokenLimitPayload(BaseModel):
     enforcement_enabled: bool = True
-    per_request_max_tokens: int = 4000
+    per_request_max_tokens: int = 30_000
     daily_total_tokens: int = 200_000
     monthly_total_tokens: int = 4_000_000
 

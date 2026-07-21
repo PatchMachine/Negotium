@@ -20,7 +20,7 @@ class LlmSettings(BaseSettings):
         "solar", "openai", "vllm", "ollama", "anthropic", "gemini", "together", "fake"
     ] = Field("solar", validation_alias=AliasChoices("NG_LLM_PROVIDER", "NG_PROVIDER"))
     solar_api_key: str = ""
-    solar_model: str = "solar-open2"
+    solar_model: str = "solar-pro2"
     solar_base_url: str = "https://api.upstage.ai/v1"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"

@@ -100,8 +100,8 @@ _PRELOAD_TASKS: set[asyncio.Task[None]] = set()
 # on hidden reasoning before any content — a small budget gets fully consumed and
 # returns empty, forcing a wasted second call. Give them the generous budget up
 # front so a single call suffices.
-_OFFICE_MAX_TOKENS = 1600
-_OFFICE_REASONING_MAX_TOKENS = 6000
+_OFFICE_MAX_TOKENS = 8000
+_OFFICE_REASONING_MAX_TOKENS = 16000
 
 # Concern A (reasoning): models that reason before emitting content. Kept
 # separate from Concern B (general routing / empty-response retry) on purpose —

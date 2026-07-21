@@ -13,12 +13,29 @@ from negotium.observability import configure_logging
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="Negotium CLI")
 
 
+def _load_env_file() -> None:
+    """Load ``.env`` into the process environment for server runtimes only.
+
+    Nested settings models (e.g. ``LlmSettings``) are built via default_factory
+    and read only ``os.environ``, so provider keys/models placed in ``.env`` are
+    otherwise dropped in the backend. We do this at the CLI entry point rather
+    than in the settings model itself so the test suite stays hermetic (it never
+    invokes the CLI and must not pick up a developer's real ``.env`` keys).
+    Existing environment variables win over ``.env`` (``override=False``).
+    """
+
+    from dotenv import load_dotenv
+
+    load_dotenv(override=False)
+
+
 @app.command()
 def serve(
     host: str | None = typer.Option(None, help="HTTP bind host (overrides settings)."),
     port: int | None = typer.Option(None, help="HTTP bind port (overrides settings)."),
 ) -> None:
     """Run the Negotium office console FastAPI server."""
+    _load_env_file()
     container = Container.build()
     settings = container.settings
     configure_logging(settings.log_level)
@@ -39,6 +56,7 @@ def llm_gateway(
     """Run the standalone external LLM gateway."""
     from negotium.app.settings import load_settings
 
+    _load_env_file()
     settings = load_settings()
     configure_logging(settings.log_level)
     uvicorn.run(

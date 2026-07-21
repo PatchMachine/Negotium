@@ -14,7 +14,9 @@ import portalocker
 @dataclass(frozen=True)
 class TokenLimitConfig:
     enforcement_enabled: bool = True
-    per_request_max_tokens: int = 4000
+    # Must stay >= the office-task retry/reasoning budget (_OFFICE_REASONING_MAX_TOKENS
+    # = 16000 in app/api/_shared.py); a lower cap would 429 the app's own retry path.
+    per_request_max_tokens: int = 30_000
     daily_total_tokens: int = 200_000
     monthly_total_tokens: int = 4_000_000
 
@@ -31,7 +33,7 @@ class TokenLimitConfig:
         payload = payload or {}
         return cls(
             enforcement_enabled=bool(payload.get("enforcement_enabled", True)),
-            per_request_max_tokens=int(payload.get("per_request_max_tokens", 4000) or 0),
+            per_request_max_tokens=int(payload.get("per_request_max_tokens", 30_000) or 0),
             daily_total_tokens=int(payload.get("daily_total_tokens", 200_000) or 0),
             monthly_total_tokens=int(payload.get("monthly_total_tokens", 4_000_000) or 0),
         )
