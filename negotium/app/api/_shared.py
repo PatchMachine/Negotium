@@ -36,18 +36,11 @@ from negotium.app.schemas.core import (
     ChatRequest,
     ChatResponse,
     CompanyProfilePayload,
-    DiscordChannelBindingPayload,
-    DiscordConnectorPayload,
     DocumentReadPayload,
     GeneratedDocumentPayload,
-    GitHubConnectorPayload,
     HiringRequest,
     InitialOfficeSetupResult,
-    IntegrationConfigPayload,
-    IntegrationStatusPayload,
     LocalLlmStatusPayload,
-    PatchRecordDetailPayload,
-    PatchRecordPayload,
     ProcessPlanPayload,
     ReadableContextBundlePayload,
     ReadableContextPreviewRequest,
@@ -80,18 +73,9 @@ from negotium.app.services.skill_registry import (
 from negotium.app.services.skill_runtime import SkillError, run_skill
 from negotium.archive.access_control import ALL_PERMISSIONS
 from negotium.archive.ai_jobs import AiJobRecord
-from negotium.archive.integration_config import (
-    DiscordChannelBindingConfig,
-    DiscordConnectorConfig,
-    GitHubConnectorConfig,
-    IntegrationConfig,
-)
 from negotium.archive.llm_runtime import LlmProviderName, LlmRuntimeConfig, LlmTaskRoute
-from negotium.archive.patch_records import PatchRecord
-from negotium.archive.patch_runs import PatchRun
 from negotium.archive.process_plans import ProcessPlan
 from negotium.archive.schema import parse_front_matter
-from negotium.archive.secret_store import ApiKeyRecord
 from negotium.archive.token_usage import (
     TokenLimitExceededError,
 )
@@ -109,6 +93,37 @@ from negotium.domain.ports import (
 from negotium.prompts import render as render_prompt
 
 _PRELOAD_TASKS: set[asyncio.Task[None]] = set()
+
+# Office-task completion token budgets. Non-reasoning models emit content
+# directly, so a small first-attempt budget keeps latency low. Reasoning models
+# (see ``_is_reasoning_model``) spend a large, unpredictable share of the budget
+# on hidden reasoning before any content — a small budget gets fully consumed and
+# returns empty, forcing a wasted second call. Give them the generous budget up
+# front so a single call suffices.
+_OFFICE_MAX_TOKENS = 8000
+_OFFICE_REASONING_MAX_TOKENS = 16000
+
+# Concern A (reasoning): models that reason before emitting content. Kept
+# separate from Concern B (general routing / empty-response retry) on purpose —
+# this only decides the first-attempt token budget, not which provider is used.
+_REASONING_MODEL_PREFIXES = ("o1", "o3", "o4", "o5", "gpt-5", "gpt-6")
+_REASONING_MODEL_KEYWORDS = ("reasoning", "solar-open")
+
+
+def _is_reasoning_model(model: str) -> bool:
+    """Return True when the model reasons (hidden tokens) before emitting content.
+
+    Covers OpenAI ``o*``/``gpt-5*`` and Upstage Solar ``solar-open*`` reasoning
+    models. Non-reasoning models (``solar-pro*``, ``solar-mini``, classic chat
+    models) return False and keep the fast small first-attempt budget.
+    """
+
+    name = (model or "").strip().lower()
+    if not name:
+        return False
+    if name.startswith(_REASONING_MODEL_PREFIXES):
+        return True
+    return any(keyword in name for keyword in _REASONING_MODEL_KEYWORDS)
 
 
 def _selected_upload_records(
@@ -1043,14 +1058,6 @@ def _access_control_payload(container: Container) -> dict[str, Any]:
     return {**container.access_control.read(), "permissions": ALL_PERMISSIONS}
 
 
-def _patch_artifact_relative_path(patch_id: str, artifact_path: str) -> str:
-    cleaned = artifact_path.strip().lstrip("/")
-    prefix = f"patch_ops/workspaces/{patch_id}/"
-    if cleaned.startswith(prefix):
-        return cleaned[len(prefix) :]
-    return cleaned
-
-
 def _readable_source_payload(
     source: dict[str, object],
     *,
@@ -1662,19 +1669,26 @@ async def _complete_office_task(
         ),
         LlmMessage("user", user_content),
     ]
+    # Concern A — reasoning models get the generous budget up front so a single
+    # call suffices; non-reasoning models keep the low-latency small budget.
+    first_max_tokens = (
+        _OFFICE_REASONING_MAX_TOKENS if _is_reasoning_model(model) else _OFFICE_MAX_TOKENS
+    )
     response = await _complete_with_provider(
         container,
         messages,
         provider=provider,
         route=route,
         temperature=0.2,
-        max_tokens=1600,
+        max_tokens=first_max_tokens,
         task=task,
         model=model,
     )
     text = response.text.strip()
     if text:
         return text
+    # Concern B — provider-agnostic safety net: any model that still returns
+    # empty (rate slice, truncation, transient) gets one generous retry.
     try:
         retry = await _complete_with_provider(
             container,
@@ -1682,7 +1696,7 @@ async def _complete_office_task(
             provider=provider,
             route=route,
             temperature=0.2,
-            max_tokens=6000,
+            max_tokens=max(_OFFICE_REASONING_MAX_TOKENS, first_max_tokens),
             task=task,
             model=model,
         )
@@ -1735,60 +1749,6 @@ async def _run_step_skill(
     return result_path, markdown
 
 
-async def _complete_patchops_task(
-    container: Container, prompt: str, *, task: str = "patch_planning"
-) -> str:
-    provider, route = _resolve_runtime_task(container, task)
-    model = _resolve_task_model(container, task, provider, route)
-    messages = [
-        LlmMessage(
-            "system",
-            (
-                "당신은 코딩 에이전트 계획서 작성 도우미입니다. Negotium 안에서 직접 코드를 적용하지 않고, "
-                "Cursor나 Claude Code가 읽을 수 있는 plan.md를 명확하고 실행 가능하게 작성합니다. "
-                "민감정보와 secret은 절대 노출하지 마세요."
-            ),
-        ),
-        LlmMessage("user", prompt),
-    ]
-    response = await _complete_with_provider(
-        container,
-        messages,
-        provider=provider,
-        route=route,
-        temperature=0.1,
-        max_tokens=2200,
-        task=task,
-        model=model,
-    )
-    return response.text.strip()
-
-
-def _collect_plan_source_files(
-    container: Container, source_refs: list[str] | None
-) -> list[dict[str, object]]:
-    """Resolve archive-relative refs (memory sources or documents) into readable files.
-
-    Each ref is the archive-relative path/id used across permanent memory and the
-    document index. Unreadable refs are skipped so a bad selection never aborts the
-    whole synthesis request.
-    """
-
-    sources: list[dict[str, object]] = []
-    seen: set[str] = set()
-    for raw in source_refs or []:
-        ref = str(raw or "").strip()
-        if not ref or ref in seen:
-            continue
-        seen.add(ref)
-        try:
-            source = container.permanent_memory.read_source(ref, max_chars=8000)
-        except (FileNotFoundError, ValueError):
-            continue
-        sources.append(source)
-    return sources
-
-
 def _render_plan_sources_md(sources: list[dict[str, object]]) -> str:
     blocks: list[str] = []
     for index, source in enumerate(sources, start=1):
@@ -1800,58 +1760,6 @@ def _render_plan_sources_md(sources: list[dict[str, object]]) -> str:
             header += f" ({path})"
         blocks.append(f"{header}\n```\n{content}\n```")
     return "\n\n".join(blocks)
-
-
-async def _revise_patch_plan_markdown(
-    container: Container,
-    *,
-    run: PatchRun,
-    current: str,
-    instruction: str,
-    sources: list[dict[str, object]] | None = None,
-) -> str:
-    sources = sources or []
-    if sources:
-        prompt = "\n".join(
-            [
-                "아래 참고 파일들과 사용자의 지시를 종합해, 코딩 에이전트(Cursor·Claude Code 등)에게",
-                "그대로 넘길 수 있는 plan.md 한 개를 작성하세요. 비개발자가 작성한 지시를 개발자가",
-                "바로 따라할 수 있도록 목표·범위·관련 파일·단계별 체크리스트·검증 방법을 포함하세요.",
-                "출력은 반드시 plan.md 본문(Markdown)만 반환하세요. 설명, 코드펜스, JSON은 추가하지 마세요.",
-                "",
-                f"작업 요청: {run.request}",
-                f"저장소: {run.repo_id}",
-                "",
-                "## 사용자 지시",
-                instruction.strip() or "(별도 지시 없음 — 참고 파일을 바탕으로 합리적으로 작성)",
-                "",
-                "## 참고 파일",
-                _render_plan_sources_md(sources),
-                "",
-                "## 현재 plan.md (있다면 이어서 보완)",
-                current.strip() or "(아직 plan.md가 없습니다. 새로 작성하세요.)",
-            ]
-        )
-    else:
-        prompt = "\n".join(
-            [
-                "아래 현재 plan.md를 사용자의 요청에 맞게 다시 작성하세요.",
-                "출력은 반드시 수정된 plan.md 본문만 반환하세요. 설명, 코드펜스, JSON은 추가하지 마세요.",
-                "",
-                f"작업 요청: {run.request}",
-                f"저장소: {run.repo_id}",
-                "",
-                "## 사용자 수정 요청",
-                instruction.strip(),
-                "",
-                "## 현재 plan.md",
-                current.strip() or "(아직 plan.md가 없습니다. 새로 작성하세요.)",
-            ]
-        )
-    revised = await _complete_patchops_task(container, prompt, task="patch_planning")
-    return (
-        revised.strip() or current.strip() or f"# 코딩 에이전트 계획서\n\n## 요청\n{run.request}\n"
-    )
 
 
 async def _complete_with_provider(
@@ -1924,10 +1832,17 @@ async def _complete_with_provider(
             )
             return sanitized
         saved = container.secret_store.read(provider)
-        if saved and saved.api_key and provider == "openai" and route != "local":
+        saved_model = saved.model if saved else ""
+        saved_base_url = saved.base_url if saved else ""
+        # Concern B (general routing): accept a key supplied via settings/.env, not
+        # only one stored in the archive secret_store. Without this, .env-only keys
+        # skip every per-provider branch and fall through to the container-default
+        # model, silently ignoring the per-task model override.
+        api_key = (saved.api_key if saved else "") or _settings_api_key(container, provider)
+        if api_key and provider == "openai" and route != "local":
             response = await OpenAiProvider(
-                api_key=saved.api_key,
-                model=effective_model or saved.model or container.settings.llm.openai_model,
+                api_key=api_key,
+                model=effective_model or saved_model or container.settings.llm.openai_model,
                 base_url=default_base_url("openai"),
             ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
             sanitized = sanitize_llm_response(
@@ -1942,10 +1857,10 @@ async def _complete_with_provider(
                 response=sanitized,
             )
             return sanitized
-        if saved and saved.api_key and provider == "anthropic" and route != "local":
+        if api_key and provider == "anthropic" and route != "local":
             response = await AnthropicProvider(
-                api_key=saved.api_key,
-                model=effective_model or saved.model or container.settings.llm.anthropic_model,
+                api_key=api_key,
+                model=effective_model or saved_model or container.settings.llm.anthropic_model,
                 base_url=default_base_url("anthropic"),
             ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
             sanitized = sanitize_llm_response(
@@ -1960,10 +1875,10 @@ async def _complete_with_provider(
                 response=sanitized,
             )
             return sanitized
-        if saved and saved.api_key and provider == "gemini" and route != "local":
+        if api_key and provider == "gemini" and route != "local":
             response = await GeminiProvider(
-                api_key=saved.api_key,
-                model=effective_model or saved.model or container.settings.llm.gemini_model,
+                api_key=api_key,
+                model=effective_model or saved_model or container.settings.llm.gemini_model,
                 base_url=default_base_url("gemini"),
             ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
             sanitized = sanitize_llm_response(
@@ -1978,11 +1893,11 @@ async def _complete_with_provider(
                 response=sanitized,
             )
             return sanitized
-        if saved and saved.api_key and provider == "solar" and route != "local":
+        if api_key and provider == "solar" and route != "local":
             response = await OpenAiProvider(
-                api_key=saved.api_key,
-                model=effective_model or saved.model or container.settings.llm.solar_model,
-                base_url=saved.base_url or container.settings.llm.solar_base_url,
+                api_key=api_key,
+                model=effective_model or saved_model or container.settings.llm.solar_model,
+                base_url=saved_base_url or container.settings.llm.solar_base_url,
             ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
             sanitized = sanitize_llm_response(
                 response, destination=destination, task_type=str(provider)
@@ -1996,11 +1911,11 @@ async def _complete_with_provider(
                 response=sanitized,
             )
             return sanitized
-        if saved and saved.api_key and provider == "together" and route != "local":
+        if api_key and provider == "together" and route != "local":
             response = await OpenAiProvider(
-                api_key=saved.api_key,
-                model=effective_model or saved.model or container.settings.llm.together_model,
-                base_url=saved.base_url or container.settings.llm.together_base_url,
+                api_key=api_key,
+                model=effective_model or saved_model or container.settings.llm.together_model,
+                base_url=saved_base_url or container.settings.llm.together_base_url,
             ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
             sanitized = sanitize_llm_response(
                 response, destination=destination, task_type=str(provider)
@@ -3017,93 +2932,6 @@ def _summarize_bottlenecks(items: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _resolve_github_runtime(
-    container: Container,
-) -> tuple[GitHubConnectorConfig, str, str]:
-    config = container.integration_config.read().github
-    saved_token = container.secret_store.read("github_app")
-    token = (saved_token.api_key if saved_token else "") or container.settings.github.app_token
-    trigger_label = config.trigger_label or container.settings.github.trigger_label
-    return config, token, trigger_label
-
-
-def _resolve_discord_runtime(
-    container: Container,
-) -> tuple[DiscordConnectorConfig, str]:
-    config = container.integration_config.read().discord
-    saved_token = container.secret_store.read("discord_bot")
-    token = (saved_token.api_key if saved_token else "") or container.settings.discord.bot_token
-    return config, token
-
-
-def _save_github_secrets(container: Container, payload: GitHubConnectorPayload) -> None:
-    if payload.app_token.strip():
-        container.secret_store.upsert(
-            ApiKeyRecord(
-                provider="github_app",
-                api_key=payload.app_token.strip(),
-                model="",
-                base_url="",
-            )
-        )
-    if payload.webhook_secret.strip():
-        container.secret_store.upsert(
-            ApiKeyRecord(
-                provider="github_webhook",
-                api_key=payload.webhook_secret.strip(),
-                model="",
-                base_url="",
-            )
-        )
-
-
-def _save_discord_secrets(container: Container, payload: DiscordConnectorPayload) -> None:
-    if payload.bot_token.strip():
-        container.secret_store.upsert(
-            ApiKeyRecord(
-                provider="discord_bot",
-                api_key=payload.bot_token.strip(),
-                model="",
-                base_url="",
-            )
-        )
-
-
-def _integration_config_payload(
-    container: Container,
-    *,
-    config: IntegrationConfig | None = None,
-) -> IntegrationConfigPayload:
-    config = config or container.integration_config.read()
-    github = config.github
-    discord = config.discord
-    return IntegrationConfigPayload(
-        github=GitHubConnectorPayload(
-            enabled=github.enabled,
-            allowed_repos=list(github.allowed_repos),
-            trigger_label=github.trigger_label,
-            webhook_secret_present=container.secret_store.has_secret("github_webhook"),
-            app_token_present=container.secret_store.has_secret("github_app"),
-            event_forms=list(github.event_forms),
-        ),
-        discord=DiscordConnectorPayload(
-            enabled=discord.enabled,
-            bot_token_present=container.secret_store.has_secret("discord_bot"),
-            guild_allowlist=list(discord.guild_allowlist),
-            channel_bindings=[
-                DiscordChannelBindingPayload(
-                    guild_id=binding.guild_id,
-                    channel_id=binding.channel_id,
-                    channel_name=binding.channel_name,
-                    repo=binding.repo,
-                )
-                for binding in discord.channel_bindings
-            ],
-            command_forms=list(discord.command_forms),
-        ),
-    )
-
-
 def _read_archive_document(container: Container, raw_path: str) -> DocumentReadPayload:
     if not raw_path or not raw_path.strip():
         raise ValueError("path 는 필수입니다.")
@@ -3210,7 +3038,6 @@ def _archive_document_kind(rel: str) -> str:
         "work_architecture": "업무 아키텍처",
         "hr": "채용/면접",
         "handover": "인수인계",
-        "patch_records": "코딩 패치 기록",
         "patch_ops": "AI 개발 도우미",
         "uploads": "업로드",
         "memory": "승격 메모리",
@@ -3244,124 +3071,3 @@ def _token_limit_status(container: Container) -> TokenLimitStatusPayload:
             recent=[TokenUsageEntryPayload(**entry.to_dict()) for entry in summary.recent],
         ),
     )
-
-
-def _patch_record_payload(record: PatchRecord) -> PatchRecordPayload:
-    return PatchRecordPayload(**record.to_dict())
-
-
-def _patch_record_detail_payload(record: PatchRecord, markdown: str) -> PatchRecordDetailPayload:
-    return PatchRecordDetailPayload(markdown=markdown, **record.to_dict())
-
-
-async def _fetch_github_status(container: Container) -> IntegrationStatusPayload:
-    config, token, trigger_label = _resolve_github_runtime(container)
-    if not config.enabled:
-        return IntegrationStatusPayload(
-            ok=False,
-            configured=False,
-            reason="GitHub 커넥터가 비활성 상태입니다. 설정 폼에서 활성화하세요.",
-            items=[],
-        )
-    repos = config.allowed_repos or container.settings.github.allowed_repos
-    if not repos:
-        return IntegrationStatusPayload(
-            ok=False,
-            configured=False,
-            reason="허용된 저장소가 없습니다. GitHub 설정에 repo를 추가하세요.",
-            items=[],
-        )
-    headers = {"Accept": "application/vnd.github+json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    items: list[dict[str, Any]] = []
-    async with httpx.AsyncClient(timeout=10) as client:
-        for repo in repos:
-            try:
-                response = await client.get(
-                    f"https://api.github.com/repos/{repo}/issues",
-                    headers=headers,
-                    params={
-                        "state": "open",
-                        "labels": trigger_label,
-                        "per_page": 10,
-                        "sort": "updated",
-                    },
-                )
-                response.raise_for_status()
-                issues = response.json()
-                items.append(
-                    {
-                        "repo": repo,
-                        "open_issue_count": len(issues) if isinstance(issues, list) else 0,
-                        "event_forms": list(config.event_forms),
-                        "issues": [
-                            {
-                                "number": issue.get("number"),
-                                "title": issue.get("title"),
-                                "url": issue.get("html_url"),
-                                "updated_at": issue.get("updated_at"),
-                            }
-                            for issue in issues
-                            if isinstance(issue, dict)
-                        ],
-                    }
-                )
-            except Exception as exc:
-                items.append({"repo": repo, "error": str(exc)})
-    return IntegrationStatusPayload(ok=True, configured=True, items=items)
-
-
-async def _fetch_discord_status(container: Container) -> IntegrationStatusPayload:
-    config, token = _resolve_discord_runtime(container)
-    if not config.enabled:
-        return IntegrationStatusPayload(
-            ok=False,
-            configured=False,
-            reason="Discord 커넥터가 비활성 상태입니다. 설정 폼에서 활성화하세요.",
-            items=[],
-        )
-    bindings: list[DiscordChannelBindingConfig] = list(config.channel_bindings)
-    if not bindings:
-        for legacy in container.discord.channel_map.bindings:
-            bindings.append(
-                DiscordChannelBindingConfig(
-                    guild_id=legacy.guild_id,
-                    channel_id=legacy.channel_id,
-                    channel_name=legacy.channel_name,
-                    repo=legacy.repo.full_name,
-                )
-            )
-    if not bindings:
-        return IntegrationStatusPayload(
-            ok=False,
-            configured=False,
-            reason="채널 바인딩이 없습니다. Discord 설정 폼에서 채널을 등록하세요.",
-            items=[],
-        )
-    items: list[dict[str, Any]] = []
-    async with httpx.AsyncClient(timeout=10) as client:
-        for binding in bindings:
-            item: dict[str, Any] = {
-                "guild_id": binding.guild_id,
-                "channel_id": binding.channel_id,
-                "channel_name": binding.channel_name,
-                "repo": binding.repo,
-                "live": False,
-                "command_forms": list(config.command_forms),
-            }
-            if token and binding.channel_id:
-                try:
-                    response = await client.get(
-                        f"https://discord.com/api/v10/channels/{binding.channel_id}",
-                        headers={"Authorization": f"Bot {token}"},
-                    )
-                    response.raise_for_status()
-                    data = response.json()
-                    item.update({"live": True, "name": data.get("name", binding.channel_name)})
-                except Exception as exc:
-                    item["error"] = str(exc)
-            elif not token:
-                item["reason"] = "Discord bot 토큰이 등록되지 않았습니다."
-            items.append(item)
-    return IntegrationStatusPayload(ok=True, configured=True, items=items)

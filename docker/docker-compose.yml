@@ -14,7 +14,6 @@ services:
       NG_ARCHIVE_DIR: /app/archive
       NG_HTTP_HOST: 0.0.0.0
       NG_HTTP_PORT: 8080
-      NG_DISCORD_CHANNEL_MAP_PATH: /app/config/channel_map.yml
       # The Docker image does not ship the heavy local LLM stack. To run
       # vLLM (Qwen3-4B etc.), launch the backend on the GPU host directly
       # with `uv pip install -e '.[dev,local-ai]'` + `uv run negotium serve`.

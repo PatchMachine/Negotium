@@ -14,8 +14,6 @@ export type OperationsMemory = {
 
 export type ApiStatus = {
   ok: boolean;
-  queue_size: number;
-  queue_capacity: number;
   metrics: Record<string, unknown>;
   operations_memory_configured: boolean;
 };
@@ -99,8 +97,6 @@ export type ProgressLog = {
 
 export type ProgressPayload = {
   current_status_md: string;
-  queue_size: number;
-  queue_capacity: number;
   recent_logs: ProgressLog[];
 };
 
@@ -274,83 +270,6 @@ export type AgentPlan = {
   plan_markdown_path?: string;
 };
 
-export type PatchRun = {
-  id: string;
-  repo_id: string;
-  request: string;
-  autonomy_level: string;
-  privacy_mode: string;
-  target_branch: string;
-  status: string;
-  risk_level: string;
-  created_by: string;
-  approved_by: string;
-  plan: Record<string, unknown>;
-  questions: Array<Record<string, unknown>>;
-  artifacts: Record<string, unknown>;
-  context: Record<string, unknown>;
-  constraints: Record<string, unknown>;
-  created_at: string;
-  updated_at: string;
-};
-
-export type PatchEvent = {
-  id: string;
-  patch_run_id: string;
-  type: string;
-  summary: string;
-  payload: Record<string, unknown>;
-  created_at: string;
-};
-
-export type PatchArtifactFile = {
-  path: string;
-  name: string;
-  kind: string;
-  title: string;
-  bytes: number;
-  updated_at: string;
-  content?: string;
-};
-
-export type IssueCluster = {
-  id: string;
-  title: string;
-  summary: string;
-  status: string;
-  severity: string;
-  canonical_issue_ids: string[];
-  source_refs: Array<Record<string, unknown>>;
-  affected_repos: string[];
-  affected_features: string[];
-  confidence: number;
-  patch_candidates?: PatchCandidate[];
-  test_requirements?: TestRequirement[];
-};
-
-export type PatchCandidate = {
-  id: string;
-  cluster_id: string;
-  target_repo: string;
-  title: string;
-  summary: string;
-  risk_level: string;
-  status: string;
-};
-
-export type TestRequirement = {
-  id: string;
-  patch_candidate_id: string;
-  title: string;
-  requirement_type: string;
-  given: string;
-  when: string;
-  then: string;
-  priority: string;
-  status: string;
-  source_refs: string[];
-};
-
 export type McpToolDescriptor = {
   name: string;
   description: string;
@@ -413,45 +332,6 @@ export type ContextFirewallAuditRecord = {
   raw_content_stored: boolean;
   redacted_context_hash: string;
   created_at: string;
-};
-
-export type IntegrationStatus = {
-  ok: boolean;
-  configured: boolean;
-  reason: string;
-  items: Array<Record<string, unknown>>;
-};
-
-export type GitHubConnectorConfig = {
-  enabled: boolean;
-  allowed_repos: string[];
-  trigger_label: string;
-  webhook_secret: string;
-  app_token: string;
-  webhook_secret_present: boolean;
-  app_token_present: boolean;
-  event_forms: string[];
-};
-
-export type DiscordChannelBinding = {
-  guild_id: string;
-  channel_id: string;
-  channel_name: string;
-  repo: string;
-};
-
-export type DiscordConnectorConfig = {
-  enabled: boolean;
-  bot_token: string;
-  bot_token_present: boolean;
-  guild_allowlist: string[];
-  channel_bindings: DiscordChannelBinding[];
-  command_forms: string[];
-};
-
-export type IntegrationConfig = {
-  github: GitHubConnectorConfig;
-  discord: DiscordConnectorConfig;
 };
 
 export type DocumentRead = {
@@ -521,6 +401,7 @@ export type GeneratedDocument = {
   ai_job?: AiJobStatus;
   output_format?: string;
   attachment_notes?: string[];
+  created_tasks?: WorkScheduleItem[];
 };
 
 export type HandoverRequest = {
@@ -545,6 +426,8 @@ export type OfficeDocumentRequest = {
   token_budget?: number;
   attachment_ids?: string[];
   output_format?: OfficeDocumentOutputFormat;
+  generate_tasks?: boolean;
+  participants?: string;
 };
 
 export type ApiKeyInfo = {

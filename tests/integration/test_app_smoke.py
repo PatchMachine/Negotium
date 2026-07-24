@@ -13,10 +13,10 @@ from negotium.app.settings import Settings
 from negotium.archive.access_control import UserRecord
 from negotium.archive.llm_runtime import LlmRuntimeConfig
 from negotium.archive.operations_memory import OperationsMemory
-from negotium.archive.patch_runs import PatchRun
+from negotium.archive.work_memory import WorkScheduleItem
 
 
-def test_health_endpoint_reports_queue_state() -> None:
+def test_health_endpoint_reports_metrics() -> None:
     container = Container.build()
     app = create_app(container)
     with TestClient(app) as client:
@@ -24,7 +24,6 @@ def test_health_endpoint_reports_queue_state() -> None:
         assert response.status_code == 200
         payload = response.json()
         assert payload["ok"] is True
-        assert payload["queue_capacity"] == container.bus.capacity
         assert "metrics" in payload
 
 
@@ -219,7 +218,7 @@ def test_chat_replays_history_and_supports_slash_and_stream(tmp_path: Path) -> N
     assert "스트리밍 응답 본문" in stream.text
 
 
-def test_progress_and_integrations_degrade_without_external_config(tmp_path: Path) -> None:
+def test_progress_and_work_items_respond_without_external_config(tmp_path: Path) -> None:
     container = Container.build(
         Settings(
             env="test", archive_dir=tmp_path / "archive", workspace_dir=tmp_path / "workspaces"
@@ -231,154 +230,10 @@ def test_progress_and_integrations_degrade_without_external_config(tmp_path: Pat
     with TestClient(app) as client:
         progress = client.get("/api/progress")
         work_items = client.get("/api/work-items", headers=headers)
-        github = client.get("/api/integrations/github")
-        discord = client.get("/api/integrations/discord")
 
     assert progress.status_code == 200
     assert "current_status" in progress.json()["current_status_md"]
     assert work_items.status_code == 200
-    assert github.status_code == 200
-    assert github.json()["configured"] is False
-    assert discord.status_code == 200
-    assert discord.json()["configured"] is False
-
-
-def test_patchops_execution_router_endpoints_shape(tmp_path: Path) -> None:
-    container = Container.build(
-        Settings(env="test", archive_dir=tmp_path / "archive", workspace_dir=tmp_path)
-    )
-    headers = _auth_headers(container)
-    run = container.patch_runs.create(
-        PatchRun.create(
-            repo_id="local",
-            request="Fix UI copy",
-            approved_by="owner",
-            artifacts={
-                "diff_draft": """diff --git a/frontend/src/App.tsx b/frontend/src/App.tsx
---- a/frontend/src/App.tsx
-+++ b/frontend/src/App.tsx
-@@ -1 +1 @@
--old
-+new
-""",
-                "pr_description": "## Summary\n- Fix copy",
-            },
-        )
-    )
-    app = create_app(container)
-
-    with TestClient(app) as client:
-        applied = client.post(
-            f"/api/patch-runs/{run.id}/apply-diff",
-            headers=headers,
-            json={"arguments": {"apply": False}},
-        )
-        tested = client.post(
-            f"/api/patch-runs/{run.id}/run-tests",
-            headers=headers,
-            json={"arguments": {"command": "python -m pytest -q", "dry_run": True}},
-        )
-        drafted = client.post(
-            f"/api/patch-runs/{run.id}/draft-pr",
-            headers=headers,
-            json={"arguments": {}},
-        )
-        files = client.get(f"/api/patch-runs/{run.id}/files", headers=headers)
-        traversal = client.get(
-            f"/api/patch-runs/{run.id}/files/%2E%2E/runs/{run.id}.json", headers=headers
-        )
-
-    assert applied.status_code == 200
-    assert applied.json()["execution"]["policy"]["files"] == ["frontend/src/App.tsx"]
-    assert tested.status_code == 200
-    assert tested.json()["test_result"]["dry_run"] is True
-    assert drafted.status_code == 200
-    assert drafted.json()["pr_draft"]["requires_human_approval"] is True
-    assert files.status_code == 200
-    assert {item["name"] for item in files.json()["files"]} <= {"plan.md"}
-    assert traversal.status_code == 400
-    assert container.mcp_audit.list(limit=10)
-
-
-def test_patchops_plan_and_artifact_files_are_created(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    (workspace / "app.py").write_text("print('hello')\n", encoding="utf-8")
-    container = Container.build(
-        Settings(env="test", archive_dir=tmp_path / "archive", workspace_dir=workspace)
-    )
-    container.llm = FakeLlmProvider(
-        [
-            ScriptedResponse(
-                text='[{"question":"수정 범위는?","priority":"high","needs_human":false}]'
-            ),
-            ScriptedResponse(
-                text='{"goal":"문구 수정","target_files":["app.py"],"patch_steps":["app.py 수정"],"risk_level":"low","test_plan":["python -m pytest -q"],"approval_required":true}'
-            ),
-            ScriptedResponse(
-                text='{"diff_draft":"diff --git a/app.py b/app.py\\n--- a/app.py\\n+++ b/app.py\\n@@ -1 +1 @@\\n-print(\\u0027hello\\u0027)\\n+print(\\u0027hi\\u0027)\\n","verification_commands":["python -m pytest -q"]}'
-            ),
-            ScriptedResponse(
-                text='{"pr_description":"## Summary\\n- Update app","internal_patch_note":"# Note","customer_release_note":"Updated."}'
-            ),
-            ScriptedResponse(
-                text='{"test_plan":["python -m pytest -q"],"test_diff_draft":"diff --git a/test_app.py b/test_app.py\\n--- /dev/null\\n+++ b/test_app.py\\n@@ -0,0 +1 @@\\n+def test_app(): pass\\n"}'
-            ),
-            ScriptedResponse(
-                text="# 코딩 에이전트 계획서\n\n## 수정됨\n- 저장 API와 AI 수정 API 확인"
-            ),
-        ]
-    )
-    headers = _auth_headers(container)
-    app = create_app(container)
-
-    with TestClient(app) as client:
-        created = client.post(
-            "/api/patch-runs",
-            headers=headers,
-            json={
-                "repo_id": "local",
-                "request": "app.py 문구 수정",
-                "autonomy_level": "L1",
-                "privacy_mode": "hybrid_redacted",
-                "target_branch": "main",
-            },
-        )
-        run_id = created.json()["patch_run"]["id"]
-        analyzed = client.post(f"/api/patch-runs/{run_id}/analyze", headers=headers)
-        drafted = client.post(f"/api/patch-runs/{run_id}/draft-diff", headers=headers)
-        files = client.get(f"/api/patch-runs/{run_id}/files", headers=headers)
-        plan = client.get(f"/api/patch-runs/{run_id}/files/plan.md", headers=headers)
-        saved = client.put(
-            f"/api/patch-runs/{run_id}/plan-md",
-            headers=headers,
-            json={"content": "# 직접 수정한 plan.md\n"},
-        )
-        revised = client.post(
-            f"/api/patch-runs/{run_id}/plan-md/revise",
-            headers=headers,
-            json={
-                "instruction": "체크리스트를 추가해줘",
-                "current_content": "# 직접 수정한 plan.md\n",
-            },
-        )
-        memory = client.get("/api/memory/permanent/search?q=PatchOps%20plan", headers=headers)
-        docs = client.get("/api/archive/document-index?q=PatchOps&limit=20", headers=headers)
-
-    assert analyzed.status_code == 200
-    assert drafted.status_code == 200
-    names = {item["name"] for item in files.json()["files"]}
-    assert names == {"plan.md"}
-    assert "코딩 에이전트 계획서" in plan.json()["file"]["content"]
-    assert "## Code Change Draft" in plan.json()["file"]["content"]
-    assert "## Test Draft" in plan.json()["file"]["content"]
-    assert "## PR Draft" in plan.json()["file"]["content"]
-    assert saved.status_code == 200
-    assert saved.json()["file"]["content"].startswith("# 직접 수정한 plan.md")
-    assert revised.status_code == 200
-    assert "## 수정됨" in revised.json()["file"]["content"]
-    assert any("patch_ops/workspaces" in source["path"] for source in memory.json()["sources"])
-    assert any(item["kind"] == "AI 개발 도우미" for item in docs.json()["documents"])
 
 
 def test_context_firewall_security_api_redacts_and_audits(tmp_path: Path) -> None:
@@ -478,6 +333,100 @@ def test_ai_office_generation_endpoints_write_archive_docs(tmp_path: Path) -> No
     assert document.status_code == 200
     assert document.json()["path"].startswith("documents/")
     assert (archive_dir / hiring.json()["path"]).exists()
+
+
+def test_meeting_minutes_action_items_become_work_schedule(tmp_path: Path) -> None:
+    archive_dir = tmp_path / "archive"
+    container = Container.build(
+        Settings(env="test", archive_dir=archive_dir, workspace_dir=tmp_path / "workspaces")
+    )
+    container.llm = FakeLlmProvider(
+        responses=[
+            ScriptedResponse(text="## 회의록\n- 결정: 주간보고 자동화\n- 액션: 보고서 초안 정리"),
+            ScriptedResponse(
+                text=(
+                    '{"steps": ['
+                    '{"name": "보고서 초안 정리", "automation": "AI 초안 생성", '
+                    '"reviewer": "김담당", "output": "주간 보고 초안"},'
+                    '{"name": "고객사 회신", "automation": "", "reviewer": "", "output": "회신 메일"}'
+                    "]}"
+                )
+            ),
+        ]
+    )
+    container.llm_runtime.write(
+        LlmRuntimeConfig(
+            default_route="api", default_provider="fake", local_enabled=True, api_enabled=True
+        )
+    )
+    headers = _auth_headers(container)
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        minutes = client.post(
+            "/api/documents/generate",
+            headers=headers,
+            json={
+                "document_type": "meeting_minutes",
+                "title": "주간 운영 회의",
+                "source_text": "주간보고 자동화를 결정. 김담당이 보고서 초안 정리.",
+                "audience": "운영팀",
+                "generate_tasks": True,
+                "participants": "김담당",
+            },
+        )
+        schedule = client.get("/api/work-schedule", headers=headers)
+
+    assert minutes.status_code == 200
+    created = minutes.json()["created_tasks"]
+    assert len(created) == 2
+    assert created[0]["title"].startswith("[1단계]")
+    titles = [item["title"] for item in schedule.json()["items"]]
+    assert any("보고서 초안 정리" in title for title in titles)
+    assert any("고객사 회신" in title for title in titles)
+    # Steps are sequentially dependent: step 2 waits on step 1.
+    second = next(item for item in schedule.json()["items"] if "고객사 회신" in item["title"])
+    assert second["dependencies"]
+
+
+def test_weekly_report_collects_schedule_and_writes_document(tmp_path: Path) -> None:
+    archive_dir = tmp_path / "archive"
+    container = Container.build(
+        Settings(env="test", archive_dir=archive_dir, workspace_dir=tmp_path / "workspaces")
+    )
+    container.llm = FakeLlmProvider(
+        responses=[ScriptedResponse(text="# 주간 업무 보고\n- 완료 1건, 진행 1건")]
+    )
+    container.llm_runtime.write(
+        LlmRuntimeConfig(
+            default_route="api", default_provider="fake", local_enabled=True, api_enabled=True
+        )
+    )
+    headers = _auth_headers(container)
+    container.work_schedule.upsert(
+        WorkScheduleItem.create(title="문서 자동화 세팅", owner_name="이재석", status="done")
+    )
+    container.work_schedule.upsert(
+        WorkScheduleItem.create(title="주간보고 검토", owner_name="이민우", status="in_progress")
+    )
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        report = client.post("/api/reports/weekly", headers=headers)
+
+    assert report.status_code == 200
+    assert report.json()["path"].startswith("documents/")
+    assert "주간 업무 보고" in report.json()["markdown"]
+    assert (archive_dir / report.json()["path"]).exists()
+    # The prompt fed to the LLM must contain the live schedule state.
+    prompt_text = "\n".join(
+        str(message.content)
+        for call in container.llm.calls
+        for message in call
+        if isinstance(message.content, str)
+    )
+    assert "문서 자동화 세팅" in prompt_text
+    assert "이민우" in prompt_text
 
 
 def test_office_document_generation_falls_back_when_llm_returns_empty(tmp_path: Path) -> None:

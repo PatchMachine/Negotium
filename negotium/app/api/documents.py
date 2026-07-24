@@ -12,8 +12,10 @@ from negotium.app.api._shared import (
     _ai_job_payload,
     _audit,
     _complete_office_task,
+    _enqueue_process_steps,
     _finish_ai_job,
     _generate_hiring_document,
+    _generate_process_steps,
     _hr_evaluation_context,
     _hr_evaluation_markdown,
     _office_context,
@@ -267,6 +269,24 @@ def create_documents_router(container: Container) -> APIRouter:
         except Exception as exc:
             _finish_ai_job(container, job, status="failed", error=str(exc))
             raise
+        created_tasks: list[dict[str, object]] = []
+        if payload.generate_tasks and payload.document_type == "meeting_minutes":
+            # Close the loop: action items in the minutes become ordered
+            # work-schedule assignments, same engine the handover flow uses.
+            basis = body if resolved_format == "markdown" else payload.source_text or body
+            steps = await _generate_process_steps(
+                container,
+                objective=f"{payload.title} 액션 아이템 실행",
+                scope=payload.participants or payload.audience,
+                markdown=basis,
+            )
+            created_tasks = _enqueue_process_steps(
+                container,
+                architecture_id=path,
+                objective=payload.title,
+                participants=payload.participants or payload.audience,
+                steps=steps,
+            )
         result = GeneratedDocumentPayload(
             title=payload.title,
             markdown=body,
@@ -274,6 +294,7 @@ def create_documents_router(container: Container) -> APIRouter:
             ai_job=_ai_job_payload(job).model_dump(),
             output_format=resolved_format,
             attachment_notes=attachment_notes,
+            created_tasks=created_tasks,
         )
         _audit(container, actor=actor, action="document.create", target="document", target_id=path)
         return result

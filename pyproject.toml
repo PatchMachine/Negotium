@@ -1,33 +1,26 @@
 [project]
 name = "negotium"
 version = "0.1.0"
-description = "Auto SI/SE agent system: GitHub Issues + Discord bug reports -> PM/Developer/Reviewer agents -> patch Diff proposals with MD GitOps archive."
+description = "Negotium: LLM-agent office-work/BPA console for non-IT teams — meeting minutes, work assignment, weekly reports, handover and hiring kits on an MD GitOps archive."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Negotium Team" }]
-keywords = ["llm", "agents", "gitops", "automation", "si", "se"]
+keywords = ["llm", "agents", "bpa", "office", "automation", "gitops"]
 
 dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
     "pydantic>=2.6",
     "pydantic-settings>=2.2",
+    "python-dotenv>=1.0",
     "httpx>=0.27",
-    "discord.py>=2.3",
-    "GitPython>=3.1",
-    "PyGithub>=2.3",
-    "langgraph>=0.2",
     "openai>=1.30",
-    "tree-sitter>=0.21",
-    "tree-sitter-languages>=1.10",
-    "rank-bm25>=0.2.2",
     "portalocker>=2.8",
     "structlog>=24.1",
     "jinja2>=3.1",
     "typer>=0.12",
     "pyyaml>=6.0",
-    "detect-secrets>=1.4",
     "python-multipart>=0.0.9",
     "openpyxl>=3.1",
     "pypdf>=4.0",
@@ -68,7 +61,7 @@ build-backend = "hatchling.build"
 packages = ["negotium"]
 
 [tool.hatch.build.targets.sdist]
-include = ["negotium", "templates", "README.md", "pyproject.toml"]
+include = ["negotium", "README.md", "pyproject.toml"]
 
 
 [tool.ruff]
@@ -94,15 +87,7 @@ exclude = ["archive/", "tests/fixtures/"]
 
 [[tool.mypy.overrides]]
 module = [
-    "tree_sitter_languages.*",
-    "rank_bm25.*",
-    "github.*",
-    "discord.*",
-    "discord.ext.*",
     "portalocker.*",
-    "git",
-    "git.*",
-    "langgraph.*",
     "openai",
     "openai.*",
     "openpyxl",
@@ -120,16 +105,10 @@ ignore_missing_imports = true
 # External-SDK boundary adapters: we rely on duck-typing into untyped libs.
 [[tool.mypy.overrides]]
 module = [
-    "negotium.adapters.ingestion.discord_bot",
     "negotium.adapters.llm.openai_adapter",
     "negotium.adapters.llm.vllm_adapter",
     "negotium.adapters.llm.vllm_embedded_adapter",
     "negotium.adapters.llm.ollama_adapter",
-    "negotium.adapters.notifier.github_notifier",
-    "negotium.adapters.notifier.discord_notifier",
-    "negotium.context.ast_indexer",
-    "negotium.context.md_retriever",
-    "negotium.context.repo_snapshot",
 ]
 disallow_untyped_calls = false
 disallow_any_decorated = false

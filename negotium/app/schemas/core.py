@@ -49,8 +49,6 @@ class OperationsMemoryPayload(BaseModel):
 
 class ApiStatusPayload(BaseModel):
     ok: bool
-    queue_size: int
-    queue_capacity: int
     metrics: dict[str, Any]
     operations_memory_configured: bool
 
@@ -137,8 +135,6 @@ class LocalLlmStatusPayload(BaseModel):
 
 class ProgressPayload(BaseModel):
     current_status_md: str
-    queue_size: int
-    queue_capacity: int
     recent_logs: list[dict[str, Any]]
 
 
@@ -427,97 +423,6 @@ class AgentPlanRequest(BaseModel):
     context: str = ""
 
 
-class PatchRunCreatePayload(BaseModel):
-    repo_id: str = "local"
-    request: str
-    autonomy_level: str = "L1"
-    privacy_mode: str = "hybrid_redacted"
-    target_branch: str = "main"
-    constraints: dict[str, Any] = Field(default_factory=dict)
-
-
-class PatchRunApprovalPayload(BaseModel):
-    decision: Literal["approve", "reject"] = "approve"
-    comment: str = ""
-
-
-class PatchPlanMarkdownPayload(BaseModel):
-    content: str = ""
-
-
-class PatchPlanRevisePayload(BaseModel):
-    instruction: str
-    current_content: str = ""
-    source_refs: list[str] = []
-
-
-class PatchPlanPromotePayload(BaseModel):
-    content: str = ""
-
-
-class PatchRunPayload(BaseModel):
-    id: str
-    repo_id: str
-    request: str
-    autonomy_level: str
-    privacy_mode: str
-    target_branch: str
-    status: str
-    risk_level: str
-    created_by: str = ""
-    approved_by: str = ""
-    plan: dict[str, Any] = Field(default_factory=dict)
-    questions: list[dict[str, Any]] = Field(default_factory=list)
-    artifacts: dict[str, Any] = Field(default_factory=dict)
-    context: dict[str, Any] = Field(default_factory=dict)
-    constraints: dict[str, Any] = Field(default_factory=dict)
-    created_at: str = ""
-    updated_at: str = ""
-
-
-class IntegrationStatusPayload(BaseModel):
-    ok: bool
-    configured: bool
-    reason: str = ""
-    items: list[dict[str, Any]]
-
-
-class GitHubConnectorPayload(BaseModel):
-    enabled: bool = False
-    allowed_repos: list[str] = Field(default_factory=list)
-    trigger_label: str = "negotium"
-    webhook_secret: str = ""
-    app_token: str = ""
-    webhook_secret_present: bool = False
-    app_token_present: bool = False
-    event_forms: list[str] = Field(
-        default_factory=lambda: ["issue", "pull_request", "repository", "push"]
-    )
-
-
-class DiscordChannelBindingPayload(BaseModel):
-    guild_id: str = ""
-    channel_id: str = ""
-    channel_name: str = ""
-    repo: str = ""
-
-
-class DiscordConnectorPayload(BaseModel):
-    enabled: bool = False
-    bot_token: str = ""
-    bot_token_present: bool = False
-    guild_allowlist: list[str] = Field(default_factory=list)
-    channel_bindings: list[DiscordChannelBindingPayload] = Field(default_factory=list)
-    command_forms: list[str] = Field(
-        default_factory=lambda: ["bug_report", "thread_digest", "slash_command"]
-    )
-
-
-class IntegrationConfigPayload(BaseModel):
-    github: GitHubConnectorPayload = Field(default_factory=GitHubConnectorPayload)
-    discord: DiscordConnectorPayload = Field(default_factory=DiscordConnectorPayload)
-
-
 class DocumentReadPayload(BaseModel):
     path: str
     markdown: str
@@ -527,7 +432,7 @@ class DocumentReadPayload(BaseModel):
 
 class TokenLimitPayload(BaseModel):
     enforcement_enabled: bool = True
-    per_request_max_tokens: int = 4000
+    per_request_max_tokens: int = 30_000
     daily_total_tokens: int = 200_000
     monthly_total_tokens: int = 4_000_000
 
@@ -555,38 +460,6 @@ class TokenUsageSummaryPayload(BaseModel):
 class TokenLimitStatusPayload(BaseModel):
     limits: TokenLimitPayload
     usage: TokenUsageSummaryPayload
-
-
-class PatchRecordCreatePayload(BaseModel):
-    title: str
-    summary: str = ""
-    request: str = ""
-    plan: list[str] = Field(default_factory=list)
-    changed_files: list[str] = Field(default_factory=list)
-    verification: list[str] = Field(default_factory=list)
-    follow_ups: list[str] = Field(default_factory=list)
-    tags: list[str] = Field(default_factory=list)
-    agent: str = ""
-
-
-class PatchRecordPayload(BaseModel):
-    record_id: str
-    title: str
-    summary: str = ""
-    request: str = ""
-    plan: list[str] = Field(default_factory=list)
-    changed_files: list[str] = Field(default_factory=list)
-    verification: list[str] = Field(default_factory=list)
-    follow_ups: list[str] = Field(default_factory=list)
-    tags: list[str] = Field(default_factory=list)
-    actor: str = ""
-    agent: str = ""
-    created_at: str = ""
-    relative_path: str = ""
-
-
-class PatchRecordDetailPayload(PatchRecordPayload):
-    markdown: str = ""
 
 
 class HiringRequest(BaseModel):
@@ -623,6 +496,7 @@ class GeneratedDocumentPayload(BaseModel):
     ai_job: dict[str, Any] = Field(default_factory=dict)
     output_format: str = "markdown"
     attachment_notes: list[str] = Field(default_factory=list)
+    created_tasks: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class HandoverRequest(BaseModel):
@@ -645,6 +519,9 @@ class OfficeDocumentRequest(BaseModel):
     token_budget: int = 4000
     attachment_ids: list[str] = Field(default_factory=list)
     output_format: Literal["auto", "markdown", "html", "csv", "json", "text"] = "auto"
+    # meeting_minutes only: also turn action items into work-schedule assignments.
+    generate_tasks: bool = False
+    participants: str = ""
 
 
 class SkillRunRequest(BaseModel):

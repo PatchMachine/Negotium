@@ -1,6 +1,7 @@
 # Negotium Architecture
 
-Negotium is an AI Office BPA system that combines a React console, a FastAPI backend, local/cloud LLM routing, external ingestion, and a Markdown-first archive.
+Negotium is an AI office-work / BPA system: a React console + FastAPI backend with
+local/cloud LLM routing over a Markdown-first archive (no database).
 
 ## 1. System Overview
 
@@ -8,103 +9,112 @@ Negotium is an AI Office BPA system that combines a React console, a FastAPI bac
 flowchart TB
   User["Users: owner, manager, staff, viewer"] --> Frontend["React Frontend: localhost:5173"]
 
-  Frontend -->|"REST API"| FastAPI["FastAPI Backend: negotium serve"]
+  Frontend -->|"REST API (X-NG-User)"| FastAPI["FastAPI Backend: negotium serve"]
 
-  FastAPI --> OperationsAPI["Operations API"]
-  FastAPI --> ContributorSite["Contributor Site"]
-  FastAPI --> GithubWebhook["GitHub Webhook Router"]
-  FastAPI --> DiscordBot["Discord Bot Adapter"]
+  FastAPI --> Documents["Documents API (회의록/보고서/HR)"]
+  FastAPI --> Work["Work API (배정/현황/주간보고/인수인계)"]
+  FastAPI --> Memory["Memory API (운영/영구/휘발성)"]
+  FastAPI --> Admin["Admin API (키/권한/감사)"]
+  FastAPI --> McpHub["MCP Hub (skills/hf/public_reference/agent)"]
 
-  OperationsAPI --> AccessControl["AccessControlStore"]
-  OperationsAPI --> SecretStore["SecretStore"]
-  OperationsAPI --> UploadStore["UploadStore"]
-  OperationsAPI --> OperationsMemory["OperationsMemoryStore"]
-  OperationsAPI --> LlmRuntime["LlmRuntimeStore"]
-  OperationsAPI --> LlmGateway["LLM Gateway"]
+  Documents --> OfficeTask["_complete_office_task (task routing)"]
+  Work --> OfficeTask
+  OfficeTask --> LlmGateway["LLM Gateway"]
 
-  LlmGateway --> LocalVllm["Embedded vLLM: Qwen3-4B"]
   LlmGateway --> Solar["Upstage Solar (default)"]
   LlmGateway --> OpenAI["OpenAI GPT"]
   LlmGateway --> Claude["Anthropic Claude"]
   LlmGateway --> Gemini["Google Gemini"]
+  LlmGateway --> LocalVllm["Embedded vLLM (sensitive route)"]
   LlmGateway --> FakeLLM["Fake LLM for Tests"]
 
-  FastAPI --> EventBus["EventBus"]
-  EventBus --> Orchestrator["Orchestrator"]
-  Orchestrator --> AgentGraph["Agent Graph"]
-  AgentGraph --> PmAgent["PM Agent"]
-  AgentGraph --> DevAgent["Developer Agent"]
-  AgentGraph --> ReviewerAgent["Reviewer Agent"]
-
-  PmAgent --> LlmGateway
-  DevAgent --> LlmGateway
-  ReviewerAgent --> LlmGateway
-
-  OperationsMemory --> Archive["archive directory"]
-  LlmRuntime --> Archive
-  SecretStore --> Archive
-  UploadStore --> Archive
-  Orchestrator --> ArchiveWriter["ArchiveWriter"]
-  ArchiveWriter --> Archive
+  Documents --> Archive["archive/ (MD GitOps)"]
+  Work --> Archive
+  Memory --> Archive
+  Admin --> Archive
 ```
 
-## 2. Main Request Flow
+## 2. Core Office Loop
 
 ```mermaid
-sequenceDiagram
-  participant User as User
-  participant UI as React Frontend
-  participant API as FastAPI Operations API
-  participant Auth as AccessControlStore
-  participant Runtime as LlmRuntimeStore
-  participant Archive as Archive Memory
-  participant Gateway as LlmGateway
-  participant VLLM as Embedded vLLM
-
-  User->>UI: Ask a question in LLM Chat
-  UI->>API: POST /api/llm/chat with X-NG-User
-  API->>Auth: Check llm:chat permission
-  Auth-->>API: Allowed
-  API->>Runtime: Read route and provider
-  API->>Archive: Read company memory, status, recent logs
-  API->>Gateway: Send contextual messages
-  Gateway->>VLLM: Generate with local model
-  VLLM-->>Gateway: Text and token usage
-  Gateway-->>API: LlmResponse
-  API-->>UI: ChatResponse
-  UI-->>User: Render answer
+flowchart LR
+  Notes["회의 메모"] --> Minutes["회의록 생성\nPOST /api/documents/generate"]
+  Minutes -->|"generate_tasks=true"| Steps["step engine\n_generate_process_steps"]
+  Steps --> Schedule["업무 배정\narchive/work_schedule.json"]
+  Schedule --> Status["업무 현황·병목 요약\nGET /api/work-items"]
+  Status --> Weekly["주간보고\nPOST /api/reports/weekly"]
+  Schedule --> Handover["인수인계 킷\nPOST /api/handover/brief"]
+  Handover -->|"후속 업무"| Schedule
+  Org["부서/직급 컨텍스트"] --> Hiring["채용/면접 키트\nPOST /api/hr/*"]
 ```
 
-## 3. Local vLLM State
+## 3. LLM Task Routing
 
-```mermaid
-stateDiagram-v2
-  [*] --> Disabled
-  Disabled --> Loading: Local ON
-  Loading --> Running: Model loaded on GPU
-  Loading --> Error: CUDA or model loading failure
-  Running --> Disabled: Local OFF
-  Error --> Loading: Local ON retry
-  Running --> Running: Chat requests reuse loaded model
-```
-
-## 4. LLM Runtime Modes
+All office completions funnel through `_complete_office_task`, routed per task
+(`memory_summary, agent_planning, document_generation, hiring, handover, chat`)
+via `archive/llm_runtime.json` — each task can pin a provider/model, and the
+route degrades gracefully (empty-response fallback keeps demos alive).
 
 ```mermaid
 flowchart TB
-  Start["Backend startup"] --> ModeCheck{"NG_VLLM_MODE"}
+  Task["Office task (document_generation, hiring, ...)"] --> Runtime["LlmRuntimeStore task_routes"]
+  Runtime -->|"api"| Cloud["Solar / GPT / Claude / Gemini / Together"]
+  Runtime -->|"local"| Vllm["Embedded vLLM (Qwen3-4B)"]
+  Cloud --> Guard["Context firewall + secret force-local"]
+  Vllm --> Guard
+```
 
-  ModeCheck -->|"embedded"| HostMode["Host Python process"]
-  HostMode --> Spawn["VLLM_WORKER_MULTIPROC_METHOD=spawn"]
-  Spawn --> LoadModel["vllm.LLM loads Qwen3-4B on GPU"]
-  LoadModel --> Ready["Local LLM running"]
+## 4. Archive and Persistence
 
-  ModeCheck -->|"http"| HttpMode["External vLLM HTTP server"]
-  HttpMode --> BaseURL["NG_VLLM_BASE_URL"]
-  BaseURL --> HttpReady["OpenAI-compatible API"]
+```mermaid
+flowchart LR
+  Archive["archive/"] --> Memory["operations_memory.json / work_memory.json"]
+  Archive --> Schedule["work_schedule.json"]
+  Archive --> Runtime["llm_runtime.json"]
+  Archive --> Secrets["secrets/api_keys.enc.json"]
+  Archive --> ACL["access_control.json / auth.json"]
+  Archive --> Docs["documents/ hr/ handover/ work_architecture/"]
+  Archive --> Audit["audit_log.jsonl"]
+  Archive --> Volatile["volatile_memory/ + compressed context"]
 
-  Ready --> Chat["LLM Chat"]
-  HttpReady --> Chat
+  Memory --> Context["LLM Context"]
+  Schedule --> Context
+  Docs --> Context
+```
+
+All stores share the locked-file helpers in `negotium/archive/_store.py`
+(portalocker + UTF-8 JSON/JSONL).
+
+## 5. Access Control
+
+```mermaid
+flowchart TB
+  Request["Frontend request"] --> Header["X-NG-User"]
+  Header --> ACL["AccessControlStore"]
+  ACL --> User["UserRecord"]
+  User --> Position["PositionRecord permissions"]
+  Position --> Check{"Required permission?"}
+  Check -->|"allowed"| Handler["API handler"]
+  Check -->|"denied"| Forbidden["403"]
+```
+
+Default roles: `owner` (all via `*`), `manager` (memory/LLM/documents/uploads/work),
+`staff` (LLM chat/uploads/work read), `viewer` (work read only). Day-to-day access
+is position-centric: a user's assigned position carries the permission list.
+
+## 6. Deployment Shape
+
+```mermaid
+flowchart TB
+  subgraph HostGpu["Host GPU Mode (sensitive local LLM)"]
+    HostBackend["uv run negotium serve"] --> EmbeddedVllm["Embedded vLLM"]
+    HostFrontend["npm run dev --prefix frontend"] --> HostBackend
+  end
+
+  subgraph DockerMode["Docker Compose Mode (cloud providers)"]
+    DockerFrontend["frontend container"] --> DockerBackend["negotium container"]
+    DockerBackend --> CloudProviders["Solar (default), GPT, Claude, Gemini, external vLLM HTTP"]
+  end
 ```
 
 Recommended local GPU mode:
@@ -114,118 +124,8 @@ NG_LLM_PROVIDER=vllm \
 NG_LLM_DEFAULT_ROUTE=local \
 NG_VLLM_MODE=embedded \
 NG_VLLM_PRELOAD_ON_STARTUP=true \
-NG_VLLM_WORKER_MULTIPROC_METHOD=spawn \
 uv run negotium serve
 ```
 
-Docker mode is for the frontend and non-GPU backend operation. It does not load the embedded local GPU model.
-
-## 5. Archive and Persistence
-
-```mermaid
-flowchart LR
-  Archive["archive/"] --> Memory["operations_memory.json"]
-  Archive --> Runtime["llm_runtime.json"]
-  Archive --> Secrets["secrets/api_keys.enc.json"]
-  Archive --> ACL["access_control.json"]
-  Archive --> Uploads["uploads/YYYY/MM/DD/files"]
-  Archive --> UploadIndex["uploads/index.json"]
-  Archive --> Logs["YYYY/MM/*.md"]
-  Archive --> Status["current_status.md"]
-
-  Memory --> Context["LLM Context"]
-  Logs --> Context
-  Status --> Context
-  Uploads --> Context
-```
-
-## 6. Office BPA Feature Map
-
-```mermaid
-flowchart TB
-  Console["AI Office BPA Console"] --> MemoryUI["Company Memory"]
-  Console --> ChatUI["LLM Chat"]
-  Console --> WorkUI["Work Status"]
-  Console --> ProgressUI["Progress Logs"]
-  Console --> HiringUI["Hiring and Interview"]
-  Console --> DocsUI["Document Automation"]
-  Console --> HandoverUI["Handover"]
-  Console --> UploadUI["Uploads"]
-  Console --> AdminUI["Admin Settings"]
-  Console --> AccessUI["Access Control"]
-
-  MemoryUI --> OperationsMemory["operations_memory.json"]
-  ChatUI --> LlmGateway["LLM Gateway"]
-  WorkUI --> ArchiveLogs["archive logs"]
-  ProgressUI --> ArchiveLogs
-  HiringUI --> GeneratedDocs["archive/hr"]
-  DocsUI --> GeneratedDocs
-  HandoverUI --> GeneratedDocs
-  UploadUI --> UploadStore["archive/uploads"]
-  AdminUI --> SecretStore["encrypted API keys"]
-  AccessUI --> AccessControl["roles, users, permissions"]
-```
-
-## 7. Event Ingestion and Agent Flow
-
-```mermaid
-flowchart LR
-  Github["GitHub Issue or Webhook"] --> GithubRouter["GitHubWebhookRouter"]
-  Discord["Discord Message"] --> DiscordAdapter["DiscordBotAdapter"]
-
-  GithubRouter --> EventBus["EventBus"]
-  DiscordAdapter --> EventBus
-
-  EventBus --> Orchestrator["Orchestrator"]
-  Orchestrator --> Context["Repo Snapshot and Archive Context"]
-  Context --> AgentGraph["AgentGraph"]
-
-  AgentGraph --> PM["PM Agent: WorkSpec"]
-  PM --> Dev["Developer Agent: PatchProposal"]
-  Dev --> Reviewer["Reviewer Agent: ReviewVerdict"]
-  Reviewer --> ArchiveWriter["ArchiveWriter"]
-  ArchiveWriter --> Archive["archive/YYYY/MM/*.md"]
-```
-
-## 8. Access Control
-
-```mermaid
-flowchart TB
-  Request["Frontend request"] --> Header["X-NG-User"]
-  Header --> ACL["AccessControlStore"]
-  ACL --> User["UserRecord"]
-  User --> Role["RoleRecord"]
-  Role --> Permission{"Required permission?"}
-
-  Permission -->|"allowed"| Handler["API handler executes"]
-  Permission -->|"denied"| Forbidden["403 Forbidden"]
-
-  Handler --> Result["JSON response"]
-```
-
-Default roles:
-
-- `owner`: all permissions via `*`
-- `manager`: memory, LLM chat, documents, uploads, work read
-- `staff`: LLM chat, uploads, work read
-- `viewer`: work read only
-
-## 9. Deployment Shape
-
-```mermaid
-flowchart TB
-  subgraph HostGpu["Host GPU Mode"]
-    HostBackend["uv run negotium serve"]
-    HostBackend --> EmbeddedVllm["Embedded vLLM on RTX GPU"]
-    HostFrontend["npm run dev --prefix frontend"] --> HostBackend
-  end
-
-  subgraph DockerMode["Docker Compose Mode"]
-    DockerFrontend["frontend container"]
-    DockerBackend["negotium container"]
-    DockerFrontend --> DockerBackend
-    DockerBackend --> CloudProviders["Solar, GPT, Claude, Gemini, or external vLLM HTTP"]
-  end
-```
-
-Host GPU mode is the recommended mode for sensitive local LLM usage. Docker mode is suitable for web UI, API integration, and cloud-provider workflows.
+Docker mode is for the frontend and non-GPU backend operation; it does not load
+the embedded local GPU model.

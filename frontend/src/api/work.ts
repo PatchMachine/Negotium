@@ -178,6 +178,10 @@ export function generateWorkSchedule(payload: {
   });
 }
 
+export function createWeeklyReport(): Promise<GeneratedDocument> {
+  return requestJson<GeneratedDocument>('/api/reports/weekly', { method: 'POST' });
+}
+
 export function createHandoverBrief(payload: HandoverRequest): Promise<GeneratedDocument> {
   return requestJson<GeneratedDocument>('/api/handover/brief', {
     method: 'POST',

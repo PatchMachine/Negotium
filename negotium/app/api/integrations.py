@@ -10,21 +10,10 @@ from fastapi.responses import StreamingResponse
 
 from negotium.app.api._shared import (
     _audit,
-    _fetch_discord_status,
-    _fetch_github_status,
-    _integration_config_payload,
     _require,
-    _save_discord_secrets,
-    _save_github_secrets,
 )
 from negotium.app.container import Container
-from negotium.app.schemas.core import (
-    DiscordConnectorPayload,
-    GitHubConnectorPayload,
-    IntegrationConfigPayload,
-    IntegrationStatusPayload,
-)
-from negotium.app.schemas.issue_memory import (
+from negotium.app.schemas.mcp import (
     McpToolCallPayload,
 )
 from negotium.app.services.mcp_hub_service import (
@@ -37,11 +26,6 @@ from negotium.app.services.mcp_hub_service import (
     record_mcp_audit,
     render_mcp_prompt,
     required_permission,
-)
-from negotium.archive.integration_config import (
-    DiscordChannelBindingConfig,
-    DiscordConnectorConfig,
-    GitHubConnectorConfig,
 )
 
 
@@ -197,90 +181,9 @@ def create_integrations_router(container: Container) -> APIRouter:
         _require(container, x_ng_user, "work:read")
 
         async def events() -> AsyncIterator[str]:
-            yield 'event: metadata\ndata: {"name":"patchnote-mcp-hub","transport":"sse-skeleton"}\n\n'
+            yield 'event: metadata\ndata: {"name":"negotium-mcp-hub","transport":"sse-skeleton"}\n\n'
             yield 'event: heartbeat\ndata: {"ok":true}\n\n'
 
         return StreamingResponse(events(), media_type="text/event-stream")
-
-    @router.get("/integrations/github")
-    async def read_github_status() -> IntegrationStatusPayload:
-        return await _fetch_github_status(container)
-
-    @router.get("/integrations/discord")
-    async def read_discord_status() -> IntegrationStatusPayload:
-        return await _fetch_discord_status(container)
-
-    @router.get("/integrations/config")
-    async def read_integration_config(
-        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
-    ) -> IntegrationConfigPayload:
-        _require(container, x_ng_user, "admin:integrations")
-        return _integration_config_payload(container)
-
-    @router.put("/integrations/github")
-    async def upsert_github_connector(
-        payload: GitHubConnectorPayload,
-        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
-    ) -> IntegrationConfigPayload:
-        actor = _require(container, x_ng_user, "admin:integrations")
-        _save_github_secrets(container, payload)
-        config = container.integration_config.update_github(
-            GitHubConnectorConfig(
-                enabled=payload.enabled,
-                allowed_repos=[repo.strip() for repo in payload.allowed_repos if repo.strip()],
-                trigger_label=payload.trigger_label.strip() or "negotium",
-                webhook_secret_present=container.secret_store.has_secret("github_webhook"),
-                app_token_present=container.secret_store.has_secret("github_app"),
-                event_forms=[item.strip() for item in payload.event_forms if item.strip()]
-                or ["issue", "pull_request", "repository", "push"],
-            )
-        )
-        _audit(
-            container,
-            actor=actor,
-            action="integration.github.update",
-            target="integration",
-            target_id="github",
-        )
-        return _integration_config_payload(container, config=config)
-
-    @router.put("/integrations/discord")
-    async def upsert_discord_connector(
-        payload: DiscordConnectorPayload,
-        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
-    ) -> IntegrationConfigPayload:
-        actor = _require(container, x_ng_user, "admin:integrations")
-        _save_discord_secrets(container, payload)
-        bindings: list[DiscordChannelBindingConfig] = []
-        for binding in payload.channel_bindings:
-            channel_id = binding.channel_id.strip()
-            if not channel_id:
-                continue
-            bindings.append(
-                DiscordChannelBindingConfig(
-                    guild_id=binding.guild_id.strip(),
-                    channel_id=channel_id,
-                    channel_name=binding.channel_name.strip(),
-                    repo=binding.repo.strip(),
-                )
-            )
-        config = container.integration_config.update_discord(
-            DiscordConnectorConfig(
-                enabled=payload.enabled,
-                bot_token_present=container.secret_store.has_secret("discord_bot"),
-                guild_allowlist=[item.strip() for item in payload.guild_allowlist if item.strip()],
-                channel_bindings=bindings,
-                command_forms=[item.strip() for item in payload.command_forms if item.strip()]
-                or ["bug_report", "thread_digest", "slash_command"],
-            )
-        )
-        _audit(
-            container,
-            actor=actor,
-            action="integration.discord.update",
-            target="integration",
-            target_id="discord",
-        )
-        return _integration_config_payload(container, config=config)
 
     return router

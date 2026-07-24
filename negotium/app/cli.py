@@ -3,15 +3,30 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import typer
 import uvicorn
 
 from negotium.app.container import Container
-from negotium.observability import configure_logging, get_logger
+from negotium.observability import configure_logging
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="Negotium CLI")
+
+
+def _load_env_file() -> None:
+    """Load ``.env`` into the process environment for server runtimes only.
+
+    Nested settings models (e.g. ``LlmSettings``) are built via default_factory
+    and read only ``os.environ``, so provider keys/models placed in ``.env`` are
+    otherwise dropped in the backend. We do this at the CLI entry point rather
+    than in the settings model itself so the test suite stays hermetic (it never
+    invokes the CLI and must not pick up a developer's real ``.env`` keys).
+    Existing environment variables win over ``.env`` (``override=False``).
+    """
+
+    from dotenv import load_dotenv
+
+    load_dotenv(override=False)
 
 
 @app.command()
@@ -19,7 +34,8 @@ def serve(
     host: str | None = typer.Option(None, help="HTTP bind host (overrides settings)."),
     port: int | None = typer.Option(None, help="HTTP bind port (overrides settings)."),
 ) -> None:
-    """Run the FastAPI server + background orchestrator + Discord bot."""
+    """Run the Negotium office console FastAPI server."""
+    _load_env_file()
     container = Container.build()
     settings = container.settings
     configure_logging(settings.log_level)
@@ -40,6 +56,7 @@ def llm_gateway(
     """Run the standalone external LLM gateway."""
     from negotium.app.settings import load_settings
 
+    _load_env_file()
     settings = load_settings()
     configure_logging(settings.log_level)
     uvicorn.run(
@@ -49,46 +66,6 @@ def llm_gateway(
         factory=True,
         log_level=settings.log_level.lower(),
     )
-
-
-@app.command()
-def reindex(archive_dir: Path = typer.Option(Path("./archive"))) -> None:
-    """Rebuild index MD files from existing archive logs.
-
-    Useful when the archive is imported from another machine or after a manual
-    edit.  The logic lives in ``ArchiveWriter`` so it mirrors the production
-    write path exactly.
-    """
-    from negotium.archive.schema import parse_front_matter
-    from negotium.archive.writer import ArchiveWriter
-
-    writer = ArchiveWriter(archive_dir)
-    count = 0
-    for log_path in archive_dir.rglob("*.md"):
-        try:
-            rel_parts = log_path.relative_to(archive_dir).parts
-        except ValueError:
-            continue
-        if len(rel_parts) < 3 or rel_parts[0] in {"index", "knowledge_base"}:
-            continue
-        if not rel_parts[0].isdigit():
-            continue
-        text = log_path.read_text(encoding="utf-8", errors="ignore")
-        fm = parse_front_matter(text)
-        if not fm:
-            continue
-        keywords = fm.get("keywords") or []
-        modules = fm.get("modules") or []
-        author = fm.get("author", "")
-        writer.index.update(
-            log_path=log_path,
-            keywords=keywords,
-            modules=modules,
-            author=author,
-        )
-        count += 1
-    writer.refresh_status()
-    typer.echo(f"reindexed {count} log(s)")
 
 
 @app.command("reset-state")
@@ -168,28 +145,6 @@ def skill_run(
         except SkillError as exc:
             raise typer.BadParameter(str(exc)) from exc
         typer.echo(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
-
-    asyncio.run(_run())
-
-
-@app.command()
-def replay(jsonl_path: Path) -> None:
-    """Replay past events recorded as JSONL (one IssueEvent per line)."""
-    import asyncio
-
-    from negotium.domain.entities import IssueEvent
-
-    container = Container.build()
-    log = get_logger(component="cli.replay")
-
-    async def _run() -> None:
-        for line in jsonl_path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            payload = json.loads(line)
-            event = IssueEvent.model_validate(payload)
-            log.info("replay.event", event_id=str(event.event_id), source=event.source)
-            await container.orchestrator.handle(event)
 
     asyncio.run(_run())
 

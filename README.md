@@ -3,7 +3,8 @@
 비 IT 기업이 사내 업무를 AI 기반으로 전환할 수 있도록 돕는
 LLM 에이전트 기반 **AI 오피스워크 / BPA(Business Process Automation) 시스템**입니다.
 
-회사의 업무, 문서, 인수인계, 채용, 진행상황을 AI가 정리하고 굴러가게 돕습니다.
+회의록 작성 → 업무 배정 → 주간보고 → 인수인계/채용까지, 회사의 반복 오피스워크를
+AI가 정리하고 굴러가게 돕습니다.
 민감한 사내 내용은 로컬 LLM으로, 일반 생성 업무는 클라우드 API로 라우팅할 수 있습니다.
 기본 클라우드 provider는 **Upstage Solar** (`solar-open2`)이며 GPT/Claude/Gemini/Together도 지원합니다.
 모든 추론 과정과 결정 근거는 Markdown 파일로 저장되어(**MD GitOps**) 누구나 메모장으로 읽고 수정할 수 있습니다.
@@ -15,23 +16,38 @@ LLM 에이전트 기반 **AI 오피스워크 / BPA(Business Process Automation) 
 
 - **AI 오피스워크**: 회의록, 보고서, 업무 요청서, 인수인계, 면접 키트를 한 콘솔에서 생성.
 - **BPA 지향**: 반복 업무와 병목을 기록하고 회사 운영 흐름을 자동화.
-- **관심사 분리**: Event Ingestion / Context / Agents / Verification / Knowledge / Serving 6계층.
-- **Ports-and-Adapters**: GitHub -> Slack, OpenAI -> Ollama 등 어댑터만 바꾸면 됨.
+- **코어 루프 완결**: 회의록이 업무가 되고, 업무 기록이 보고서·인수인계가 되는 닫힌 흐름.
+- **Ports-and-Adapters**: Solar -> GPT, 클라우드 -> 로컬 vLLM 등 LLM 어댑터만 바꾸면 됨.
 - **GitOps**: 별도 DB 없이 `archive/*.md`가 단일 진실 원본.
 - **Privacy by Default**: 사내 핵심 로직은 로컬 LLM 라우트로 강제.
 
 ## 아키텍처 (요약)
 
 ```
-GitHub Issue  --+
-Discord Msg   --+--> EventBus --> Orchestrator --> archive/YYYY/MM/*.md
-Office Form   --+                         |
-                                          v
-              Company Memory + Archive + LLM Gateway
-                                          |
-                                          v
-              채용/면접 · 인수인계 · 문서 자동화 · 업무 병목 요약
+회의 메모 · 업무 기록 · 업로드 문서
+        |
+        v
+FastAPI 콘솔 API ──> 회사 메모리(운영/영구/휘발성) + LLM 라우팅(Solar 기본, 로컬 vLLM 옵션)
+        |
+        v
+회의록 ─> 액션아이템 ─> 업무 배정(work_schedule)
+업무 기록 ─> 주간보고 · 병목 요약
+담당자 변경 ─> 인수인계 킷(+후속 업무 자동 배정)
+빈 자리 ─> 채용/면접 키트
+        |
+        v
+archive/*.md · *.json  (MD GitOps — DB 없음)
 ```
+
+## 하루 업무 흐름 (코어 루프)
+
+1. **회의록 → 업무 배정**: 회의 메모를 붙여넣으면 회의록이 생성되고, "액션 아이템을 업무로 등록"을
+   켜면 담당자별 순서/의존성이 붙은 업무가 `업무 배정`에 자동 등록됩니다.
+2. **업무 현황 → 주간보고**: 진행/완료/병목을 한 화면에서 보고, `주간보고 자동 생성` 버튼으로
+   관리자용 보고서를 만듭니다 (`POST /api/reports/weekly`).
+3. **인수인계**: 담당자가 바뀌면 그 사람의 업무 기록·감사 로그를 모아 인수인계 문서를 만들고,
+   후속 업무를 새 담당자에게 배정합니다.
+4. **채용/면접**: 부서·직급 컨텍스트를 반영한 직무 요구사항, 면접 질문, 온보딩 계획을 생성합니다.
 
 ## 빠른 시작
 
@@ -54,7 +70,7 @@ negotium serve
 - 상태 확인: `http://localhost:8080/health`
 
 운영 메모리는 처음에는 비어 있으며 UI에서 저장하면 `archive/operations_memory.json`에 기록됩니다.
-회사 이름, 오피스 프로젝트, 진행 중 계획은 에이전트 프롬프트에 함께 전달되어 패치 판단 컨텍스트로 쓰입니다.
+회사 이름, 오피스 프로젝트, 진행 중 계획은 모든 문서 생성·업무 배정 프롬프트에 회사 컨텍스트로 전달됩니다.
 
 ## 프론트엔드 로컬 실행
 
@@ -65,8 +81,8 @@ npm run dev --prefix frontend
 
 React 프론트엔드는 `http://localhost:5173`에서 열립니다. 개발 서버는 `/api`와 `/health` 요청을
 `http://localhost:8080`의 FastAPI 백엔드로 프록시합니다.
-프론트엔드에는 운영 메모리, LLM 채팅, 업무 현황, 채용/면접, 문서 자동화, 인수인계,
-GitHub/Discord 현황 탭이 포함됩니다.
+프론트엔드에는 홈(하루 업무 흐름), 문서 자동화·회의록, 업무 현황·주간보고, 업무 배정,
+인수인계, 채용/면접, AI 어시스턴트, 인사관리 탭이 포함됩니다.
 
 ## Upstage Solar (기본 클라우드 provider)
 
@@ -128,8 +144,8 @@ negotium llm-gateway --port 8090
 NG_LLM_GATEWAY_URL=http://localhost:8090 negotium serve
 ```
 
-게이트웨이는 GPT/Claude/Gemini/Together/vLLM HTTP 호출, 공급자별 모델 목록 조회, API 키 저장소 조회만 담당합니다.
-GitHub/Discord 이벤트 처리나 로컬 vLLM 임베드 프리로드 없이 독립적으로 실행됩니다.
+게이트웨이는 Solar/GPT/Claude/Gemini/Together/vLLM HTTP 호출, 공급자별 모델 목록 조회, API 키 저장소 조회만 담당합니다.
+로컬 vLLM 임베드 프리로드 없이 독립적으로 실행됩니다.
 
 ### 로컬 GPU 머신에서 vLLM 임베드 실행
 
@@ -152,7 +168,7 @@ negotium serve
 - **회사 메모리 엔진**: 조직 구조, 부서, 역할, 핵심 업무 흐름, 사용 도구, 민감정보 정책 저장.
 - **인사관리(조직도/직급/직원 배정)**: `인사관리` 화면에서 부서를 상위 부서(`parent_id`)와 연결한 계층형 조직도로 설계하고, 새 직급(`PositionRecord`)을 만들 때 그 직급에 포함될 권한까지 함께 정의합니다. 인사평가는 같은 화면의 하위 탭으로 분리되어 제공됩니다.
 - **직급 중심 접근 제어**: 직원에게 별도 권한 역할을 고르는 방식이 아니라, 직원에게 배정된 직급의 권한 목록으로 기능 접근을 판단합니다. `권한 관리` 화면은 부서별 예외 접근 권한만 조정합니다.
-- **영구 메모리 원천**: 패치 로그, 감사 로그, 생성 문서, 승격된 메모리, LLM-사용자 대화 JSONL을 검색 가능한 원천 기록으로 유지.
+- **영구 메모리 원천**: 업무 처리 로그, 감사 로그, 생성 문서, 승격된 메모리, LLM-사용자 대화 JSONL을 검색 가능한 원천 기록으로 유지.
 - **휘발성 작업 메모리**: 영구 메모리와 현재 대화를 LLM이 요약한 전역/사용자/세션별 작업 기억을 `archive/volatile_memory/`에 저장.
 - **컨텍스트 압축**: 긴 영구 원천 기록을 원문 삭제 없이 source refs를 가진 압축 컨텍스트 캐시로 변환.
 - **메모리 스키마/삭제 승인**: 회사별 영구메모리 타입과 필드를 `archive/memory/schema.json`에서 관리하고, 민감 기록 삭제는 요청/승인/tombstone 흐름으로 처리.
@@ -215,7 +231,7 @@ negotium reset-state --yes --actor admin --no-include-workspaces
 
 ### 메모리 저장 위치
 
-- `archive/YYYY/MM/*.md`: 패치/처리 로그 영구 메모리
+- `archive/YYYY/MM/*.md`: 과거 처리 로그 영구 메모리 (읽기 호환)
 - `archive/audit_log.jsonl`: 감사 로그 영구 메모리
 - `archive/conversations/*.jsonl`: 사용자/LLM 대화 영구 메모리
 - `archive/documents/`, `archive/hr/`, `archive/handover/`, `archive/work_architecture/`: 생성 산출물 영구 메모리
@@ -233,7 +249,7 @@ docker compose -f docker/docker-compose.yml up --build
 ```
 
 Docker 이미지에는 vLLM/CUDA 스택이 포함되지 않습니다. 컨테이너에서 백엔드를 띄우면
-`NG_VLLM_MODE=http`로 강제되고, 로컬 LLM은 사용하지 않은 채 GPT/Claude/Gemini/Together API
+`NG_VLLM_MODE=http`로 강제되고, 로컬 LLM은 사용하지 않은 채 Solar/GPT/Claude/Gemini/Together API
 라우트만 동작합니다. 사내 비공개 모델을 vLLM으로 직접 돌려야 한다면 위의
 "로컬 GPU 머신에서 vLLM 임베드 실행" 절을 따라 호스트에서 실행하세요.
 
@@ -242,19 +258,6 @@ FastAPI 백엔드는 `http://localhost:8080`에서 계속 제공됩니다.
 LLM 게이트웨이는 `http://localhost:8090`에서 별도로 뜨며, 메인 백엔드는 `NG_LLM_GATEWAY_URL`로
 게이트웨이에 LLM 호출을 위임합니다.
 `archive/`, `config/`, 작업 디렉터리는 compose 설정에 따라 호스트와 연결됩니다.
-
-## Discord 채널 매핑
-
-`config/channel_map.yml` 예시:
-
-```yaml
-guilds:
-  "123456789":
-    channels:
-      bugs-payments:
-        channel_id: "987654321"
-        repo: "acme/payments"
-```
 
 ## Patch Machine에서 마이그레이션
 
@@ -277,10 +280,9 @@ pytest -q
 
 ## 로드맵
 
-- Phase 1 (현재): GitHub + Discord 이벤트 -> 패치 제안 코멘트.
-- Phase 2: Docker 샌드박스 + 자동 PR.
-- Phase 3: 기술 자산화(면접/코테 자동 생성).
-- Phase 4: vLLM/Ollama 로컬 AI 라우팅 + 배포 패키징.
+- 현재: 오피스 코어 루프(회의록→업무배정→주간보고→인수인계/채용) + Upstage Solar 기본 라우팅.
+- 다음: 이메일/그룹웨어 인제스트, HWP·Excel·PPT 실파일 출력, 결재(승인) 흐름 연동.
+- 이후: 업무 자동 실행 에이전트 확대(승인 기반), 조직별 메모리 스키마 고도화.
 
 ## 라이선스
 

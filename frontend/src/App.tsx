@@ -38,7 +38,6 @@ const WorkMemoryPage = lazy(() => import('./components/WorkMemoryPage'));
 const WorkSchedulePage = lazy(() => import('./components/WorkSchedulePage'));
 const SkillsPage = lazy(() => import('./components/SkillsPage'));
 const WorkflowStatusPage = lazy(() => import('./components/WorkflowStatusPage'));
-const AiAgentPage = lazy(() => import('./components/ai/AiAgentPage'));
 const InitialOfficeSetupWizard = lazy(() => import('./components/setup/InitialOfficeSetupWizard'));
 
 const emptyMemory: OperationsMemory = {
@@ -57,7 +56,6 @@ type Page =
   | 'home'
   | 'profile'
   | 'dashboard'
-  | 'chat'
   | 'assistant'
   | 'skills'
   | 'progress'
@@ -79,21 +77,21 @@ type Page =
 
 type NavItem = { id: Page; label: string; group: string; requiredPermission?: string };
 
+// Nav follows the daily office loop: 회의록 → 업무 배정/현황 → 보고 → 인수인계/채용.
 const navItems: NavItem[] = [
   { id: 'home', label: '홈', group: '사이트' },
   { id: 'profile', label: '유저 프로필', group: '사이트' },
-  { id: 'work', label: '업무 현황', group: '회사 업무 운영' },
-  { id: 'work-architecture', label: '프로세스 설계', group: '회사 업무 운영', requiredPermission: 'memory:write' },
-  { id: 'progress', label: '진행 로그', group: '회사 업무 운영' },
-  { id: 'work-memory', label: '네고티움 메모리', group: '네고티움 메모리 관리', requiredPermission: 'memory:write' },
+  { id: 'documents', label: '문서 자동화 · 회의록', group: '오피스워크' },
+  { id: 'work', label: '업무 현황 · 주간보고', group: '오피스워크' },
+  { id: 'work-schedule', label: '업무 배정', group: '오피스워크', requiredPermission: 'memory:write' },
+  { id: 'handover', label: '인수인계', group: '오피스워크' },
+  { id: 'hiring', label: '채용/면접', group: '오피스워크' },
+  { id: 'documents-viewer', label: '문서 열람', group: '오피스워크', requiredPermission: 'documents:read' },
   { id: 'assistant', label: 'AI 어시스턴트', group: 'AI 에이전트', requiredPermission: 'llm:chat' },
   { id: 'skills', label: '스킬 실행', group: 'AI 에이전트', requiredPermission: 'work:read' },
-  { id: 'hiring', label: '채용/면접', group: '오피스워크' },
-  { id: 'work-schedule', label: '업무 배정', group: '오피스워크', requiredPermission: 'memory:write' },
-  { id: 'documents', label: '문서 자동화', group: '오피스워크' },
-  { id: 'documents-viewer', label: '문서 열람', group: '오피스워크', requiredPermission: 'documents:read' },
-  { id: 'handover', label: '인수인계', group: '오피스워크' },
-  { id: 'chat', label: '코딩 에이전트 계획서 작성', group: '오피스워크' },
+  { id: 'work-architecture', label: '프로세스 설계', group: '회사 업무 운영', requiredPermission: 'memory:write' },
+  { id: 'progress', label: '진행 로그', group: '회사 업무 운영' },
+  { id: 'work-memory', label: '네고티움 메모리', group: '회사 업무 운영', requiredPermission: 'memory:write' },
   { id: 'dashboard', label: '회사 운영 설정', group: '조직·운영 관리', requiredPermission: 'memory:write' },
   { id: 'personnel', label: '인사관리', group: '조직·운영 관리', requiredPermission: 'admin:users' },
   { id: 'uploads', label: '업로드', group: '시스템 관리', requiredPermission: 'uploads:write' },
@@ -107,7 +105,6 @@ const navItems: NavItem[] = [
 // (home/profile/dashboard/integrations) are handled explicitly in renderPage.
 const simplePages: Partial<Record<Page, ComponentType>> = {
   assistant: LlmChatPage,
-  chat: AiAgentPage,
   progress: ProgressLogPage,
   work: WorkItemsPage,
   'work-memory': WorkMemoryPage,

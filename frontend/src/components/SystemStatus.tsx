@@ -20,10 +20,6 @@ export default function SystemStatus({ loading, status, onRefresh }: Props) {
       <div className="status-list">
         <StatusItem label="API" value={loading ? '확인 중' : status?.ok ? '정상' : '오프라인'} />
         <StatusItem
-          label="이벤트 큐"
-          value={status ? `${status.queue_size} / ${status.queue_capacity}` : '-'}
-        />
-        <StatusItem
           label="네고티움 영구메모리"
           value={status?.operations_memory_configured ? '설정됨' : '초기화 상태'}
         />

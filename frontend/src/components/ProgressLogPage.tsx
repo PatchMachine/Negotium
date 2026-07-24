@@ -49,14 +49,6 @@ export default function ProgressLogPage() {
         </div>
         <div className="compact-stat-strip">
           <div className="compact-stat">
-            <strong>{progress?.queue_size ?? 0}</strong>
-            <span>Queue size</span>
-          </div>
-          <div className="compact-stat">
-            <strong>{progress?.queue_capacity ?? 0}</strong>
-            <span>Capacity</span>
-          </div>
-          <div className="compact-stat">
             <strong>{progress?.recent_logs.length ?? 0}</strong>
             <span>Recent logs</span>
           </div>
