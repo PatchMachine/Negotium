@@ -296,8 +296,10 @@ export default function DocumentAutomationPage() {
                     checked={attachmentIds.includes(upload.id)}
                     onChange={() => toggleAttachment(upload.id)}
                   />
-                  {upload.filename}
-                  {upload.work_title ? <span className="muted small"> · {upload.work_title}</span> : null}
+                  <span className="attachment-file-info">
+                    <strong>{upload.filename}</strong>
+                    {upload.work_title ? <small className="muted">{upload.work_title}</small> : null}
+                  </span>
                 </label>
               </li>
             ))}

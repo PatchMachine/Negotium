@@ -6,6 +6,7 @@ import {
   fetchAssignmentScope,
   fetchWorkSchedule,
   generateWorkSchedule,
+  readArchiveDocument,
   updateWorkScheduleItem,
   type AiJobStatus,
   type AssignmentScope,
@@ -29,10 +30,28 @@ const emptyItem: WorkScheduleItem = {
   source_architecture_id: '',
 };
 
+const AI_SCHEDULE_TITLE_PREFIX = 'AI 생성 스케줄 검토:';
+
+function scheduleTitle(item: WorkScheduleItem): string {
+  return item.title.startsWith(AI_SCHEDULE_TITLE_PREFIX)
+    ? item.title.slice(AI_SCHEDULE_TITLE_PREFIX.length).trim()
+    : item.title;
+}
+
+function isAiGenerated(item: WorkScheduleItem): boolean {
+  return Boolean(item.source_architecture_id) || item.title.startsWith(AI_SCHEDULE_TITLE_PREFIX);
+}
+
 export default function WorkSchedulePage() {
   const [items, setItems] = useState<WorkScheduleItem[]>([]);
   const [draft, setDraft] = useState<WorkScheduleItem>(emptyItem);
-  const [generator, setGenerator] = useState({ objective: '', participants: '', horizon: '', constraints: '' });
+  const [generator, setGenerator] = useState({
+    objective: '',
+    participants: '',
+    startDate: '',
+    dueDate: '',
+    constraints: '',
+  });
   const [message, setMessage] = useState('');
   const [job, setJob] = useState<AiJobStatus | null>(null);
   const [users, setUsers] = useState<UserRecord[]>([]);
@@ -104,12 +123,29 @@ export default function WorkSchedulePage() {
     setDraft(emptyItem);
   }
 
+  async function editItem(item: WorkScheduleItem) {
+    const next = { ...item, title: scheduleTitle(item) };
+    const legacyDocumentNote = item.notes.trim().startsWith('생성 문서:');
+    if (legacyDocumentNote && item.source_architecture_id) {
+      try {
+        const document = await readArchiveDocument(item.source_architecture_id);
+        next.notes = document.markdown;
+      } catch (err) {
+        setMessage(err instanceof Error ? err.message : '생성 문서 내용을 불러오지 못했습니다.');
+      }
+    }
+    setDraft(next);
+  }
+
   async function generate() {
     const participantNames = participantIds
       .map((id) => users.find((user) => user.id === id)?.display_name)
       .filter(Boolean)
       .join(', ');
     const participants = participantNames || generator.participants;
+    const horizon = generator.startDate && generator.dueDate
+      ? `${generator.startDate} ~ ${generator.dueDate}`
+      : generator.startDate || generator.dueDate;
     setJob({
       job_id: 'local-work-schedule',
       task: 'work_schedule.generate',
@@ -124,7 +160,12 @@ export default function WorkSchedulePage() {
     });
     try {
       setJob((current) => current ? { ...current, status: 'running', updated_at: new Date().toISOString() } : current);
-      const doc = await generateWorkSchedule({ ...generator, participants });
+      const doc = await generateWorkSchedule({
+        objective: generator.objective,
+        participants,
+        horizon,
+        constraints: generator.constraints,
+      });
       setJob(doc.ai_job ?? null);
       setMessage(`AI 스케줄 문서 저장됨: ${doc.path}`);
       await refresh();
@@ -234,8 +275,11 @@ export default function WorkSchedulePage() {
           {items.map((item) => (
             <article className="org-card" key={item.id}>
               <div className="org-card-head">
-                <strong>{item.title}</strong>
-                <span className="status-pill">{item.status}</span>
+                <strong>{scheduleTitle(item)}</strong>
+                <div className="org-card-badges">
+                  {isAiGenerated(item) ? <span className="status-pill ai-generated-pill">AI로 만들어짐</span> : null}
+                  <span className="status-pill">{item.status}</span>
+                </div>
               </div>
               <p className="muted">{item.owner_name || '담당자 미지정'} · {item.priority} · {item.due_date || '마감 미정'}</p>
               {item.signed_off_by ? (
@@ -250,7 +294,7 @@ export default function WorkSchedulePage() {
                 <p className="muted small">완료 기록 파일: {item.completion_record}</p>
               ) : null}
               <div className="form-actions">
-                <button className="secondary-button" type="button" onClick={() => setDraft(item)}>편집</button>
+                <button className="secondary-button" type="button" onClick={() => void editItem(item)}>편집</button>
                 <button className="secondary-button" type="button" onClick={() => deleteWorkScheduleItem(item.id).then((result) => setItems(result.items))}>삭제</button>
               </div>
             </article>
@@ -285,10 +329,25 @@ export default function WorkSchedulePage() {
               <textarea placeholder="참여자" value={generator.participants} onChange={(event) => setGenerator({ ...generator, participants: event.target.value })} />
             )}
           </label>
-          <label>
-            기간
-            <input placeholder="예: 2주" value={generator.horizon} onChange={(event) => setGenerator({ ...generator, horizon: event.target.value })} />
-          </label>
+          <div className="org-form-row">
+            <label>
+              시작일
+              <input
+                type="date"
+                value={generator.startDate}
+                onChange={(event) => setGenerator({ ...generator, startDate: event.target.value })}
+              />
+            </label>
+            <label>
+              마감일
+              <input
+                type="date"
+                min={generator.startDate || undefined}
+                value={generator.dueDate}
+                onChange={(event) => setGenerator({ ...generator, dueDate: event.target.value })}
+              />
+            </label>
+          </div>
           <label>
             제약
             <textarea placeholder="제약" value={generator.constraints} onChange={(event) => setGenerator({ ...generator, constraints: event.target.value })} />

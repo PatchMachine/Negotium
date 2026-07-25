@@ -9,6 +9,7 @@ from negotium.app.api._shared import (
     _audit,
     _complete_office_task,
     _context_compression_prompt,
+    _is_internal_archive_document,
     _lines_from_markdown,
     _memory_refresh_prompt,
     _read_archive_document,
@@ -560,6 +561,33 @@ def create_memory_router(container: Container) -> APIRouter:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @router.delete("/archive/documents")
+    async def delete_archive_document(
+        path: str,
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
+    ) -> dict[str, object]:
+        actor = _require(container, x_ng_user, "documents:write")
+        try:
+            document = _read_archive_document(container, path)
+            if _is_internal_archive_document(document.path):
+                raise ValueError("내부 시스템 파일은 문서 열람 화면에서 삭제할 수 없습니다.")
+            archive_root = container.settings.archive_dir.resolve()
+            candidate = (archive_root / document.path).resolve()
+            candidate.relative_to(archive_root)
+            candidate.unlink()
+        except FileNotFoundError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        _audit(
+            container,
+            actor=actor,
+            action="document.delete",
+            target="archive_document",
+            target_id=document.path,
+        )
+        return {"ok": True, "path": document.path}
 
     @router.get("/archive/document-index")
     async def list_archive_document_index(
