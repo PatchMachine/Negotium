@@ -137,6 +137,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState<Page>('home');
+  const [pageHistory, setPageHistory] = useState<Page[]>([]);
   const [setupRequired, setSetupRequired] = useState(false);
   const [resumeInitialSetup, setResumeInitialSetup] = useState(false);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
@@ -224,9 +225,23 @@ export default function App() {
   const activePageAllowed = visibleNavItems.some((item) => item.id === page);
   const activePage: Page = activePageAllowed ? page : 'profile';
 
+  function navigate(nextPage: Page) {
+    if (nextPage === activePage) return;
+    setPageHistory((current) => [...current, activePage]);
+    setPage(nextPage);
+  }
+
+  function goBack() {
+    setPageHistory((current) => {
+      const previousPage = current[current.length - 1] || 'home';
+      setPage(previousPage);
+      return current.slice(0, -1);
+    });
+  }
+
   function renderPage() {
     if (activePage === 'home') {
-      return <HomePage memory={memory} status={status} onAction={(next) => setPage(next as Page)} />;
+      return <HomePage memory={memory} status={status} onAction={(next) => navigate(next as Page)} />;
     }
     if (activePage === 'profile') {
       return <UserProfilePage user={currentUser!} />;
@@ -257,7 +272,19 @@ export default function App() {
   }
 
   return (
-    <AppShell page={activePage} navItems={visibleNavItems} onNavigate={setPage} user={currentUser} onLoggedOut={() => setCurrentUser(null)}>
+    <AppShell
+      page={activePage}
+      navItems={visibleNavItems}
+      onNavigate={navigate}
+      canGoBack={activePage !== 'home'}
+      onBack={goBack}
+      user={currentUser}
+      onLoggedOut={() => {
+        setPage('home');
+        setPageHistory([]);
+        setCurrentUser(null);
+      }}
+    >
       {error ? <div className="alert">API 연결 실패: {error}</div> : null}
       <Suspense fallback={pageFallback}>{renderPage()}</Suspense>
     </AppShell>

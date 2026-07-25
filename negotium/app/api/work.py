@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import re
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, status
@@ -60,6 +61,31 @@ from negotium.app.services.skill_runtime import SkillError
 from negotium.archive.process_plans import ProcessPlan
 from negotium.archive.work_memory import WorkMemory, WorkScheduleItem
 from negotium.prompts import render as render_prompt
+
+
+def _schedule_dates(horizon: str) -> tuple[str, str]:
+    """Convert a simple user-entered horizon into schedule start/due dates."""
+    today = datetime.now(UTC).date()
+    value = horizon.strip()
+    dates = re.findall(r"\d{4}-\d{2}-\d{2}", value)
+    if len(dates) >= 2:
+        return dates[0], dates[1]
+    if len(dates) == 1:
+        return today.isoformat(), dates[0]
+
+    match = re.search(
+        r"(\d+)\s*(일|일간|주|주간|개월|달|days?|weeks?|months?)",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return today.isoformat(), ""
+    amount = max(1, int(match.group(1)))
+    unit = match.group(2).lower()
+    days = amount * 7 if unit in {"주", "주간", "week", "weeks"} else amount
+    if unit in {"개월", "달", "month", "months"}:
+        days = amount * 30
+    return today.isoformat(), (today + timedelta(days=days)).isoformat()
 
 
 def create_work_router(container: Container) -> APIRouter:
@@ -787,12 +813,15 @@ def create_work_router(container: Container) -> APIRouter:
         except Exception as exc:
             _finish_ai_job(container, job, status="failed", error=str(exc))
             raise
+        start_date, due_date = _schedule_dates(payload.horizon)
         item = container.work_schedule.upsert(
             WorkScheduleItem.create(
-                title=f"AI 생성 스케줄 검토: {payload.objective}",
+                title=payload.objective,
                 owner_name=payload.participants,
                 priority="high",
-                notes=f"생성 문서: {path}",
+                start_date=start_date,
+                due_date=due_date,
+                notes=markdown,
                 source_architecture_id=path,
             )
         )

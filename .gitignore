@@ -25,4 +25,4 @@ workspaces/
 .vscode/
 
 # Runtime data (user PII, job logs, generated documents) — never commit
-archive/
+/archive/

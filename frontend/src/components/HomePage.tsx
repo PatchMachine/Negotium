@@ -61,7 +61,7 @@ export default function HomePage({
         </p>
       </div>
 
-      <section className="guide-grid">
+      <section className="guide-grid home-card-grid">
         {dailyFlow.map((flow) => (
           <article className="guide-card" key={flow.page}>
             <p className="eyebrow">
@@ -74,9 +74,6 @@ export default function HomePage({
             </button>
           </article>
         ))}
-      </section>
-
-      <section className="guide-grid">
         <article className="guide-card">
           <p className="eyebrow">회사 메모리</p>
           <h3>{memory.company_name || '회사 미설정'}</h3>

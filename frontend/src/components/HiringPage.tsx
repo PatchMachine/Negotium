@@ -149,10 +149,10 @@ export default function HiringPage() {
           네고티움 영구메모리와 현재 업무 계획을 바탕으로 직무 요구사항, 면접 질문, 온보딩 계획을 생성합니다.
         </p>
         <form className="memory-form" onSubmit={handleSubmit}>
-          <details className="advanced-panel">
+          <details className="advanced-panel hiring-quick-create">
             <summary>관리자: 새 조직/직급 빠른 개설</summary>
-            <p className="muted small">신입사원을 직원으로 배정하지 않아도 채용 키트 대상 조직과 직급을 먼저 만들 수 있습니다.</p>
-            <div className="org-form-row">
+            <p className="muted small hiring-quick-description">신입사원을 직원으로 배정하지 않아도 채용 키트 대상 조직과 직급을 먼저 만들 수 있습니다.</p>
+            <div className="org-form-row hiring-quick-row">
               <label>
                 새 조직명
                 <input value={quickDeptName} placeholder="예: 데이터 제작팀" onChange={(event) => setQuickDeptName(event.target.value)} />
@@ -161,7 +161,7 @@ export default function HiringPage() {
                 조직 추가
               </button>
             </div>
-            <div className="org-form-row">
+            <div className="org-form-row hiring-quick-row">
               <label>
                 새 직급명
                 <input value={quickPositionName} placeholder="예: 신입 데이터 검수자" onChange={(event) => setQuickPositionName(event.target.value)} />
@@ -265,7 +265,7 @@ export default function HiringPage() {
               <option value="urgent">urgent</option>
             </select>
           </label>
-          <label className="checkbox-inline">
+          <label className="checkbox-inline hiring-workload-toggle">
             <input
               type="checkbox"
               checked={draft.include_workload ?? true}

@@ -1,6 +1,12 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 
-import { fetchArchiveDocumentIndex, readArchiveDocument, type ArchiveDocumentListItem, type DocumentRead } from '../api';
+import {
+  deleteArchiveDocument,
+  fetchArchiveDocumentIndex,
+  readArchiveDocument,
+  type ArchiveDocumentListItem,
+  type DocumentRead,
+} from '../api';
 
 export default function DocumentsViewerPage() {
   const [path, setPath] = useState<string>('');
@@ -47,6 +53,24 @@ export default function DocumentsViewerPage() {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await refreshIndex(query);
+  }
+
+  async function removeDocument() {
+    if (!doc) return;
+    const confirmed = window.confirm(`이 문서를 삭제하시겠습니까?\n\n${doc.path}\n\n삭제 후 복구할 수 없습니다.`);
+    if (!confirmed) return;
+    setLoading(true);
+    setError('');
+    try {
+      await deleteArchiveDocument(doc.path);
+      setDoc(null);
+      setPath('');
+      await refreshIndex(query);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '문서를 삭제하지 못했습니다.');
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -147,8 +171,20 @@ export default function DocumentsViewerPage() {
         <div className="panel workspace-detail">
           {doc ? (
             <>
-              <p className="eyebrow">{doc.path}</p>
-              <h2>문서 미리보기</h2>
+              <div className="document-viewer-head">
+                <div>
+                  <p className="eyebrow">{doc.path}</p>
+                  <h2>문서 미리보기</h2>
+                </div>
+                <button
+                  className="danger-button"
+                  type="button"
+                  disabled={loading}
+                  onClick={() => void removeDocument()}
+                >
+                  문서 삭제
+                </button>
+              </div>
               <p className="muted small">
                 {doc.bytes.toLocaleString()} bytes · 수정 {doc.modified_at}
               </p>

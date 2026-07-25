@@ -237,7 +237,7 @@ export default function ReadableContextWorkbench({
         ) : (
           <p className="muted small">선택된 source가 없으면 검색 결과 상위 항목이 기본 후보가 됩니다.</p>
         )}
-        <label className="checkbox-inline">
+        <label className="checkbox-inline context-volatile-toggle">
           <input
             type="checkbox"
             checked={includeVolatile}

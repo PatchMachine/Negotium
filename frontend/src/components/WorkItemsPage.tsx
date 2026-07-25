@@ -236,7 +236,7 @@ export default function WorkItemsPage() {
 
       {isAdmin ? (
         <>
-          <h3>업무 진행중인 사항 (관리자 전용)</h3>
+          <h3 className="work-progress-heading">업무 진행중인 사항 (관리자 전용)</h3>
           <p className="muted small">
             md 경로를 누르면 현재 AI/업무가 생성한 계획과 산출물을 바로 열람합니다.
           </p>
@@ -307,7 +307,7 @@ export default function WorkItemsPage() {
               <span>출처</span>
               <span>로그</span>
             </div>
-            {logItems.length === 0 ? <p className="muted">표시할 업무 로그가 없습니다.</p> : null}
+            {logItems.length === 0 ? <p className="muted empty-work-log">표시할 업무 로그가 없습니다.</p> : null}
             {logItems.map((item) => (
               <div className="work-row" key={item.path}>
                 <span>{item.summary || item.title}</span>

@@ -155,6 +155,13 @@ export function readArchiveDocument(path: string): Promise<DocumentRead> {
   return requestJson<DocumentRead>(`/api/archive/documents?path=${encodeURIComponent(path)}`);
 }
 
+export function deleteArchiveDocument(path: string): Promise<{ ok: boolean; path: string }> {
+  return requestJson<{ ok: boolean; path: string }>(
+    `/api/archive/documents?path=${encodeURIComponent(path)}`,
+    { method: 'DELETE' },
+  );
+}
+
 export function fetchArchiveDocumentIndex(query = '', limit = 200): Promise<{ documents: ArchiveDocumentListItem[] }> {
   return requestJson<{ documents: ArchiveDocumentListItem[] }>(
     `/api/archive/document-index?q=${encodeURIComponent(query)}&limit=${limit}`,

@@ -3019,7 +3019,8 @@ def _archive_document_index(container: Container, *, q: str, limit: int) -> list
 
 def _is_internal_archive_document(rel: str) -> bool:
     return (
-        rel == "audit_log.jsonl"
+        "/" not in rel
+        or rel == "audit_log.jsonl"
         or rel.startswith("token_usage/")
         or rel.startswith("context_firewall/")
         or rel.startswith("mcp_hub/")

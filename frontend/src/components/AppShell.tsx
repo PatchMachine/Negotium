@@ -14,6 +14,8 @@ type Props<T extends string> = {
   page: T;
   navItems: NavItem<T>[];
   onNavigate: (page: T) => void;
+  canGoBack: boolean;
+  onBack: () => void;
   user: AuthUser;
   onLoggedOut: () => void;
   children: ReactNode;
@@ -29,7 +31,7 @@ function defaultOpenGroups<T extends string>(navItems: NavItem<T>[], activePage:
   return out;
 }
 
-export default function AppShell<T extends string>({ page, navItems, onNavigate, user, onLoggedOut, children }: Props<T>) {
+export default function AppShell<T extends string>({ page, navItems, onNavigate, canGoBack, onBack, user, onLoggedOut, children }: Props<T>) {
   const [theme, setLocalTheme] = useState<Theme>(getTheme());
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => defaultOpenGroups(navItems, page));
 
@@ -73,6 +75,11 @@ export default function AppShell<T extends string>({ page, navItems, onNavigate,
           </div>
         </div>
         <div className="topbar-actions">
+          {canGoBack ? (
+            <button className="secondary-button app-back-button" type="button" onClick={onBack}>
+              ← 이전 화면
+            </button>
+          ) : null}
           <button
             type="button"
             className="theme-toggle"

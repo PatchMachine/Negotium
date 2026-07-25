@@ -117,6 +117,7 @@ type SetupDraft = {
   uploads: UploadRecord[];
   message: string;
   apiRiskAccepted: boolean;
+  result: InitialOfficeSetupResult | null;
 };
 
 const defaultCompanyProfile: CompanyProfile = {
@@ -160,6 +161,7 @@ function loadSetupDraft(): SetupDraft | null {
       uploads: parsed.uploads || [],
       message: parsed.message || '',
       apiRiskAccepted: Boolean(parsed.apiRiskAccepted),
+      result: parsed.result || null,
     };
   } catch {
     return null;
@@ -176,7 +178,10 @@ function clearSetupDraft() {
 
 export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser = null }: Props) {
   const savedDraft = useMemo(() => loadSetupDraft(), []);
-  const [step, setStep] = useState<Step>(savedDraft?.step || (initialUser ? 'llm' : 'admin'));
+  const restoredStep = savedDraft?.step === 'review' && !savedDraft.result
+    ? 'analyze'
+    : savedDraft?.step;
+  const [step, setStep] = useState<Step>(restoredStep || (initialUser ? 'llm' : 'admin'));
   const [admin, setAdmin] = useState({ ...(savedDraft?.admin || { user_id: '', display_name: '', title: '시스템 관리자' }), password: '' });
   const [sessionUser, setSessionUser] = useState<AuthUser | null>(initialUser);
   const [llmChoice, setLlmChoice] = useState<LlmChoice>(savedDraft?.llmChoice || 'local');
@@ -204,7 +209,7 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
   );
   const [uploads, setUploads] = useState<UploadRecord[]>(savedDraft?.uploads || []);
   const [message, setMessage] = useState(savedDraft?.message || '');
-  const [result, setResult] = useState<InitialOfficeSetupResult | null>(null);
+  const [result, setResult] = useState<InitialOfficeSetupResult | null>(savedDraft?.result || null);
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const [aiJob, setAiJob] = useState<AiJobStatus | null>(null);
@@ -216,7 +221,7 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
     workflows: true,
     security: true,
     integrations: true,
-    routes: true,
+    routes: false,
   });
 
   useEffect(() => {
@@ -235,6 +240,7 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
       uploads,
       message,
       apiRiskAccepted,
+      result,
     });
   }, [
     adapterModel,
@@ -250,6 +256,7 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
     message,
     model,
     provider,
+    result,
     selectedUploadPath,
     step,
     uploads,
@@ -458,7 +465,15 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
   }
 
   async function apply() {
-    if (!result || !sessionUser) return;
+    if (!result) {
+      setNotice('적용할 분석 결과가 없습니다. 이전 단계에서 다시 분석해 주세요.');
+      setStep('analyze');
+      return;
+    }
+    if (!sessionUser) {
+      setNotice('관리자 로그인 정보가 만료되었습니다. 다시 로그인해 주세요.');
+      return;
+    }
     setBusy(true);
     setNotice('');
     try {
@@ -472,6 +487,49 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
     }
   }
 
+  function goToPreviousStep() {
+    const previous: Partial<Record<Step, Step>> = {
+      profile: 'llm',
+      files: 'profile',
+      analyze: 'files',
+      review: 'analyze',
+    };
+    const previousStep = previous[step];
+    if (previousStep) {
+      setNotice('');
+      setStep(previousStep);
+    }
+  }
+
+  async function goToNextStep() {
+    setNotice('');
+    if (step === 'llm') {
+      await configureLlm();
+    } else if (step === 'profile') {
+      if (!companyProfile.company_name.trim()) {
+        setNotice('회사명을 입력해 주세요.');
+        return;
+      }
+      setStep('files');
+    } else if (step === 'files') {
+      setStep('analyze');
+    } else if (step === 'analyze') {
+      await analyze();
+    } else if (step === 'review') {
+      await apply();
+    }
+  }
+
+  const canGoToPreviousStep = ['profile', 'files', 'analyze', 'review'].includes(step);
+  const canGoToNextStep = ['llm', 'profile', 'files', 'analyze', 'review'].includes(step);
+  const nextStepLabel = step === 'review'
+    ? '초기 세팅 적용'
+    : step === 'analyze'
+      ? '분석 후 다음 단계'
+      : step === 'llm'
+        ? '저장 후 다음 단계'
+        : '다음 단계';
+
   return (
     <main className="auth-layout setup-layout">
       <section className="panel setup-wizard">
@@ -479,6 +537,25 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
         <p className="eyebrow">First-run office setup</p>
         <h1>네고티움 초기 오피스 세팅</h1>
         <StepBar step={step} />
+        {canGoToPreviousStep || canGoToNextStep ? (
+          <div className="setup-step-navigation">
+            {canGoToPreviousStep ? (
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={busy}
+                onClick={goToPreviousStep}
+              >
+                ← 이전 단계
+              </button>
+            ) : null}
+            {canGoToNextStep ? (
+              <button type="button" disabled={busy} onClick={() => void goToNextStep()}>
+                {nextStepLabel} →
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         {step === 'admin' ? (
           <div className="memory-form">
             <input placeholder="관리자 ID" value={admin.user_id} onChange={(e) => setAdmin({ ...admin, user_id: e.target.value })} />
@@ -490,24 +567,43 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
         ) : null}
 
         {step === 'llm' ? (
-          <div className="memory-form">
-            <div className="local-llm-status">
+          <div className="memory-form setup-llm-step">
+            <div className="setup-llm-intro">
               <div>
-                <strong>민감정보 보호 기본 권장: 로컬 에이전트 서버</strong>
-                <p className="muted">인사 정보, 고객 정보, 계약서, 내부 운영 문서는 사내 서버/GPU에서 처리하는 로컬 에이전트를 권장합니다.</p>
+                <h2>에이전트를 어디에서 실행할까요?</h2>
+                <p className="muted">
+                  사내 GPU에서 직접 실행하거나 외부 AI API를 연결할 수 있습니다.
+                  선택 후 아래에서 모델과 연결 정보를 설정하세요.
+                </p>
               </div>
-              <span className="status-pill">recommended</span>
             </div>
-            <label className="checkbox-inline">
-              <input type="radio" checked={llmChoice === 'local'} onChange={() => setLlmChoice('local')} />
-              로컬 에이전트 사용
-            </label>
-            <label className="checkbox-inline">
-              <input type="radio" checked={llmChoice === 'api'} onChange={() => setLlmChoice('api')} />
-              API 모델 사용
-            </label>
+            <div className="setup-llm-choice-grid">
+              <label className={llmChoice === 'local' ? 'setup-llm-choice selected' : 'setup-llm-choice'}>
+                <input type="radio" checked={llmChoice === 'local'} onChange={() => setLlmChoice('local')} />
+                <span>
+                  <strong>로컬 에이전트</strong>
+                  <small>사내 GPU에서 실행 · 민감정보 보호에 적합</small>
+                </span>
+                <span className="status-pill">권장</span>
+              </label>
+              <label className={llmChoice === 'api' ? 'setup-llm-choice selected' : 'setup-llm-choice'}>
+                <input type="radio" checked={llmChoice === 'api'} onChange={() => setLlmChoice('api')} />
+                <span>
+                  <strong>외부 API 모델</strong>
+                  <small>설치 부담 없이 빠르게 시작 · API 키 필요</small>
+                </span>
+                <span className="status-pill">Cloud</span>
+              </label>
+            </div>
             {llmChoice === 'api' ? (
-              <>
+              <div className="setup-llm-config">
+                <div className="setup-section-heading">
+                  <div>
+                    <h3>API 공급자 및 모델</h3>
+                    <p className="muted">사용할 공급자를 고르고 API 키와 모델을 확인하세요.</p>
+                  </div>
+                  <span className="status-pill">API</span>
+                </div>
                 <select
                   value={provider}
                   onChange={(e) => {
@@ -618,14 +714,19 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
                   <input type="checkbox" checked={apiRiskAccepted} onChange={(e) => setApiRiskAccepted(e.target.checked)} />
                   민감정보가 포함된 파일은 외부 API로 전송될 수 있음을 확인했습니다.
                 </label>
-              </>
+              </div>
             ) : null}
             {llmChoice === 'local' ? (
-              <div className="panel-subsection">
-                <h3>로컬 에이전트 기본 모델</h3>
-                <p className="muted">
-                  멀티모달 없이 텍스트 기반 모델부터 시작합니다. Qwen, LG EXAONE, Solar 후보를 고르거나 Hugging Face repo ID/LoRA 파일을 지정하세요.
-                </p>
+              <div className="setup-llm-config">
+                <div className="setup-section-heading">
+                  <div>
+                    <h3>로컬 에이전트 기본 모델</h3>
+                    <p className="muted">
+                      Qwen, LG EXAONE, Solar 후보를 고르거나 Hugging Face 모델을 지정하세요.
+                    </p>
+                  </div>
+                  <span className="status-pill">Local</span>
+                </div>
                 <div className="recommended-model-grid">
                   {recommendedLocalModels.map((item) => (
                     <article className={localModel === item.model ? 'model-card model-card-selected' : 'model-card'} key={item.model}>
@@ -747,14 +848,25 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
         ) : null}
 
         {step === 'review' ? (
-          <div className="memory-form">
+          <div className="memory-form setup-review-step">
             <p className="muted">AI가 만든 초안을 검토한 뒤 적용하세요. 직원 로그인 계정은 자동 생성하지 않습니다.</p>
             {result ? (
               <>
                 <ReviewToggle id="memory" label="운영/작업 메모리 적용" checked={applySections.memory} onChange={(id, checked) => setApplySections({ ...applySections, [id]: checked })} />
-                <article className="log-card">
-                  <strong>{result.recommended_package}</strong>
-                  <small>{JSON.stringify(result.workspace_profile)}</small>
+                <article className="log-card setup-review-summary">
+                  <div className="setup-review-summary-head">
+                    <div>
+                      <small>추천 운영 패키지</small>
+                      <strong>{result.recommended_package}</strong>
+                    </div>
+                    <span className="status-pill">추천</span>
+                  </div>
+                  <dl>
+                    <div><dt>회사</dt><dd>{companyProfile.company_name || '미입력'}</dd></div>
+                    <div><dt>도입 목적</dt><dd>{companyProfile.office_project || '미입력'}</dd></div>
+                    <div><dt>사용 도구</dt><dd>{companyProfile.current_tools || '미입력'}</dd></div>
+                    <div><dt>정기 업무</dt><dd>{companyProfile.recurring_workflows || '미입력'}</dd></div>
+                  </dl>
                 </article>
                 <ReviewToggle id="agents" label="추천 에이전트 팩 적용" checked={applySections.agents} onChange={(id, checked) => setApplySections({ ...applySections, [id]: checked })} />
                 <RecommendationList items={result.agent_packs} />
@@ -767,11 +879,22 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
                 <ReviewToggle id="integrations" label="연동 우선순위 적용" checked={applySections.integrations} onChange={(id, checked) => setApplySections({ ...applySections, [id]: checked })} />
                 <RecommendationList items={result.integration_priorities} />
                 <ReviewToggle id="routes" label="LLM 라우팅 추천 적용" checked={applySections.routes} onChange={(id, checked) => setApplySections({ ...applySections, [id]: checked })} />
-                <pre>{JSON.stringify(result.llm_task_routes, null, 2)}</pre>
-                <h3>첫 14일 실행안</h3>
-                <ul>{result.first_14_days.map((item) => <li key={item}>{item}</li>)}</ul>
-                <h3>사람 검토 필수</h3>
-                <ul>{result.human_review_required.map((item) => <li key={item}>{item}</li>)}</ul>
+                <div className="setup-review-routes">
+                  {Object.entries(result.llm_task_routes).map(([task, route]) => (
+                    <div key={task}>
+                      <strong>{task}</strong>
+                      <span>{route.route} · {route.provider} · {route.model || '기본 모델'}</span>
+                    </div>
+                  ))}
+                </div>
+                <section className="setup-review-list-card">
+                  <h3>첫 14일 실행안</h3>
+                  <ul>{result.first_14_days.map((item) => <li key={item}>{item}</li>)}</ul>
+                </section>
+                <section className="setup-review-list-card setup-review-warning-card">
+                  <h3>사람 검토 필수</h3>
+                  <ul>{result.human_review_required.map((item) => <li key={item}>{item}</li>)}</ul>
+                </section>
               </>
             ) : null}
             <button type="button" disabled={busy} onClick={() => void apply()}>검토 완료 · 초기 세팅 적용</button>
@@ -1137,19 +1260,21 @@ function OptionGroup({
   return (
     <fieldset className="setup-option-group">
       <legend>{title}</legend>
-      {options.map(([id, label]) => (
-        <label className="checkbox-inline" key={id}>
-          <input
-            type="checkbox"
-            checked={values.includes(id)}
-            onChange={(event) => {
-              const next = event.target.checked ? [...values, id] : values.filter((value) => value !== id);
-              onChange(next.length ? next : [id]);
-            }}
-          />
-          {label}
-        </label>
-      ))}
+      <div className="setup-option-grid">
+        {options.map(([id, label]) => (
+          <label className="checkbox-inline" key={id}>
+            <input
+              type="checkbox"
+              checked={values.includes(id)}
+              onChange={(event) => {
+                const next = event.target.checked ? [...values, id] : values.filter((value) => value !== id);
+                onChange(next.length ? next : [id]);
+              }}
+            />
+            <span>{label}</span>
+          </label>
+        ))}
+      </div>
     </fieldset>
   );
 }
@@ -1166,7 +1291,7 @@ function ReviewToggle({
   onChange: (id: ReviewSection, checked: boolean) => void;
 }) {
   return (
-    <label className="checkbox-inline">
+    <label className="checkbox-inline setup-review-toggle">
       <input
         type="checkbox"
         checked={checked}
