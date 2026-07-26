@@ -1,4 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 import {
   createHandoverBrief,
@@ -102,7 +104,7 @@ export default function HandoverPage() {
   return (
     <section className="page-grid">
       <div className="panel">
-        <p className="eyebrow">Handover</p>
+        <p className="eyebrow">인수인계</p>
         <h2>인수인계 문서 생성</h2>
         <p className="muted">
           담당자가 바뀌거나 퇴사할 때, 기존 담당자의 활동 로그(담당 작업·AI 작업 실행·활동 기록)를 자동으로 수집해
@@ -219,12 +221,20 @@ export default function HandoverPage() {
         <AiJobStatusBar job={job} />
       </div>
       <div className="panel">
-        <p className="eyebrow">Generated</p>
+        <p className="eyebrow">생성 결과</p>
         <h2>문서 결과</h2>
         {result ? (
           <>
             <p className="muted">저장 위치: {result.path}</p>
-            <pre className="status-pre">{result.markdown}</pre>
+            <div className="bounded-preview">
+              <article className="rendered-markdown">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{result.markdown}</ReactMarkdown>
+              </article>
+            </div>
+            <details className="advanced-panel">
+              <summary>Markdown 원문 확인</summary>
+              <pre>{result.markdown}</pre>
+            </details>
           </>
         ) : (
           <p className="muted">아직 생성된 문서가 없습니다.</p>

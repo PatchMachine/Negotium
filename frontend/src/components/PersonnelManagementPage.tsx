@@ -16,6 +16,7 @@ import {
 } from '../api';
 import HrEvaluationPage from './HrEvaluationPage';
 import OrgChartGraph from './org/OrgChartGraph';
+import { permissionLabel as localizePermission } from '../utils/permissionLabels';
 
 type PersonnelSection = 'org-chart' | 'assignments' | 'evaluation';
 
@@ -53,7 +54,9 @@ export default function PersonnelManagementPage() {
   const [position, setPosition] = useState<PositionRecord>(emptyPosition);
   const [user, setUser] = useState<UserRecord>(emptyUser);
   const [loginUser, setLoginUser] = useState<UserRecord & { password: string }>(emptyLoginUser);
+  const [selectedChildDepartmentIds, setSelectedChildDepartmentIds] = useState<string[]>([]);
   const [message, setMessage] = useState('');
+  const [employeeQuery, setEmployeeQuery] = useState('');
 
   async function refresh() {
     try {
@@ -76,6 +79,32 @@ export default function PersonnelManagementPage() {
     () => [...positions].sort((a, b) => positionRank(b) - positionRank(a)),
     [positions],
   );
+  const filteredUsers = useMemo(() => {
+    const query = employeeQuery.trim().toLocaleLowerCase();
+    if (!query) return users;
+    return users.filter((entry) => {
+      const departmentName = departments.find((department) => department.id === entry.department)?.name ?? '';
+      const assignedPositionName = positions.find((item) => item.id === entry.position_id)?.name ?? '';
+      return [
+        entry.display_name,
+        entry.id,
+        entry.title,
+        entry.department,
+        departmentName,
+        entry.position_id,
+        assignedPositionName,
+      ].some((value) => String(value ?? '').toLocaleLowerCase().includes(query));
+    });
+  }, [departments, employeeQuery, positions, users]);
+  const childDepartmentCandidates = useMemo(() => {
+    const ancestorIds = new Set<string>();
+    let cursor = dept.parent_id ?? '';
+    while (cursor && !ancestorIds.has(cursor)) {
+      ancestorIds.add(cursor);
+      cursor = departments.find((entry) => entry.id === cursor)?.parent_id ?? '';
+    }
+    return departments.filter((entry) => entry.id !== dept.id && !ancestorIds.has(entry.id));
+  }, [departments, dept.id, dept.parent_id]);
 
   function deptName(id?: string): string {
     if (!id) return '부서 미배정';
@@ -94,7 +123,7 @@ export default function PersonnelManagementPage() {
   function permissionLabel(entry?: PositionRecord): string {
     const list = positionPermissions(entry);
     if (list.includes('*')) return '전체 권한';
-    return list.length > 0 ? list.join(', ') : '권한 없음';
+    return list.length > 0 ? list.map(localizePermission).join(', ') : '권한 없음';
   }
 
   function positionRank(entry: PositionRecord): number {
@@ -136,8 +165,26 @@ export default function PersonnelManagementPage() {
       return;
     }
     try {
-      setAcl(await saveDepartment({ ...dept, id: dept.id.trim() }));
+      const departmentId = dept.id.trim();
+      let nextAcl = await saveDepartment({ ...dept, id: departmentId });
+      const candidateIds = new Set(childDepartmentCandidates.map((entry) => entry.id));
+      const selectedChildren = new Set(
+        selectedChildDepartmentIds.filter((id) => candidateIds.has(id)),
+      );
+      for (const child of nextAcl.departments) {
+        if (child.id === departmentId) continue;
+        const shouldBelong = selectedChildren.has(child.id);
+        const belongsNow = child.parent_id === departmentId;
+        if (shouldBelong !== belongsNow) {
+          nextAcl = await saveDepartment({
+            ...child,
+            parent_id: shouldBelong ? departmentId : '',
+          });
+        }
+      }
+      setAcl(nextAcl);
       setDept(emptyDept);
+      setSelectedChildDepartmentIds([]);
       setMessage(`부서를 저장했습니다: ${dept.name}`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : '부서 저장 실패');
@@ -147,11 +194,33 @@ export default function PersonnelManagementPage() {
   async function removeDepartment(id: string) {
     try {
       setAcl(await deleteDepartment(id));
-      if (dept.id === id) setDept(emptyDept);
+      if (dept.id === id) {
+        setDept(emptyDept);
+        setSelectedChildDepartmentIds([]);
+      }
       setMessage('부서를 삭제했습니다.');
     } catch (err) {
       setMessage(err instanceof Error ? err.message : '부서 삭제 실패');
     }
+  }
+
+  function editDepartment(entry: DepartmentRecord) {
+    setDept({
+      ...emptyDept,
+      ...entry,
+      description: entry.description ?? '',
+      lead_user_id: entry.lead_user_id ?? '',
+      parent_id: entry.parent_id ?? '',
+    });
+    setSelectedChildDepartmentIds(
+      departments.filter((candidate) => candidate.parent_id === entry.id).map((candidate) => candidate.id),
+    );
+  }
+
+  function toggleChildDepartment(id: string, checked: boolean) {
+    setSelectedChildDepartmentIds((current) =>
+      checked ? [...new Set([...current, id])] : current.filter((entry) => entry !== id),
+    );
   }
 
   async function submitPosition() {
@@ -245,7 +314,7 @@ export default function PersonnelManagementPage() {
   return (
     <section className="admin-settings-page">
       <div className="panel admin-section-nav-panel">
-        <p className="eyebrow">Personnel management</p>
+        <p className="eyebrow">인사 관리</p>
         <h2>인사관리</h2>
         <p className="muted">
           조직도를 직접 설계하고 직원에게 부서와 직급을 배정합니다. 인사평가는 같은 화면의 하위 탭에서 진행합니다.
@@ -268,7 +337,7 @@ export default function PersonnelManagementPage() {
       {activeSection === 'org-chart' ? (
         <section className="admin-api-grid">
           <div className="panel">
-            <p className="eyebrow">Department</p>
+            <p className="eyebrow">부서 관리</p>
             <h2>부서 노드</h2>
             <p className="muted">부서를 만들고 상위 부서를 지정하면 계층형 조직도가 구성됩니다.</p>
             <div className="memory-form org-form">
@@ -277,7 +346,10 @@ export default function PersonnelManagementPage() {
                 <input
                   placeholder="예: product, cs, sales"
                   value={dept.id}
-                  onChange={(event) => setDept({ ...dept, id: event.target.value })}
+                  onChange={(event) => {
+                    setDept({ ...dept, id: event.target.value });
+                    setSelectedChildDepartmentIds([]);
+                  }}
                 />
               </label>
               <label>
@@ -312,6 +384,35 @@ export default function PersonnelManagementPage() {
                     ))}
                 </select>
               </label>
+              <fieldset className="advanced-panel department-child-picker">
+                <legend>이 부서에 소속할 하위 부서</legend>
+                <p className="muted small">
+                  여러 부서를 선택할 수 있습니다. 다른 상위 부서에 속한 부서를 선택하면 이 부서 아래로 이동합니다.
+                </p>
+                {!dept.id.trim() ? (
+                  <p className="muted small">부서 ID를 먼저 입력하세요.</p>
+                ) : childDepartmentCandidates.length ? (
+                  <div className="permission-grid">
+                    {childDepartmentCandidates.map((entry) => (
+                      <label key={entry.id} className="permission-item">
+                        <input
+                          type="checkbox"
+                          checked={selectedChildDepartmentIds.includes(entry.id)}
+                          onChange={(event) => toggleChildDepartment(entry.id, event.target.checked)}
+                        />
+                        <span>
+                          {entry.name}
+                          {entry.parent_id && entry.parent_id !== dept.id
+                            ? ` · 현재 소속: ${deptName(entry.parent_id)}`
+                            : ''}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="muted small">하위 부서로 지정할 다른 부서가 없습니다.</p>
+                )}
+              </fieldset>
               <label>
                 부서 리드
                 <select
@@ -329,7 +430,14 @@ export default function PersonnelManagementPage() {
               <div className="form-actions">
                 <button type="button" onClick={() => void submitDepartment()}>부서 저장</button>
                 {dept.id ? (
-                  <button type="button" className="secondary-button" onClick={() => setDept(emptyDept)}>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => {
+                      setDept(emptyDept);
+                      setSelectedChildDepartmentIds([]);
+                    }}
+                  >
                     초기화
                   </button>
                 ) : null}
@@ -338,7 +446,7 @@ export default function PersonnelManagementPage() {
           </div>
 
           <div className="panel">
-            <p className="eyebrow">Org chart</p>
+            <p className="eyebrow">조직 구조</p>
             <h2>조직 운영도</h2>
             <p className="muted">
               상위 부서에서 하위 부서로 연결선을 그려 조직 계층을 그래프로 표시합니다. 노드를 클릭하면 왼쪽 폼에서 편집할 수 있습니다.
@@ -349,15 +457,7 @@ export default function PersonnelManagementPage() {
               selectedId={dept.id}
               onSelect={(id) => {
                 const target = departments.find((entry) => entry.id === id);
-                if (target) {
-                  setDept({
-                    ...emptyDept,
-                    ...target,
-                    description: target.description ?? '',
-                    lead_user_id: target.lead_user_id ?? '',
-                    parent_id: target.parent_id ?? '',
-                  });
-                }
+                if (target) editDepartment(target);
               }}
             />
             {dept.id ? (
@@ -375,7 +475,7 @@ export default function PersonnelManagementPage() {
       {activeSection === 'assignments' ? (
         <section className="admin-api-grid">
           <div className="panel">
-            <p className="eyebrow">Positions</p>
+            <p className="eyebrow">직급 관리</p>
             <h2>직급 관리</h2>
             <p className="muted">
               새 직급을 만들 때 그 직급의 권한까지 함께 정합니다. 직원에게 별도 권한 목록을 붙이지 않습니다.
@@ -407,7 +507,7 @@ export default function PersonnelManagementPage() {
                         checked={(position.permissions ?? []).includes('*') || (position.permissions ?? []).includes(permission)}
                         onChange={(event) => void togglePositionPermission(permission, event.target.checked)}
                       />
-                      <span>{permission}</span>
+                      <span title={permission}>{localizePermission(permission)}</span>
                     </label>
                   ))}
                   <label className="permission-item">
@@ -491,7 +591,7 @@ export default function PersonnelManagementPage() {
           </div>
 
           <div className="panel">
-            <p className="eyebrow">Create account</p>
+            <p className="eyebrow">직원 계정 만들기</p>
             <h2>로그인 계정 + 직원 배정</h2>
             <p className="muted">
               직원이 먼저 가입 요청을 보내지 않아도 관리자가 직접 로그인 ID, 초기 비밀번호, 부서, 직급을 한 번에 만들 수 있습니다.
@@ -589,14 +689,14 @@ export default function PersonnelManagementPage() {
           </div>
 
           <div className="panel">
-            <p className="eyebrow">Assignments</p>
+            <p className="eyebrow">직원 배정</p>
             <h2>직원 배정</h2>
             <p className="muted">이미 존재하는 직원 레코드를 부서와 직급에 배정합니다. 신규 로그인 계정은 위 폼에서 직접 만듭니다.</p>
             <div className="memory-form org-form">
               <label>
                 사원 ID (로그인 계정)
                 <input
-                  placeholder="user id"
+                  placeholder="사원 ID"
                   value={user.id}
                   onChange={(event) => setUser({ ...user, id: event.target.value })}
                 />
@@ -667,8 +767,28 @@ export default function PersonnelManagementPage() {
                 ) : null}
               </div>
             </div>
+            <div className="employee-assignment-search">
+              <label htmlFor="employee-assignment-query">직원 검색</label>
+              <div className="employee-assignment-search-row">
+                <input
+                  id="employee-assignment-query"
+                  type="search"
+                  value={employeeQuery}
+                  placeholder="이름, 사원 ID, 직함, 부서 또는 직급 검색"
+                  onChange={(event) => setEmployeeQuery(event.target.value)}
+                />
+                {employeeQuery ? (
+                  <button type="button" className="secondary-button" onClick={() => setEmployeeQuery('')}>
+                    초기화
+                  </button>
+                ) : null}
+              </div>
+              <small className="muted">
+                {employeeQuery ? `검색 결과 ${filteredUsers.length}명 / 전체 ${users.length}명` : `전체 ${users.length}명`}
+              </small>
+            </div>
             <div className="org-list">
-              {users.map((entry) => (
+              {filteredUsers.map((entry) => (
                 <article className="org-card" key={entry.id}>
                   <div className="org-card-head">
                     <strong>{entry.display_name}</strong>
@@ -694,6 +814,9 @@ export default function PersonnelManagementPage() {
                   </div>
                 </article>
               ))}
+              {filteredUsers.length === 0 ? (
+                <p className="muted">검색 조건에 맞는 직원이 없습니다.</p>
+              ) : null}
             </div>
           </div>
         </section>

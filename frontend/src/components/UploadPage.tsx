@@ -50,7 +50,7 @@ export default function UploadPage() {
   return (
     <section className="page-grid">
       <div className="panel">
-        <p className="eyebrow">Uploads</p>
+        <p className="eyebrow">파일 올리기</p>
         <h2>문서 업로드</h2>
         <form className="memory-form" onSubmit={handleSubmit}>
           <input name="file" type="file" required />
@@ -61,7 +61,7 @@ export default function UploadPage() {
         </form>
       </div>
       <div className="panel">
-        <p className="eyebrow">Archive</p>
+        <p className="eyebrow">저장된 파일</p>
         <h2>업로드 목록</h2>
         {previewError ? <p className="alert" role="alert">{previewError}</p> : null}
         <div className="log-list">

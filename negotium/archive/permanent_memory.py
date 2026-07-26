@@ -49,8 +49,12 @@ class PermanentMemorySource:
 
 class PermanentMemoryStore:
     def __init__(self, archive_dir: Path) -> None:
-        self._archive_dir = archive_dir
-        self._promoted_dir = archive_dir / "memory" / "promoted"
+        # Keep every later path comparison in the same form. Deletion and
+        # single-source reads resolve their target path for traversal safety,
+        # so a relative archive root would otherwise make a valid source look
+        # as though it lived outside the archive.
+        self._archive_dir = archive_dir.resolve()
+        self._promoted_dir = self._archive_dir / "memory" / "promoted"
 
     def recent(self, *, limit: int = 50) -> list[dict[str, object]]:
         sources = self._scan_sources()

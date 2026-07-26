@@ -10,6 +10,7 @@ import {
   type AccessControlPayload,
   type PositionRecord,
 } from '../api';
+import { permissionLabel } from '../utils/permissionLabels';
 
 export default function AccessControlPage() {
   const [acl, setAcl] = useState<AccessControlPayload | null>(null);
@@ -56,7 +57,7 @@ export default function AccessControlPage() {
   return (
     <section className="page-grid org-grid">
       <div className="panel">
-        <p className="eyebrow">Department access</p>
+        <p className="eyebrow">부서별 접근 권한</p>
         <h2>부서별 예외 접근 권한</h2>
         <p className="muted">직급 자체 권한은 인사관리에서 직급을 만들 때 정합니다. 이 화면은 특정 부서에서만 더 좁히거나 넓힐 예외 권한만 관리합니다.</p>
         <div className="org-list">
@@ -77,7 +78,7 @@ export default function AccessControlPage() {
                             checked={enabled}
                             onChange={(event) => void toggleDepartmentPermission(department.id, position, permission, event.target.checked)}
                           />
-                          <span>{permission}</span>
+                          <span title={permission}>{permissionLabel(permission)}</span>
                         </label>
                       );
                     })}
@@ -91,7 +92,7 @@ export default function AccessControlPage() {
       </div>
 
       <div className="panel">
-        <p className="eyebrow">Account Requests</p>
+        <p className="eyebrow">계정 개설 요청</p>
         <h2>계정 개설 요청</h2>
         <div className="org-list">
           {requests.filter((entry) => entry.status === 'pending').map((entry) => (

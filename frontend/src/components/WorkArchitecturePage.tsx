@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 import {
   addProcessStep,
@@ -371,7 +373,7 @@ export default function WorkArchitecturePage() {
   return (
     <section className="page-grid">
       <div className="panel">
-        <p className="eyebrow">Process Design</p>
+        <p className="eyebrow">업무 절차 설계</p>
         <h2>AI 업무 프로세스 설계</h2>
         <p className="muted">
           프로세스 설계는 계획(plan.md)을 실제로 굴리는 단계입니다. 어떤 인력(사람·AI)이 투입되고 기간은 어떻게 되는지
@@ -491,9 +493,9 @@ export default function WorkArchitecturePage() {
             )}
           </label>
           <textarea placeholder="제약" value={draft.constraints} onChange={(event) => setDraft({ ...draft, constraints: event.target.value })} />
-          <label>
+          <label className="checkbox-row">
             <input type="checkbox" checked={draft.use_memory} onChange={(event) => setDraft({ ...draft, use_memory: event.target.checked })} />
-            저장된 메모리 사용
+            <span>저장된 메모리 사용</span>
           </label>
           <button type="button" disabled={generating} onClick={() => void generate()}>
             {generating ? '설계 중...' : 'AI가 업무 흐름 설계하기'}
@@ -523,7 +525,7 @@ export default function WorkArchitecturePage() {
       </div>
 
       <div className="panel">
-        <p className="eyebrow">Process Control</p>
+        <p className="eyebrow">업무 절차 관리</p>
         {plan ? (
           <>
             <div className="plan-header">
@@ -562,8 +564,20 @@ export default function WorkArchitecturePage() {
             </p>
 
             {showMarkdown ? (
-              <div className="bounded-preview">
-                <pre>{plan.plan_markdown || '계획 본문을 불러올 수 없습니다.'}</pre>
+              <div className="process-plan-document">
+                <div className="bounded-preview">
+                  <article className="rendered-markdown">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {plan.plan_markdown || '계획 본문을 불러올 수 없습니다.'}
+                    </ReactMarkdown>
+                  </article>
+                </div>
+                {plan.plan_markdown ? (
+                  <details className="advanced-panel">
+                    <summary>Markdown 원문 확인</summary>
+                    <pre>{plan.plan_markdown}</pre>
+                  </details>
+                ) : null}
               </div>
             ) : null}
 

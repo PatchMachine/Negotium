@@ -139,7 +139,7 @@ export default function WorkItemsPage() {
 
   return (
     <section className="panel">
-      <p className="eyebrow">Work Items</p>
+      <p className="eyebrow">업무 현황</p>
       <h2>내 업무 · 완료 처리</h2>
       <p className="muted">
         상사가 배정한 업무를 확인하고, 처리한 내용을 기록 파일로 남긴 뒤 “완료 확인”으로 마감하세요.
@@ -320,7 +320,7 @@ export default function WorkItemsPage() {
           <div className="work-document-preview">
             <div className="work-document-preview-head">
               <div>
-                <p className="eyebrow">Document Preview</p>
+                <p className="eyebrow">문서 미리보기</p>
                 <h3>진행 문서 미리보기</h3>
               </div>
               {preview ? <button className="ghost" type="button" onClick={() => setPreview(null)}>닫기</button> : null}
@@ -335,7 +335,7 @@ export default function WorkItemsPage() {
                 <pre className="status-pre">{preview.markdown}</pre>
               </>
             ) : !previewLoading ? (
-              <p className="muted small">최근 업무 로그의 md 경로를 클릭하면 내용이 여기에 표시됩니다.</p>
+              <p className="muted small">최근 업무 기록에 연결된 문서를 누르면 내용이 여기에 표시됩니다.</p>
             ) : null}
           </div>
         </>

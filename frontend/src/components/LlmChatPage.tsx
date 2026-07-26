@@ -723,7 +723,7 @@ export default function LlmChatPage() {
       <aside className="panel assistant-history-rail">
         <div className="conversation-history-head">
           <div>
-            <p className="eyebrow">History</p>
+            <p className="eyebrow">이전 대화</p>
             <h3>대화·일정 이력</h3>
           </div>
           <button type="button" onClick={startNewThread}>

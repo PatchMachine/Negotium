@@ -187,7 +187,7 @@ export default function WorkSchedulePage() {
   return (
     <section className="page-grid">
       <div className="panel">
-        <p className="eyebrow">Office Work · 업무 배정</p>
+        <p className="eyebrow">회사 업무</p>
         <h2>업무 배정 · 완료 확인</h2>
         <p className="muted">
           상사가 자기 부서/하위 직급 사원에게 업무를 배정합니다. 조직을 고르면 해당 부서 소속 사원만 불러옵니다.
@@ -235,20 +235,20 @@ export default function WorkSchedulePage() {
             <label>
               상태
               <select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value })}>
-                <option value="todo">todo</option>
-                <option value="in_progress">in_progress</option>
-                <option value="blocked">blocked</option>
-                <option value="done">done</option>
-                <option value="cancelled">cancelled</option>
+                <option value="todo">시작 전</option>
+                <option value="in_progress">진행 중</option>
+                <option value="blocked">진행 막힘</option>
+                <option value="done">완료</option>
+                <option value="cancelled">취소</option>
               </select>
             </label>
             <label>
               우선순위
               <select value={draft.priority} onChange={(event) => setDraft({ ...draft, priority: event.target.value })}>
-                <option value="low">low</option>
-                <option value="normal">normal</option>
-                <option value="high">high</option>
-                <option value="urgent">urgent</option>
+                <option value="low">낮음</option>
+                <option value="normal">보통</option>
+                <option value="high">높음</option>
+                <option value="urgent">긴급</option>
               </select>
             </label>
           </div>
@@ -302,7 +302,7 @@ export default function WorkSchedulePage() {
         </div>
       </div>
       <div className="panel">
-        <p className="eyebrow">AI Scheduler</p>
+        <p className="eyebrow">AI 업무 작성</p>
         <h2>AI가 업무 작성</h2>
         <p className="muted">목표·참여자·기간을 주면 AI가 업무 항목을 작성해 아래 배정 목록에 등록합니다.</p>
         <div className="memory-form org-form">

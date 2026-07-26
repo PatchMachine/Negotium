@@ -143,7 +143,7 @@ export default function HiringPage() {
   return (
     <section className="page-grid">
       <div className="panel">
-        <p className="eyebrow">Hiring BPA</p>
+        <p className="eyebrow">채용 업무 자동화</p>
         <h2>채용/면접 키트 생성</h2>
         <p className="muted">
           네고티움 영구메모리와 현재 업무 계획을 바탕으로 직무 요구사항, 면접 질문, 온보딩 계획을 생성합니다.
@@ -259,10 +259,10 @@ export default function HiringPage() {
               value={draft.priority}
               onChange={(event) => setDraft({ ...draft, priority: event.target.value })}
             >
-              <option value="low">low</option>
-              <option value="normal">normal</option>
-              <option value="high">high</option>
-              <option value="urgent">urgent</option>
+              <option value="low">낮음</option>
+              <option value="normal">보통</option>
+              <option value="high">높음</option>
+              <option value="urgent">긴급</option>
             </select>
           </label>
           <label className="checkbox-inline hiring-workload-toggle">
@@ -294,7 +294,7 @@ export default function HiringPage() {
 function GeneratedDocumentPanel({ result }: { result: GeneratedDocument | null }) {
   return (
     <div className="panel">
-      <p className="eyebrow">Generated</p>
+      <p className="eyebrow">생성 결과</p>
       <h2>생성 결과</h2>
       {result ? (
         <>
