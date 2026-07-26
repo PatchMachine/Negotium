@@ -647,17 +647,27 @@ async def _chat_complete(container: Container, payload: ChatRequest, actor: str)
         container, task=payload.task or "chat", actor=actor, input_summary=payload.message
     )
     try:
+        # Reasoning models can consume the entire small budget internally and
+        # return a successful completion with no visible assistant content.
+        # Give them the same budget used by other office-generation tasks.
+        chat_max_tokens = (
+            _OFFICE_REASONING_MAX_TOKENS if _is_reasoning_model(model) else 1024
+        )
         response = await _complete_with_provider(
             container,
             messages,
             provider=provider,
             route=llm_route,
             temperature=0.2,
-            max_tokens=1024,
+            max_tokens=chat_max_tokens,
             task=payload.task or "chat",
             actor=actor,
             model=model,
         )
+        if not response.text.strip():
+            raise RuntimeError(
+                f"{model} 모델이 빈 응답을 반환했습니다. 출력 토큰 한도 또는 모델 상태를 확인하세요."
+            )
         job = _finish_ai_job(container, job, status="succeeded")
     except Exception as exc:
         _finish_ai_job(container, job, status="failed", error=str(exc))
@@ -2070,8 +2080,8 @@ def _fallback_office_task_markdown(prompt: str, *, task: str, diagnostic: str = 
     )
     source = (
         _extract_prompt_field(prompt, ("원문/메모", "원문", "메모", "Source", "source_text"))
-        or prompt[:600]
     )
+    source_line = f"- 확인된 입력: {source[:240]}" if source else "- 정보 부족"
     return "\n".join(
         [
             f"# {title}",
@@ -2080,18 +2090,16 @@ def _fallback_office_task_markdown(prompt: str, *, task: str, diagnostic: str = 
             f"> task: `{task}`",
             *([f"> diagnostic: `{diagnostic}`"] if diagnostic else []),
             "",
-            "## 핵심 요약",
+            "## 확인된 정보",
             f"- 입력 주제: {title}",
-            f"- 참고 내용: {source[:240]}",
+            source_line,
             "",
-            "## 초안",
-            "- 배경과 목적을 확인합니다.",
-            "- 현재 입력된 원문/메모를 기준으로 주요 논점을 정리합니다.",
-            "- 담당자와 다음 액션을 분리해 후속 작업으로 넘깁니다.",
+            "## 문서 내용",
+            "정보 부족",
             "",
-            "## 다음 액션",
-            "- 담당자는 초안을 검토하고 누락된 결정사항을 보완합니다.",
-            "- 필요한 경우 LLM 설정의 출력 토큰 예산 또는 모델을 조정한 뒤 다시 생성합니다.",
+            "## 확인 필요",
+            "- 문서 목적, 범위, 담당자, 일정 및 기대 결과를 확인해야 합니다.",
+            "- 필요한 정보를 보완한 뒤 다시 생성하세요.",
         ]
     )
 

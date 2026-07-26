@@ -148,7 +148,7 @@ export default function ReadableContextWorkbench({
   return (
     <div className="readable-workbench">
       <div className="panel readable-workbench-browser">
-        <p className="eyebrow">AI readable sources</p>
+        <p className="eyebrow">AI 참고 정보</p>
         <h2>AI가 읽을 내부 정보 선택</h2>
         <p className="muted small">
           영구메모리, 생성 문서, 업로드 파일, 패치 기록을 같은 source로 보고 선택합니다.
@@ -212,12 +212,12 @@ export default function ReadableContextWorkbench({
               </div>
             );
           })}
-          {!visibleSources.length ? <p className="muted small">조회된 source가 없습니다.</p> : null}
+          {!visibleSources.length ? <p className="muted small">조회된 자료가 없습니다.</p> : null}
         </div>
       </div>
 
       <div className="panel readable-workbench-selection">
-        <p className="eyebrow">Read order</p>
+        <p className="eyebrow">참고 순서</p>
         <h2>선택·드래그 순서</h2>
         <SortableSourceOrder ids={selectedIds} idToLabel={idToLabel} onReorder={onSelectedIdsChange} />
         {selectedSources.length ? (
@@ -235,7 +235,7 @@ export default function ReadableContextWorkbench({
             ))}
           </div>
         ) : (
-          <p className="muted small">선택된 source가 없으면 검색 결과 상위 항목이 기본 후보가 됩니다.</p>
+          <p className="muted small">선택한 자료가 없으면 검색 결과의 상위 항목을 기본으로 참고합니다.</p>
         )}
         <label className="checkbox-inline context-volatile-toggle">
           <input
@@ -262,7 +262,7 @@ export default function ReadableContextWorkbench({
       </div>
 
       <div className="panel readable-workbench-preview">
-        <p className="eyebrow">Preview</p>
+        <p className="eyebrow">미리보기</p>
         <h2>{preview ? preview.title : 'Source / context preview'}</h2>
         {preview ? (
           <>
@@ -285,7 +285,7 @@ export default function ReadableContextWorkbench({
             </div>
           </>
         ) : (
-          <p className="muted small">source를 열람하거나 context bundle 미리보기를 실행하세요.</p>
+          <p className="muted small">자료를 열거나 AI 참고 정보 미리보기를 실행하세요.</p>
         )}
       </div>
     </div>

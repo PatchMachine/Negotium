@@ -17,7 +17,7 @@ export default function UserProfilePage({ user }: Props) {
   return (
     <section className="page-grid">
       <div className="panel">
-        <p className="eyebrow">User profile</p>
+        <p className="eyebrow">내 정보</p>
         <h2>유저 프로필</h2>
         <div className="profile-facts">
           <p>
@@ -40,7 +40,7 @@ export default function UserProfilePage({ user }: Props) {
       </div>
 
       <div className="panel">
-        <p className="eyebrow">Agent user spec</p>
+        <p className="eyebrow">AI가 참고할 사용자 정보</p>
         <h2>에이전트가 이해하는 사용자 명세</h2>
         <div className="log-list">
           <article className="log-card">

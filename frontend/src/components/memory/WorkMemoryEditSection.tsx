@@ -27,7 +27,7 @@ export default function WorkMemoryEditSection({
     <div className="panel memory-edit-panel">
       <p className="eyebrow">메모리 수정</p>
       <h2>네고티움 메모리 편집</h2>
-      <div className="segmented-control" role="tablist" aria-label="편집할 메모리 종류">
+      <div className="segmented-control memory-edit-mode-tabs" role="tablist" aria-label="편집할 메모리 종류">
         <button
           type="button"
           role="tab"

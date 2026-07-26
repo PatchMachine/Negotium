@@ -142,7 +142,7 @@ export default function WorkMemoryPage() {
     <section className="page-workspace work-memory-layout">
       <div className="workspace-hero">
         <div className="panel">
-          <p className="eyebrow">Memory workspace</p>
+          <p className="eyebrow">회사 메모리 관리</p>
           <h2>메모리 관리</h2>
           <p className="muted">
             수정, 영구메모리 조회, AI 가독 요약, 삭제 요청 승인, 캐시 관리를 분리해 필요한 작업 영역만 펼쳐 봅니다.
@@ -157,19 +157,19 @@ export default function WorkMemoryPage() {
         <div className="compact-stat-strip">
           <div className="compact-stat">
             <strong>{sources.length}</strong>
-            <span>Permanent</span>
+            <span>영구 메모리</span>
           </div>
           <div className="compact-stat">
             <strong>{selectedSourceIds.length}</strong>
-            <span>Selected</span>
+            <span>선택됨</span>
           </div>
           <div className="compact-stat">
             <strong>{volatileMemories.length}</strong>
-            <span>Volatile</span>
+            <span>작업 메모리</span>
           </div>
           <div className="compact-stat">
             <strong>{pendingDeletionCount}</strong>
-            <span>Pending delete</span>
+            <span>삭제 대기</span>
           </div>
         </div>
       </div>

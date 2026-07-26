@@ -1,4 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 import {
   deleteArchiveDocument,
@@ -8,6 +10,38 @@ import {
   type DocumentRead,
 } from '../api';
 
+function readableDocumentTitle(title: string): string {
+  const cleaned = title
+    .replace(/^#+\s*/, '')
+    .replace(/^\d{8}[_-]\d{6}[_-]?/, '')
+    .replace(/^(생성 문서|문서 결과|generated document)\s*[:：-]?\s*/i, '')
+    .replace(/[_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned || '제목 없는 문서';
+}
+
+function readableDocumentExcerpt(excerpt: string, title: string): string {
+  return excerpt
+    .replace(/^---[\s\S]*?---\s*/m, '')
+    .replace(/^#{1,6}\s+.*$/gm, '')
+    .replace(/[*_`>|[\]]/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(title, '')
+    .trim()
+    .slice(0, 90);
+}
+
+function readableModifiedAt(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat('ko-KR', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  }).format(date);
+}
+
 export default function DocumentsViewerPage() {
   const [path, setPath] = useState<string>('');
   const [doc, setDoc] = useState<DocumentRead | null>(null);
@@ -16,6 +50,7 @@ export default function DocumentsViewerPage() {
   const [query, setQuery] = useState('');
   const [documents, setDocuments] = useState<ArchiveDocumentListItem[]>([]);
   const [selectedKind, setSelectedKind] = useState('all');
+  const [viewMode, setViewMode] = useState<'preview' | 'source'>('preview');
 
   async function refreshIndex(search = query) {
     setError('');
@@ -42,6 +77,7 @@ export default function DocumentsViewerPage() {
       const next = await readArchiveDocument(target.trim());
       setDoc(next);
       setPath(next.path);
+      setViewMode('preview');
     } catch (err) {
       setError(err instanceof Error ? err.message : '문서를 불러오지 못했습니다.');
       setDoc(null);
@@ -77,7 +113,7 @@ export default function DocumentsViewerPage() {
     <section className="page-workspace">
       <div className="workspace-hero">
         <div className="panel">
-          <p className="eyebrow">Archive viewer</p>
+          <p className="eyebrow">저장 문서 열람</p>
           <h2>문서 열람</h2>
           <p className="muted">
             archive/ 하위에 자동 생성된 markdown / json / yaml 문서를 안전하게 조회합니다. AI가 읽을 내부 정보 선택은
@@ -87,11 +123,11 @@ export default function DocumentsViewerPage() {
         <div className="compact-stat-strip">
           <div className="compact-stat">
             <strong>{documents.length}</strong>
-            <span>Indexed docs</span>
+            <span>저장된 문서</span>
           </div>
           <div className="compact-stat">
             <strong>{doc ? '1' : '0'}</strong>
-            <span>Opened</span>
+            <span>열어본 문서</span>
           </div>
         </div>
       </div>
@@ -99,7 +135,7 @@ export default function DocumentsViewerPage() {
       <div className="workspace-split">
         <div className="panel workspace-sidebar">
           <div className="sticky-panel-header">
-            <p className="eyebrow">Open document</p>
+            <p className="eyebrow">문서 선택</p>
             <h2>문서 목록</h2>
           </div>
           <form className="connector-config-form" onSubmit={submit}>
@@ -135,24 +171,30 @@ export default function DocumentsViewerPage() {
             ))}
           </div>
           <div className="compact-card-list bounded-list compact">
-            {visibleDocuments.map((item) => (
-              <button
-                key={item.path}
-                type="button"
-                className={`compact-list-card${doc?.path === item.path ? ' selected' : ''}`}
-                onClick={() => {
-                  setPath(item.path);
-                  void load(item.path);
-                }}
-              >
-                <strong>{item.title}</strong>
-                <span className="muted small">{item.kind}</span>
-                <small>
-                  {item.modified_at} · {(item.bytes / 1024).toFixed(1)} KB
-                </small>
-                {item.excerpt ? <small>{item.excerpt.slice(0, 100)}</small> : null}
-              </button>
-            ))}
+            {visibleDocuments.map((item) => {
+              const displayTitle = readableDocumentTitle(item.title);
+              const displayExcerpt = readableDocumentExcerpt(item.excerpt, item.title);
+              return (
+                <button
+                  key={item.path}
+                  type="button"
+                  title={item.title}
+                  className={`compact-list-card document-list-card${doc?.path === item.path ? ' selected' : ''}`}
+                  onClick={() => {
+                    setPath(item.path);
+                    void load(item.path);
+                  }}
+                >
+                  <strong>{displayTitle}</strong>
+                  <span className="document-list-meta">
+                    <span>{item.kind}</span>
+                    <span>{readableModifiedAt(item.modified_at)}</span>
+                    <span>{(item.bytes / 1024).toFixed(1)}KB</span>
+                  </span>
+                  {displayExcerpt ? <small className="document-list-excerpt">{displayExcerpt}</small> : null}
+                </button>
+              );
+            })}
             {!visibleDocuments.length ? <p className="muted small">조건에 맞는 문서가 없습니다.</p> : null}
           </div>
           <details className="advanced-panel">
@@ -176,20 +218,48 @@ export default function DocumentsViewerPage() {
                   <p className="eyebrow">{doc.path}</p>
                   <h2>문서 미리보기</h2>
                 </div>
-                <button
-                  className="danger-button"
-                  type="button"
-                  disabled={loading}
-                  onClick={() => void removeDocument()}
-                >
-                  문서 삭제
-                </button>
+                <div className="document-viewer-actions">
+                  {/\.(md|markdown)$/i.test(doc.path) ? (
+                    <div className="document-view-toggle" role="group" aria-label="문서 표시 방식">
+                      <button
+                        type="button"
+                        className={viewMode === 'preview' ? 'secondary-button active' : 'secondary-button'}
+                        aria-pressed={viewMode === 'preview'}
+                        onClick={() => setViewMode('preview')}
+                      >
+                        문서 보기
+                      </button>
+                      <button
+                        type="button"
+                        className={viewMode === 'source' ? 'secondary-button active' : 'secondary-button'}
+                        aria-pressed={viewMode === 'source'}
+                        onClick={() => setViewMode('source')}
+                      >
+                        원문 보기
+                      </button>
+                    </div>
+                  ) : null}
+                  <button
+                    className="danger-button"
+                    type="button"
+                    disabled={loading}
+                    onClick={() => void removeDocument()}
+                  >
+                    문서 삭제
+                  </button>
+                </div>
               </div>
               <p className="muted small">
                 {doc.bytes.toLocaleString()} bytes · 수정 {doc.modified_at}
               </p>
               <div className="bounded-preview">
-                <pre>{doc.markdown}</pre>
+                {/\.(md|markdown)$/i.test(doc.path) && viewMode === 'preview' ? (
+                  <article className="rendered-markdown">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{doc.markdown}</ReactMarkdown>
+                  </article>
+                ) : (
+                  <pre>{doc.markdown}</pre>
+                )}
               </div>
             </>
           ) : (

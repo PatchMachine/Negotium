@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from negotium.archive.permanent_memory import PermanentMemoryStore
 
 
@@ -44,3 +46,18 @@ def test_resolve_sources_filters_unknown_ids(tmp_path: Path) -> None:
     )
     assert len(out) == 1
     assert out[0]["path"] == "2026/04/x.md"
+
+
+def test_delete_source_with_relative_archive_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    archive = Path("archive")
+    _write_patch_log(archive, "2026/04/removable.md", "# Removable\ncontent")
+
+    store = PermanentMemoryStore(archive)
+    deleted = store.delete_source("2026/04/removable.md")
+
+    assert deleted["kind"] == "patch_log"
+    assert deleted["path"] == "2026/04/removable.md"
+    assert not (archive / "2026/04/removable.md").exists()

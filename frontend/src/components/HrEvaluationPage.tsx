@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 import {
   draftHrEvaluation,
@@ -71,6 +73,15 @@ export default function HrEvaluationPage() {
         names.has(item.owner_name),
     );
   }, [selectedUser, selectedWorkIds, workItems]);
+  const contextWorkItems = Array.isArray(context?.work_items)
+    ? (context.work_items as Array<Record<string, unknown>>)
+    : [];
+  const contextConversations = Array.isArray(context?.conversation_logs)
+    ? (context.conversation_logs as Array<Record<string, unknown>>)
+    : [];
+  const contextAuditLogs = Array.isArray(context?.audit_logs)
+    ? (context.audit_logs as Array<Record<string, unknown>>)
+    : [];
 
   useEffect(() => {
     void (async () => {
@@ -168,7 +179,7 @@ export default function HrEvaluationPage() {
   return (
     <section className="page-grid">
       <div className="panel">
-        <p className="eyebrow">HR evaluation</p>
+        <p className="eyebrow">인사 평가</p>
         <h2>인사평가</h2>
         <p className="muted">
           직원과 진행 업무를 선택하면 네고티움의 업무 로그를 근거로 AI 평가 초안을 만들고, 관리자가 수정한 최종본을 저장합니다.
@@ -299,13 +310,66 @@ export default function HrEvaluationPage() {
         </div>
       </div>
       <div className="panel">
-        <p className="eyebrow">Evidence</p>
+        <p className="eyebrow">평가 근거</p>
         <h2>로그 요약</h2>
         <p className="muted">{selectedUser ? `${selectedUser.display_name}의 평가 context` : '직원을 선택하세요.'}</p>
-        <pre>{context ? JSON.stringify(context, null, 2) : '아직 불러온 로그가 없습니다.'}</pre>
+        {context ? (
+          <div className="hr-log-summary">
+            <div className="compact-stat-strip">
+              <div className="compact-stat">
+                <strong>{contextWorkItems.length}</strong>
+                <span>관련 업무</span>
+              </div>
+              <div className="compact-stat">
+                <strong>{contextConversations.length}</strong>
+                <span>대화 기록</span>
+              </div>
+              <div className="compact-stat">
+                <strong>{contextAuditLogs.length}</strong>
+                <span>활동 기록</span>
+              </div>
+            </div>
+            <section className="hr-log-group">
+              <h3>관련 업무</h3>
+              {contextWorkItems.slice(0, 10).map((item, index) => (
+                <article className="hr-log-entry" key={String(item.id ?? index)}>
+                  <strong>{String(item.title ?? '제목 없는 업무')}</strong>
+                  <span className="muted small">
+                    {String(item.status ?? '상태 미지정')}
+                    {item.owner_name ? ` · 담당 ${String(item.owner_name)}` : ''}
+                  </span>
+                </article>
+              ))}
+              {!contextWorkItems.length ? <p className="muted small">연결된 업무가 없습니다.</p> : null}
+            </section>
+            <section className="hr-log-group">
+              <h3>최근 대화·활동</h3>
+              {contextConversations.slice(0, 5).map((entry, index) => (
+                <article className="hr-log-entry" key={`conversation-${String(entry.id ?? index)}`}>
+                  <strong>{entry.role === 'assistant' ? 'AI 응답' : '직원 대화'}</strong>
+                  <p>{String(entry.content ?? '').slice(0, 240) || '내용 없음'}</p>
+                </article>
+              ))}
+              {contextAuditLogs.slice(0, 5).map((entry, index) => (
+                <article className="hr-log-entry" key={`audit-${String(entry.id ?? index)}`}>
+                  <strong>{String(entry.action ?? '활동 기록')}</strong>
+                  <span className="muted small">
+                    {String(entry.target ?? '')}
+                    {entry.created_at ? ` · ${String(entry.created_at)}` : ''}
+                  </span>
+                </article>
+              ))}
+              {!contextConversations.length && !contextAuditLogs.length ? (
+                <p className="muted small">표시할 대화·활동 기록이 없습니다.</p>
+              ) : null}
+            </section>
+          </div>
+        ) : (
+          <p className="muted">아직 불러온 로그가 없습니다.</p>
+        )}
       </div>
       <div className="panel">
-        <p className="eyebrow">Draft editor</p>
+        <p className="eyebrow">평가 내용 편집</p>
         <h2>평가 초안 수정/저장</h2>
         <textarea
           className="large-textarea"
@@ -323,12 +387,14 @@ export default function HrEvaluationPage() {
           <p className="eyebrow">{openedRecordDoc.path}</p>
           <h2>저장된 평가 문서</h2>
           <div className="bounded-preview">
-            <pre>{openedRecordDoc.markdown}</pre>
+            <article className="rendered-markdown">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{openedRecordDoc.markdown}</ReactMarkdown>
+            </article>
           </div>
         </div>
       ) : null}
       <div className="panel">
-        <p className="eyebrow">Records</p>
+        <p className="eyebrow">평가 기록</p>
         <h2>평가 기록</h2>
         <div className="org-list">
           {records.map((record) => (

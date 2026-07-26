@@ -109,7 +109,7 @@ export default function ContextCompressPanel({
 
   return (
     <div className="panel memory-compress-panel">
-      <p className="eyebrow">AI readable summary</p>
+      <p className="eyebrow">AI 참고 정보 요약</p>
       <h2>AI 가독 정보 요약</h2>
       <p className="muted small">
         AI가 작업해야 하는 중요한 기억을 가져와 읽기 좋게 요약합니다. 체크한 항목이 있으면 그 항목을 우선 사용하고,
@@ -162,9 +162,9 @@ export default function ContextCompressPanel({
           />
         </label>
       </div>
-      <label className="checkbox-inline">
+      <label className="checkbox-row">
         <input type="checkbox" checked={includeVolatile} onChange={(e) => setIncludeVolatile(e.target.checked)} />
-        휘발성 작업 메모리도 함께 참고
+        <span>휘발성 작업 메모리도 함께 참고</span>
       </label>
       <div className="form-actions">
         <button type="button" disabled={busy} onClick={() => void runVolatileRefresh()}>

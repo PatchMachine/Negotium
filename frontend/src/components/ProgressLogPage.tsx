@@ -39,9 +39,9 @@ export default function ProgressLogPage() {
     <section className="page-workspace">
       <div className="workspace-hero">
         <div className="panel">
-          <p className="eyebrow">Progress</p>
+          <p className="eyebrow">업무 진행 상황</p>
           <h2>진행 로그</h2>
-          <p className="muted">현재 상태는 bounded preview로 묶고, 최근 처리 로그는 상태 필터와 compact 카드로 확인합니다.</p>
+          <p className="muted">현재 상태와 최근 처리 기록을 한눈에 확인하고, 진행 상태별로 필요한 기록만 골라볼 수 있습니다.</p>
           <button className="secondary-button" type="button" onClick={() => void refresh()}>
             새로고침
           </button>
@@ -50,7 +50,7 @@ export default function ProgressLogPage() {
         <div className="compact-stat-strip">
           <div className="compact-stat">
             <strong>{progress?.recent_logs.length ?? 0}</strong>
-            <span>Recent logs</span>
+            <span>최근 기록</span>
           </div>
         </div>
       </div>
@@ -58,7 +58,7 @@ export default function ProgressLogPage() {
       <div className="workspace-split">
         <div className="panel workspace-sidebar">
           <div className="sticky-panel-header">
-            <p className="eyebrow">Status</p>
+            <p className="eyebrow">현재 상태</p>
             <h2>현재 상태</h2>
           </div>
           <div className="bounded-preview">
@@ -68,7 +68,7 @@ export default function ProgressLogPage() {
 
         <div className="panel workspace-detail">
           <div className="sticky-panel-header">
-            <p className="eyebrow">Archive</p>
+            <p className="eyebrow">처리 기록</p>
             <h2>최근 처리 로그</h2>
             <div className="workspace-tabs" aria-label="Progress status filters">
               <button

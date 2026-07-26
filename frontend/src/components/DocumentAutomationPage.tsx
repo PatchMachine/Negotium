@@ -140,7 +140,7 @@ export default function DocumentAutomationPage() {
     <section className="page-workspace">
       <div className="workspace-split">
       <div className="panel">
-        <p className="eyebrow">Office Docs</p>
+        <p className="eyebrow">회사 문서 자동화</p>
         <h2>문서 자동화</h2>
         <p className="muted">회의록, 보고서, 업무 요청서, PPT 초안을 Markdown으로 생성합니다.</p>
         <form className="memory-form" onSubmit={handleSubmit}>
@@ -227,7 +227,7 @@ export default function DocumentAutomationPage() {
         <AiJobStatusBar job={job} onOpenResult={(path) => void openResult(path)} />
       </div>
       <div className="panel">
-        <p className="eyebrow">Generated</p>
+        <p className="eyebrow">생성 결과</p>
         <h2>문서 결과</h2>
         {result ? (
           <>

@@ -14,7 +14,7 @@ export default function MemoryGovernancePanel({ deletionRequests, onRefresh }: P
 
   return (
     <div className="panel memory-governance-panel">
-      <p className="eyebrow">Governance</p>
+      <p className="eyebrow">메모리 삭제 관리</p>
       <h2>삭제 요청 승인</h2>
       <p className="muted">
         사용자가 요청한 내부 정보 삭제를 검토하고 승인/거절합니다. 승인하면 tombstone 기록과 함께 가능한 원본 source가 즉시 삭제됩니다.
