@@ -3,7 +3,8 @@ import { DragEvent, FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useSta
 import {
   approveAgentPlan,
   fetchAgentPlans,
-  fetchConversations,
+  fetchChatConversation,
+  fetchChatConversations,
   fetchLlmRuntime,
   fetchSkills,
   fetchWorkSchedule,
@@ -14,7 +15,9 @@ import {
   type AgentPlan,
   type ApprovalRequest,
   type ChatResponse,
-  type ConversationRecord,
+  type ContextUsage,
+  type ConversationSummary,
+  type ConversationTurn,
   type LlmProviderName,
   type LlmRuntime,
   type LlmRuntimeRoute,
@@ -23,6 +26,7 @@ import {
   type WorkScheduleItem,
 } from '../api';
 import { useChatSurfaces } from './chat/ChatSurfaceContext';
+import ContextMeter from './chat/ContextMeter';
 import InlineSurface, { type SurfaceRequest } from './chat/InlineSurface';
 
 type AssistantMode = 'chat' | 'plan';
@@ -59,14 +63,6 @@ const TOOL_STATUS_LABELS: Record<ToolActivity['status'], string> = {
 };
 
 type Attachment = { id: string; filename: string };
-
-type ConversationThread = {
-  id: string;
-  title: string;
-  createdAt: string;
-  messageCount: number;
-  records: ConversationRecord[];
-};
 
 type HistoryTab = 'chat' | 'schedule';
 
@@ -151,12 +147,13 @@ export default function LlmChatPage() {
   const [dragActive, setDragActive] = useState(false);
   const [mode, setMode] = useState<AssistantMode>('chat');
   const [plans, setPlans] = useState<AgentPlan[]>([]);
-  const [conversationThreads, setConversationThreads] = useState<ConversationThread[]>([]);
+  const [conversationThreads, setConversationThreads] = useState<ConversationSummary[]>([]);
   const [scheduleItems, setScheduleItems] = useState<WorkScheduleItem[]>([]);
   const [activeThreadId, setActiveThreadId] = useState('new');
   const [historyTab, setHistoryTab] = useState<HistoryTab>('chat');
   const [historyQuery, setHistoryQuery] = useState('');
   const [conversationId, setConversationId] = useState('');
+  const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
   const threadRef = useRef<HTMLDivElement | null>(null);
   // Screens loaded by a sidebar click land here rather than replacing the view.
   const { surfaces: navSurfaces, closeSurface } = useChatSurfaces();
@@ -202,63 +199,55 @@ export default function LlmChatPage() {
       .join('\n');
   }
 
-  function recordsToMessages(records: ConversationRecord[]): ChatMessage[] {
-    return records.map((record) => ({
-      id: record.id || nextId(),
-      role: record.role === 'assistant' ? 'assistant' : 'user',
-      content: record.content,
+  function turnsToMessages(turns: ConversationTurn[]): ChatMessage[] {
+    return turns.map((turn) => ({
+      id: turn.id || nextId(),
+      role: turn.role === 'assistant' ? 'assistant' : 'user',
+      content: turn.content,
       meta:
-        record.role === 'assistant'
-          ? { provider: record.provider, model: record.model, route: record.route }
+        turn.role === 'assistant'
+          ? { provider: turn.provider, model: turn.model, route: '' }
           : undefined,
+      tools: turn.tool_invocations.map((item) => ({
+        callId: String(item.call_id || ''),
+        tool: String(item.tool || ''),
+        status: (String(item.status || 'executed') as ToolActivity['status']),
+      })),
+      surfaces: turn.ui_components.map((component) => ({
+        ...component,
+        origin: 'assistant' as const,
+      })),
     }));
-  }
-
-  function groupConversationThreads(records: ConversationRecord[]): ConversationThread[] {
-    const ordered = [...records].sort(
-      (a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime(),
-    );
-    const groups: ConversationRecord[][] = [];
-    ordered.forEach((record) => {
-      const last = groups[groups.length - 1];
-      const lastRecord = last?.[last.length - 1];
-      const gapMs =
-        lastRecord && record.created_at && lastRecord.created_at
-          ? new Date(record.created_at).getTime() - new Date(lastRecord.created_at).getTime()
-          : 0;
-      if (!last || gapMs > 1000 * 60 * 45) {
-        groups.push([record]);
-      } else {
-        last.push(record);
-      }
-    });
-    return groups
-      .map((group, index) => {
-        const firstUser = group.find((record) => record.role === 'user');
-        const title = String(firstUser?.content || group[0]?.content || '새 대화').slice(0, 48);
-        return {
-          id: `${group[0]?.created_at || index}-${group[0]?.id || index}`,
-          title,
-          createdAt: String(group[0]?.created_at || ''),
-          messageCount: group.length,
-          records: group,
-        };
-      })
-      .reverse();
   }
 
   function startNewThread() {
     setMessages([]);
     setActiveThreadId('new');
+    // A blank conversation id makes the next turn mint a fresh one server-side,
+    // so the new chat starts with no replayed history.
+    setConversationId('');
+    setContextUsage(null);
     setInput('');
     setAttachments([]);
-    setNotice('새 대화를 시작합니다. 이전 기록은 오른쪽 이력 패널에서 다시 열 수 있습니다.');
+    setNotice('새 대화를 시작합니다. 이전 대화는 왼쪽 목록에서 다시 열 수 있습니다.');
   }
 
-  function openThread(thread: ConversationThread) {
-    setMessages(recordsToMessages(thread.records));
-    setActiveThreadId(thread.id);
+  async function openThread(summary: ConversationSummary) {
+    setActiveThreadId(summary.conversation_id);
     setNotice(null);
+    setContextUsage(null);
+    try {
+      const { turns } = await fetchChatConversation(summary.conversation_id);
+      setMessages(turnsToMessages(turns));
+      // Legacy transcripts predate conversation tracking, so continuing one
+      // would silently start a new conversation; make that explicit.
+      setConversationId(summary.legacy ? '' : summary.conversation_id);
+      if (summary.legacy) {
+        setNotice('예전 기록입니다. 이어서 보내면 새 대화로 시작됩니다.');
+      }
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : '대화를 불러오지 못했습니다.');
+    }
   }
 
   function appendHistoryToInput(text: string) {
@@ -269,7 +258,7 @@ export default function LlmChatPage() {
     const needle = historyQuery.trim().toLowerCase();
     if (!needle) return conversationThreads;
     return conversationThreads.filter((thread) =>
-      `${thread.title} ${thread.records.map((record) => record.content).join(' ')}`.toLowerCase().includes(needle),
+      thread.title.toLowerCase().includes(needle),
     );
   }, [conversationThreads, historyQuery]);
 
@@ -349,10 +338,12 @@ export default function LlmChatPage() {
 
   async function loadTranscript() {
     try {
-      const { records } = await fetchConversations();
-      const threads = groupConversationThreads(records);
-      setConversationThreads(threads);
-      if (activeThreadId !== 'new' && !threads.some((thread) => thread.id === activeThreadId)) {
+      const { conversations } = await fetchChatConversations();
+      setConversationThreads(conversations);
+      if (
+        activeThreadId !== 'new' &&
+        !conversations.some((item) => item.conversation_id === activeThreadId)
+      ) {
         setActiveThreadId('new');
       }
     } catch {
@@ -625,7 +616,12 @@ export default function LlmChatPage() {
             ),
           onApprovalRequest: (request) => patchAssistant({ approval: request }),
           onDone: (response: ChatResponse) => {
-            if (response.conversation_id) setConversationId(response.conversation_id);
+            if (response.conversation_id) {
+              setConversationId(response.conversation_id);
+              setActiveThreadId(response.conversation_id);
+            }
+            if (response.context) setContextUsage(response.context);
+            void loadTranscript();
             patchAssistant({
               // A turn paused on an approval legitimately has no prose yet.
               content:
@@ -660,8 +656,18 @@ export default function LlmChatPage() {
         <p className="eyebrow">AI 어시스턴트</p>
         <h2>메모리 기반 실시간 채팅</h2>
         <p className="muted">
-          영구·휘발성 메모리와 최근 대화를 기억하고, <code>/스킬</code> 슬래시 명령으로 오피스 기능을 바로 실행합니다.
+          영구·휘발성 메모리와 <strong>이 대화의 이전 턴</strong>을 기억하고, <code>/스킬</code> 슬래시 명령으로 오피스 기능을 바로 실행합니다.
         </p>
+
+        <div className="assistant-conversation-bar">
+          <button type="button" className="secondary-button" onClick={startNewThread}>
+            + 새 대화
+          </button>
+          <span className="muted small">
+            {conversationId ? '이어지는 대화' : '새 대화 (이전 맥락 없음)'}
+          </span>
+        </div>
+        <ContextMeter usage={contextUsage} />
 
         <div className="mode-toggle" role="tablist" aria-label="응답 모드">
           <button
@@ -944,21 +950,20 @@ export default function LlmChatPage() {
             {filteredThreads.length === 0 ? <p className="muted small">조건에 맞는 대화 기록이 없습니다.</p> : null}
             {filteredThreads.map((thread) => (
               <article
-                key={thread.id}
-                className={activeThreadId === thread.id ? 'conversation-thread active' : 'conversation-thread'}
+                key={thread.conversation_id}
+                className={
+                  activeThreadId === thread.conversation_id
+                    ? 'conversation-thread active'
+                    : 'conversation-thread'
+                }
               >
-                <button type="button" onClick={() => openThread(thread)}>
+                <button type="button" onClick={() => void openThread(thread)}>
                   <strong>{thread.title}</strong>
                   <span>
-                    {new Date(thread.createdAt).toLocaleString()} · {thread.messageCount}개 메시지
+                    {new Date(thread.updated_at || thread.created_at).toLocaleString()} ·{' '}
+                    {thread.message_count}개 메시지
+                    {thread.legacy ? ' · 예전 기록' : ''}
                   </span>
-                </button>
-                <button
-                  type="button"
-                  className="ghost small"
-                  onClick={() => appendHistoryToInput(`과거 대화 참고:\n${thread.records.map((record) => `${record.role}: ${record.content}`).join('\n')}`)}
-                >
-                  입력에 넣기
                 </button>
               </article>
             ))}

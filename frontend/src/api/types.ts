@@ -63,6 +63,41 @@ export type ChatResponse = {
   ui_components?: UiComponent[];
   pending_approval?: ApprovalRequest | Record<string, never>;
   notes?: string[];
+  context?: ContextUsage;
+};
+
+/** How much of the model's context window a turn used. */
+export type ContextUsage = {
+  prompt_tokens: number;
+  completion_tokens: number;
+  context_window: number;
+  used_ratio: number;
+  history_turns: number;
+  tool_result_tokens: number;
+  /** True when the provider reported no usage and this is an estimate. */
+  estimated: boolean;
+};
+
+export type ConversationSummary = {
+  conversation_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+  model: string;
+  /** Transcript written before conversations were tracked. */
+  legacy: boolean;
+};
+
+export type ConversationTurn = {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  created_at: string;
+  model: string;
+  provider: string;
+  tool_invocations: Record<string, unknown>[];
+  ui_components: UiComponent[];
 };
 
 export type LocalLlmStatus = {

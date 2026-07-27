@@ -139,6 +139,80 @@ class ConversationStore:
         self.append(assistant_record)
         return user_record.id, assistant_record.id
 
+    def turns(
+        self, *, user_id: str, conversation_id: str, limit: int = 0
+    ) -> list[dict[str, object]]:
+        """Records belonging to one conversation, oldest first.
+
+        Replaying a conversation means replaying *that* conversation. The old
+        behaviour — take the last N records for the user regardless of which
+        chat they came from — spliced unrelated threads into every prompt.
+        """
+
+        if not conversation_id:
+            return []
+        matched = [
+            record
+            for record in self._iter_records(user_id)
+            if str((record.get("metadata") or {}).get("conversation_id") or "") == conversation_id
+        ]
+        return matched[-limit:] if limit > 0 else matched
+
+    def list_conversations(self, *, user_id: str, limit: int = 50) -> list[dict[str, object]]:
+        """Conversation summaries for the sidebar, newest first.
+
+        Grouped by the stored ``conversation_id`` rather than by wall-clock
+        gaps, so two chats started minutes apart stay separate and one chat
+        resumed the next day stays whole.
+        """
+
+        grouped: dict[str, list[dict[str, object]]] = {}
+        for record in self._iter_records(user_id):
+            key = str((record.get("metadata") or {}).get("conversation_id") or "")
+            if not key:
+                # Pre-existing transcripts have no conversation_id. Bucket them
+                # per day so old history stays browsable instead of vanishing.
+                key = f"legacy-{str(record.get('created_at') or '')[:10]}"
+            grouped.setdefault(key, []).append(record)
+
+        summaries: list[dict[str, object]] = []
+        for key, records in grouped.items():
+            first_user = next(
+                (item for item in records if str(item.get("role")) == "user"),
+                records[0],
+            )
+            last = records[-1]
+            title = str(first_user.get("content") or "").strip().splitlines()[:1]
+            summaries.append(
+                {
+                    "conversation_id": key,
+                    "title": (title[0] if title else "새 대화")[:60] or "새 대화",
+                    "created_at": str(records[0].get("created_at") or ""),
+                    "updated_at": str(last.get("created_at") or ""),
+                    "message_count": len(records),
+                    "model": str(last.get("model") or ""),
+                    "legacy": key.startswith("legacy-"),
+                }
+            )
+        summaries.sort(key=lambda item: str(item["updated_at"]), reverse=True)
+        return summaries[: max(1, limit)]
+
+    def _iter_records(self, user_id: str) -> list[dict[str, object]]:
+        records: list[dict[str, object]] = []
+        for path in sorted(self._root.glob(f"????-??-??_{self._safe_user_id(user_id)}.jsonl")):
+            if not path.exists():
+                continue
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(payload, dict):
+                    records.append(ConversationRecord.from_mapping(payload).to_dict())
+        return records
+
     def list_recent(
         self, *, user_id: str | None = None, limit: int = 100
     ) -> list[dict[str, object]]:

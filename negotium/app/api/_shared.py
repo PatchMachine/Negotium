@@ -42,6 +42,7 @@ from negotium.app.schemas.core import (
     ChatRequest,
     ChatResponse,
     CompanyProfilePayload,
+    ContextUsagePayload,
     DocumentReadPayload,
     GeneratedDocumentPayload,
     HiringRequest,
@@ -66,6 +67,7 @@ from negotium.app.services.agent_loop_service import (
     run_agent_loop,
 )
 from negotium.app.services.attachment_service import extract_attachment
+from negotium.app.services.context_budget_service import build_usage
 from negotium.app.services.context_firewall_service import (
     load_context_firewall_policy,
     record_firewall_audit,
@@ -517,20 +519,35 @@ def _role_for_title(title: str) -> str:
     return "staff"
 
 
-def _recent_chat_turns(container: Container, user_id: str, *, limit: int) -> list[LlmMessage]:
-    """Return the most recent persisted chat turns (chronological) for ``user_id``."""
+def _recent_chat_turns(
+    container: Container,
+    user_id: str,
+    *,
+    limit: int,
+    conversation_id: str = "",
+) -> list[LlmMessage]:
+    """Replay the turns of one conversation, oldest first.
 
-    if limit <= 0:
+    Scoped to ``conversation_id``: replaying "the user's last N records"
+    regardless of which chat they belonged to spliced unrelated threads into
+    every prompt. A brand-new conversation legitimately has no history.
+    """
+
+    if limit <= 0 or not conversation_id:
         return []
-    records = container.conversations.list_recent(user_id=user_id, limit=limit)
+    records = container.conversations.turns(
+        user_id=user_id, conversation_id=conversation_id, limit=limit * 2
+    )
     turns: list[LlmMessage] = []
-    for record in reversed(records):  # list_recent is newest-first; replay oldest-first
+    for record in records:
         role = str(record.get("role") or "")
         content = str(record.get("content") or "").strip()
         if role not in {"user", "assistant"} or not content:
             continue
         turns.append(LlmMessage(role, content))
-    return turns
+    # limit counts turns (user+assistant pairs), so keep the trailing 2*limit
+    # messages at most.
+    return turns[-(limit * 2) :]
 
 
 def _build_chat_messages(
@@ -541,6 +558,7 @@ def _build_chat_messages(
     history_limit: int = 8,
     media_parts: list[dict[str, Any]] | None = None,
     tools_enabled: bool = False,
+    conversation_id: str = "",
 ) -> tuple[list[LlmMessage], int]:
     """Build chat messages with persistent memory, recent history, and media.
 
@@ -549,7 +567,9 @@ def _build_chat_messages(
 
     memory = container.operations_memory.read().to_markdown()
     work_memory = container.work_memory.read().to_markdown()
-    volatile_user = container.volatile_memory.read(scope="user", key=user_id).to_markdown()
+    volatile_user = container.volatile_memory.read(
+        scope="session", key=_chat_volatile_key(user_id, conversation_id)
+    ).to_markdown()
     volatile_global = container.volatile_memory.read(scope="global", key="default").to_markdown()
     compressed = container.compressed_context.read(scope="user", key=user_id).to_markdown()
     permanent = container.permanent_memory.search(user_message, limit=5)
@@ -576,7 +596,9 @@ def _build_chat_messages(
         status_md=status_md,
         recent_md=recent_md,
     ).strip()
-    history = _recent_chat_turns(container, user_id, limit=history_limit)
+    history = _recent_chat_turns(
+        container, user_id, limit=history_limit, conversation_id=conversation_id
+    )
     if media_parts:
         user_content: str | list[dict[str, Any]] = [text_part(user_message.strip()), *media_parts]
     else:
@@ -790,6 +812,7 @@ async def _chat_complete(
         if payload.tools_enabled is not None
         else _tools_enabled(container, provider=provider, model=model)
     )
+    conversation_id = payload.conversation_id or _latest_conversation_id(container, actor)
     messages, used_history = _build_chat_messages(
         container,
         user_message,
@@ -797,11 +820,11 @@ async def _chat_complete(
         history_limit=payload.history_limit,
         media_parts=media_parts,
         tools_enabled=use_tools,
+        conversation_id=conversation_id,
     )
     job = _start_ai_job(
         container, task=payload.task or "chat", actor=actor, input_summary=payload.message
     )
-    conversation_id = payload.conversation_id or str(uuid4())
     loop_result: AgentLoopResult | None = None
     try:
         # Reasoning models can consume the entire small budget internally and
@@ -875,6 +898,7 @@ async def _chat_complete(
         model=response.model,
         route=route,
         source_refs=[],
+        user_metadata={"conversation_id": conversation_id},
         assistant_metadata=_chat_turn_metadata(
             conversation_id=conversation_id,
             provider=provider,
@@ -883,7 +907,11 @@ async def _chat_complete(
         ),
     )
     _update_user_volatile_memory_after_chat(
-        container, actor=actor, user_message=payload.message, answer=response.text
+        container,
+        actor=actor,
+        user_message=payload.message,
+        answer=response.text,
+        conversation_id=conversation_id,
     )
     return ChatResponse(
         answer=response.text,
@@ -912,7 +940,33 @@ async def _chat_complete(
             else {}
         ),
         notes=list(loop_result.notes) if loop_result else [],
+        context=ContextUsagePayload.model_validate(
+            build_usage(
+                provider=provider,
+                model=response.model or model,
+                messages=loop_result.messages if loop_result else messages,
+                prompt_tokens=response.prompt_tokens,
+                completion_tokens=response.completion_tokens,
+                history_turns=used_history,
+            ).to_dict()
+        ),
     )
+
+
+def _latest_conversation_id(container: Container, user_id: str) -> str:
+    """Continue the user's most recent conversation, or start a new one.
+
+    Clients that track conversations (the console) always send an id, and
+    start a new chat by minting one. Clients that do not — scripts, the
+    documented plain API — get the intuitive behaviour where consecutive
+    messages belong to the same conversation.
+    """
+
+    for summary in container.conversations.list_conversations(user_id=user_id, limit=1):
+        conversation_id = str(summary.get("conversation_id") or "")
+        if conversation_id and not summary.get("legacy"):
+            return conversation_id
+    return str(uuid4())
 
 
 def _chat_turn_metadata(
@@ -1600,14 +1654,30 @@ def _agent_plan_steps(
     ]
 
 
+def _chat_volatile_key(actor: str, conversation_id: str) -> str:
+    """Working-memory key for one conversation of one user."""
+
+    return f"{actor}:{conversation_id}" if conversation_id else actor
+
+
 def _update_user_volatile_memory_after_chat(
     container: Container,
     *,
     actor: str,
     user_message: str,
     answer: str,
+    conversation_id: str = "",
 ) -> None:
-    existing = container.volatile_memory.read(scope="user", key=actor)
+    """Record the running summary for *this* conversation.
+
+    Written at ``session`` scope keyed by conversation: at user scope the last
+    exchange of one chat was injected into the prompt of every other chat, so
+    conversations leaked into each other through the memory block even after
+    history replay had been correctly scoped.
+    """
+
+    key = _chat_volatile_key(actor, conversation_id)
+    existing = container.volatile_memory.read(scope="session", key=key)
     summary = "\n".join(
         part
         for part in [
@@ -1618,8 +1688,8 @@ def _update_user_volatile_memory_after_chat(
     )[-2000:]
     container.volatile_memory.write(
         VolatileMemory(
-            scope="user",
-            key=actor,
+            scope="session",
+            key=key,
             summary=summary,
             current_intent=user_message[:500],
             active_context=existing.active_context,

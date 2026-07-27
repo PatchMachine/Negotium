@@ -4517,3 +4517,61 @@ button.ghost {
   max-height: 55vh;
   overflow: auto;
 }
+
+/* Conversation controls and the context-window meter */
+.assistant-conversation-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0;
+}
+
+.context-meter {
+  margin: 8px 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.context-meter-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.context-meter-track {
+  height: 6px;
+  margin: 6px 0 4px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.context-meter-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.25s ease;
+}
+
+.context-meter-warn {
+  border-color: var(--warning);
+}
+
+.context-meter-warn .context-meter-fill {
+  background: var(--warning);
+}
+
+.context-meter-danger {
+  border-color: var(--danger);
+}
+
+.context-meter-danger .context-meter-fill {
+  background: var(--danger);
+}
+
+.context-meter-detail {
+  margin: 2px 0 0;
+}

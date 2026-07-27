@@ -5,6 +5,8 @@ import type {
   ChatResponse,
   ChatSendOptions,
   ChatStreamHandlers,
+  ConversationSummary,
+  ConversationTurn,
   HuggingFaceModelSearchResult,
   LlmProviderInfo,
   LlmProviderName,
@@ -185,4 +187,23 @@ export function recommendTaskRoutes(payload: {
     method: 'POST',
     body: JSON.stringify({ route: 'api', ...payload }),
   });
+}
+
+/** Conversation list for the chat sidebar, grouped by real conversation id. */
+export function fetchChatConversations(limit = 50): Promise<{
+  conversations: ConversationSummary[];
+}> {
+  return requestJson<{ conversations: ConversationSummary[] }>(
+    `/api/llm/conversations?limit=${limit}`,
+  );
+}
+
+/** Every turn of one conversation, oldest first. */
+export function fetchChatConversation(conversationId: string): Promise<{
+  conversation_id: string;
+  turns: ConversationTurn[];
+}> {
+  return requestJson<{ conversation_id: string; turns: ConversationTurn[] }>(
+    `/api/llm/conversations/${encodeURIComponent(conversationId)}`,
+  );
 }

@@ -32,6 +32,8 @@ from negotium.app.container import Container
 from negotium.app.schemas.core import (
     ChatRequest,
     ChatResponse,
+    ConversationSummaryPayload,
+    ConversationTurnPayload,
     HuggingFaceModelItemPayload,
     HuggingFaceModelSearchPayload,
     HuggingFaceModelSearchResultPayload,
@@ -43,6 +45,7 @@ from negotium.app.schemas.core import (
     TaskRouteRecommendRequest,
     TokenLimitPayload,
     TokenLimitStatusPayload,
+    UiComponentPayload,
 )
 from negotium.app.services.task_routing_service import route_recommendation
 from negotium.archive.llm_runtime import LlmRuntimeConfig
@@ -327,6 +330,64 @@ def create_llm_router(container: Container) -> APIRouter:
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    @router.get("/llm/conversations")
+    async def list_chat_conversations(
+        limit: int = 50,
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
+    ) -> dict[str, object]:
+        """Conversation list for the chat sidebar.
+
+        Grouped by the stored conversation id, not by wall-clock gaps — the
+        frontend used to invent threads by clustering records 45 minutes apart,
+        which split one long chat and merged two short ones.
+        """
+
+        actor = _require(container, x_ng_user, "llm:chat")
+        return {
+            "conversations": [
+                ConversationSummaryPayload.model_validate(item).model_dump()
+                for item in container.conversations.list_conversations(
+                    user_id=actor, limit=max(1, min(limit, 200))
+                )
+            ]
+        }
+
+    @router.get("/llm/conversations/{conversation_id}")
+    async def read_chat_conversation(
+        conversation_id: str,
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
+    ) -> dict[str, object]:
+        """Every turn of one conversation, oldest first, with its tool activity."""
+
+        actor = _require(container, x_ng_user, "llm:chat")
+        records = container.conversations.turns(user_id=actor, conversation_id=conversation_id)
+        turns: list[dict[str, object]] = []
+        for record in records:
+            metadata = record.get("metadata")
+            metadata = metadata if isinstance(metadata, dict) else {}
+            raw_ui = metadata.get("ui_components")
+            turns.append(
+                ConversationTurnPayload(
+                    id=str(record.get("id") or ""),
+                    role=str(record.get("role") or "user"),
+                    content=str(record.get("content") or ""),
+                    created_at=str(record.get("created_at") or ""),
+                    model=str(record.get("model") or ""),
+                    provider=str(record.get("provider") or ""),
+                    tool_invocations=[
+                        item
+                        for item in (metadata.get("tool_invocations") or [])
+                        if isinstance(item, dict)
+                    ],
+                    ui_components=[
+                        UiComponentPayload.model_validate(item)
+                        for item in (raw_ui or [])
+                        if isinstance(item, dict)
+                    ],
+                ).model_dump()
+            )
+        return {"conversation_id": conversation_id, "turns": turns}
 
     @router.get("/llm/token-limits")
     async def read_token_limits(

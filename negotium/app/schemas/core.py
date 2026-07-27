@@ -132,6 +132,41 @@ class ChatRequest(BaseModel):
     tools_enabled: bool | None = None
 
 
+class ContextUsagePayload(BaseModel):
+    """How much of the model's context window this turn used."""
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    context_window: int = 0
+    used_ratio: float = 0.0
+    history_turns: int = 0
+    tool_result_tokens: int = 0
+    # True when the provider returned no usage numbers and this is a estimate.
+    estimated: bool = False
+
+
+class ConversationSummaryPayload(BaseModel):
+    conversation_id: str
+    title: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+    message_count: int = 0
+    model: str = ""
+    # Transcripts written before conversations were tracked, bucketed per day.
+    legacy: bool = False
+
+
+class ConversationTurnPayload(BaseModel):
+    id: str = ""
+    role: str = "user"
+    content: str = ""
+    created_at: str = ""
+    model: str = ""
+    provider: str = ""
+    tool_invocations: list[dict[str, Any]] = Field(default_factory=list)
+    ui_components: list[UiComponentPayload] = Field(default_factory=list)
+
+
 class ChatResponse(BaseModel):
     answer: str
     route: Literal["local", "api"]
@@ -152,6 +187,7 @@ class ChatResponse(BaseModel):
     ui_components: list[UiComponentPayload] = Field(default_factory=list)
     pending_approval: dict[str, Any] = Field(default_factory=dict)
     notes: list[str] = Field(default_factory=list)
+    context: ContextUsagePayload = Field(default_factory=ContextUsagePayload)
 
 
 class LocalLlmStatusPayload(BaseModel):
