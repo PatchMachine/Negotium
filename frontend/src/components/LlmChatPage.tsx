@@ -652,72 +652,53 @@ export default function LlmChatPage() {
 
   return (
     <section className="assistant-layout">
-      <div className="panel assistant-controls">
-        <p className="eyebrow">AI 어시스턴트</p>
-        <h2>메모리 기반 실시간 채팅</h2>
-        <p className="muted">
-          영구·휘발성 메모리와 <strong>이 대화의 이전 턴</strong>을 기억하고, <code>/스킬</code> 슬래시 명령으로 오피스 기능을 바로 실행합니다.
-        </p>
-
-        <div className="assistant-conversation-bar">
-          <button type="button" className="secondary-button" onClick={startNewThread}>
-            + 새 대화
-          </button>
-          <span className="muted small">
-            {conversationId ? '이어지는 대화' : '새 대화 (이전 맥락 없음)'}
-          </span>
-        </div>
+      <div className="panel assistant-chat-column">
+        {/* One horizontal header instead of a tall stack of cards: at 260px
+            wide the old left column was seven blocks deep and unreadable. */}
+        <header className="chat-header">
+          <div className="chat-header-main">
+            <h2>AI 어시스턴트</h2>
+            <span className="muted small">
+              {conversationId ? '이어지는 대화' : '새 대화 · 이전 맥락 없음'}
+              {runtime
+                ? ` · ${runtime.default_provider} / ${
+                    runtime.task_routes?.chat?.model || runtime.solar_model || runtime.local_model
+                  }`
+                : ''}
+            </span>
+          </div>
+          <div className="chat-header-actions">
+            <div className="mode-toggle" role="tablist" aria-label="응답 모드">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mode === 'chat'}
+                className={mode === 'chat' ? 'mode-toggle-btn active' : 'mode-toggle-btn'}
+                onClick={() => setMode('chat')}
+              >
+                대화
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mode === 'plan'}
+                className={mode === 'plan' ? 'mode-toggle-btn active' : 'mode-toggle-btn'}
+                onClick={() => setMode('plan')}
+              >
+                계획
+              </button>
+            </div>
+            <button type="button" className="secondary-button" onClick={startNewThread}>
+              + 새 대화
+            </button>
+          </div>
+        </header>
         <ContextMeter usage={contextUsage} />
-
-        <div className="mode-toggle" role="tablist" aria-label="응답 모드">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'chat'}
-            className={mode === 'chat' ? 'mode-toggle-btn active' : 'mode-toggle-btn'}
-            onClick={() => setMode('chat')}
-          >
-            대화 모드
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'plan'}
-            className={mode === 'plan' ? 'mode-toggle-btn active' : 'mode-toggle-btn'}
-            onClick={() => setMode('plan')}
-          >
-            계획 모드
-          </button>
-        </div>
-        <p className="muted small">
-          {mode === 'plan'
-            ? '계획 모드: 지금까지의 대화 맥락을 바탕으로 plan.md 형식의 실행 계획을 설계합니다. 이 계획은 코딩 에이전트 계획서 작성·프로세스 설계에서 그대로 불러와 사용할 수 있습니다.'
-            : '대화 모드: 메모리와 스킬을 활용한 일반 대화를 합니다.'}
-        </p>
-
-        <div className="model-hint">
-          <span className="muted small">
-            현재 모델: {runtime?.default_route || 'local'} / {runtime?.default_provider || 'vllm'} ·{' '}
-            {runtime?.local_model || 'Qwen/Qwen3-4B'}
-          </span>
-          <p className="muted small">모델·로컬 에이전트 설정은 관리자 설정에서 변경합니다.</p>
-        </div>
-
-        <div className="assistant-skill-hint">
-          <p className="eyebrow">슬래시 스킬</p>
-          <ul>
-            {skills.slice(0, 6).map((skill) => (
-              <li key={skill.id}>
-                <button type="button" onClick={() => applySlash(skill)}>
-                  /{skill.id}
-                </button>
-                <span className="muted"> {skill.name}</span>
-              </li>
-            ))}
-            {skills.length === 0 ? <li className="muted">스킬을 불러오는 중…</li> : null}
-          </ul>
-          <p className="muted">입력창에 <code>/</code> 를 입력하면 자동완성이 열립니다. <code>/skills</code> 로 전체 목록.</p>
-        </div>
+        {mode === 'plan' ? (
+          <p className="muted small chat-mode-note">
+            계획 모드: 지금까지의 대화 맥락으로 plan.md 실행 계획을 설계합니다.
+          </p>
+        ) : null}
 
         {mode === 'plan' ? (
           <div className="assistant-plan-panel">
@@ -751,10 +732,9 @@ export default function LlmChatPage() {
             )}
           </div>
         ) : null}
-      </div>
 
       <div
-        className={`panel assistant-chat${dragActive ? ' assistant-chat-drag' : ''}`}
+        className={`assistant-chat${dragActive ? ' assistant-chat-drag' : ''}`}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -910,22 +890,32 @@ export default function LlmChatPage() {
             </button>
           </div>
         </form>
+        {/* Input affordance, so it belongs with the input rather than as a
+            standing card in a side column. */}
+        <details className="chat-skill-hint">
+          <summary className="muted small">
+            슬래시 스킬 {skills.length > 0 ? `(${skills.length})` : ''}
+          </summary>
+          <div className="chat-skill-hint-body">
+            {skills.slice(0, 8).map((skill) => (
+              <button key={skill.id} type="button" onClick={() => applySlash(skill)}>
+                /{skill.id}
+                <span className="muted"> {skill.name}</span>
+              </button>
+            ))}
+            {skills.length === 0 ? <span className="muted small">스킬을 불러오는 중…</span> : null}
+          </div>
+        </details>
         {notice ? <p className="alert">{notice}</p> : null}
+      </div>
       </div>
 
       <aside className="panel assistant-history-rail">
-        <div className="conversation-history-head">
-          <div>
-            <p className="eyebrow">이전 대화</p>
-            <h3>대화·일정 이력</h3>
-          </div>
-          <button type="button" onClick={startNewThread}>
-            새 대화
-          </button>
-        </div>
+        {/* No duplicate "새 대화" here — the chat header already owns it. */}
+        <h3 className="conversation-rail-title">대화 목록</h3>
         <input
           value={historyQuery}
-          placeholder="과거 대화나 업무 일정 검색"
+          placeholder="대화·일정 검색"
           onChange={(event) => setHistoryQuery(event.target.value)}
         />
         <div className="history-tab-row" role="tablist" aria-label="이력 종류">
