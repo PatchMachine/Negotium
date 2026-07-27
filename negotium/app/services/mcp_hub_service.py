@@ -23,6 +23,11 @@ from negotium.archive.agent_execution import AgentPlan
 from negotium.archive.llm_runtime import LlmRuntimeConfig
 from negotium.prompts import render as render_prompt
 
+# ``_shared`` transitively imports ``agent_loop_service``, which imports this
+# module — a top-level import here would be circular. Office-document tools
+# import it lazily inside their dispatch functions instead (same pattern as
+# the ``setup.propose_result``/``org.*`` dispatchers below).
+
 READ_TOOLS = {
     "skills.list",
     "hf.search_models",
@@ -36,6 +41,9 @@ READ_TOOLS = {
     "sheets.aggregate",
     "org.roster",
     "org.find_people",
+    "office_memory.search",
+    "office_memory.read_source",
+    "office_memory.list_volatile",
     "ui.open_surface",
     # Produces a draft for the admin to review; applying it is a separate
     # explicit action (POST /setup/office/apply). Gating the *proposal* behind
@@ -56,6 +64,36 @@ _SHEET_READ_POLICY = {
 
 TOOL_POLICIES: dict[str, dict[str, Any]] = {
     "agent.generate_plan": {"permission": "memory:write", "scopes": ["agent:write"], "risk": "low"},
+    "documents.generate": {
+        "permission": "documents:write",
+        "scopes": ["documents:write"],
+        "risk": "medium",
+    },
+    "work.weekly_report": {
+        "permission": "documents:write",
+        "scopes": ["documents:write"],
+        "risk": "medium",
+    },
+    "work.handover_brief": {
+        "permission": "documents:write",
+        "scopes": ["documents:write"],
+        "risk": "medium",
+    },
+    "hr.generate_kit": {
+        "permission": "documents:write",
+        "scopes": ["documents:write"],
+        "risk": "medium",
+    },
+    "office_memory.compact": {
+        "permission": "llm:chat",
+        "scopes": ["memory:write"],
+        "risk": "medium",
+    },
+    "office_memory.refresh_volatile": {
+        "permission": "llm:chat",
+        "scopes": ["memory:write"],
+        "risk": "medium",
+    },
     "hf.search_models": {"permission": "work:read", "scopes": ["hf:read"], "risk": "low"},
     "hf.get_model_info": {"permission": "work:read", "scopes": ["hf:read"], "risk": "low"},
     "hf.list_recommended_models": {"permission": "work:read", "scopes": ["hf:read"], "risk": "low"},
@@ -92,6 +130,21 @@ TOOL_POLICIES: dict[str, dict[str, Any]] = {
         "risk": "low",
     },
     "org.roster": {"permission": "work:read", "scopes": ["org:read"], "risk": "low"},
+    "office_memory.search": {
+        "permission": "work:read",
+        "scopes": ["memory:read"],
+        "risk": "low",
+    },
+    "office_memory.read_source": {
+        "permission": "work:read",
+        "scopes": ["memory:read"],
+        "risk": "low",
+    },
+    "office_memory.list_volatile": {
+        "permission": "work:read",
+        "scopes": ["memory:read"],
+        "risk": "low",
+    },
     "org.find_people": {"permission": "work:read", "scopes": ["org:read"], "risk": "low"},
     # Renders a screen; changes nothing. The per-surface permission is checked
     # dynamically inside the dispatcher.
@@ -256,6 +309,31 @@ def list_tool_descriptors() -> list[dict[str, Any]]:
             "org",
         ),
         _tool(
+            "office_memory.search",
+            "질의어로 영구 메모리(회사 기록/문서) 원천을 검색합니다. 답을 자동 주입된 "
+            "컨텍스트에서 찾지 못했을 때 먼저 호출하세요. 결과의 id로 "
+            "office_memory.read_source 를 호출해 전문을 읽으세요.",
+            {"query": "string", "limit": "number"},
+            "work:read",
+            "office_memory",
+        ),
+        _tool(
+            "office_memory.read_source",
+            "영구 메모리 원천 하나를 id로 읽어 전문을 반환합니다. 먼저 "
+            "office_memory.search 로 id를 확인하세요.",
+            {"source_id": "string"},
+            "work:read",
+            "office_memory",
+        ),
+        _tool(
+            "office_memory.list_volatile",
+            "휘발성 메모리(현재 진행 중인 대화/작업 맥락 요약) 목록을 조회합니다. scope 로 "
+            "global/user/session 범위를 좁힐 수 있습니다.",
+            {"scope": {"type": "string", "enum": ["global", "user", "session"]}},
+            "work:read",
+            "office_memory",
+        ),
+        _tool(
             "ui.open_surface",
             "필요한 기능 화면을 채팅 안에 직접 띄웁니다. 사용자에게 '어디로 가세요'라고 "
             "안내하는 대신 이 도구로 해당 화면을 불러오세요.",
@@ -284,6 +362,109 @@ def list_tool_descriptors() -> list[dict[str, Any]]:
             {"objective": "string", "title": "string", "mode": "string"},
             "memory:write",
             "agent",
+        ),
+        _tool(
+            "documents.generate",
+            "회의록/보고서 초안/업무 요청서/PPT 초안을 생성합니다. "
+            "document_type=meeting_minutes 이고 generate_tasks=true 이면 회의록의 액션 "
+            "아이템을 업무 스케줄에 자동 배정합니다. 승인이 필요한 쓰기 작업입니다.",
+            {
+                "document_type": {
+                    "type": "string",
+                    "enum": ["meeting_minutes", "report_draft", "work_request", "ppt_outline"],
+                },
+                "title": "string",
+                "source_text": "string",
+                "audience": "string",
+                "participants": "string",
+                "generate_tasks": "boolean",
+                "output_format": {
+                    "type": "string",
+                    "enum": ["auto", "markdown", "html", "csv", "json", "text"],
+                },
+            },
+            "documents:write",
+            "documents",
+        ),
+        _tool(
+            "work.weekly_report",
+            "현재 업무 스케줄·병목·최근 기록을 취합해 경영진용 주간 업무 보고서를 "
+            "생성합니다. 입력 파라미터가 없습니다. 승인이 필요한 쓰기 작업입니다.",
+            {},
+            "documents:write",
+            "work",
+        ),
+        _tool(
+            "work.handover_brief",
+            "인수인계 보고서를 생성합니다. generate_tasks=true(기본값)이면 후속 업무를 "
+            "신규 담당자의 업무 스케줄에 자동 등록합니다. 승인이 필요한 쓰기 작업입니다.",
+            {
+                "work_title": "string",
+                "outgoing_owner": "string",
+                "incoming_owner": "string",
+                "notes": "string",
+                "generate_tasks": "boolean",
+            },
+            "documents:write",
+            "work",
+        ),
+        _tool(
+            "hr.generate_kit",
+            "채용 관련 문서를 생성합니다: role_requirements(자격요건), "
+            "interview_kit(면접 질문/루브릭), onboarding_plan(온보딩 계획) 중 하나를 "
+            "kind 로 지정하세요. 승인이 필요한 쓰기 작업입니다.",
+            {
+                "kind": {
+                    "type": "string",
+                    "enum": ["role_requirements", "interview_kit", "onboarding_plan"],
+                },
+                "role_title": "string",
+                "business_need": "string",
+                "priority": "string",
+                "department_id": "string",
+                "position_id": "string",
+                "candidate_name": "string",
+                "candidate_profile": "string",
+                "interview_stage": "string",
+                "include_workload": "boolean",
+            },
+            "documents:write",
+            "hr",
+        ),
+        _tool(
+            "office_memory.compact",
+            "영구 메모리 원천을 모아 지정한 토큰 예산 안으로 압축해 compressed_context에 "
+            "저장합니다. query 로 관련 원천을 좁히고, include_volatile=true 면 휘발성 "
+            "메모리도 함께 요약에 포함합니다. 승인이 필요한 쓰기 작업입니다.",
+            {
+                "scope": {"type": "string", "enum": ["global", "user", "session"]},
+                "key": "string",
+                "query": "string",
+                # Named ``budget``, not ``token_budget``: any argument key containing
+                # "token" is treated as a leaked credential and its value is
+                # replaced with "[REDACTED_SECRET]" by the context firewall
+                # (context_firewall_service.py's secret-key-name scanner).
+                "budget": "number",
+                "source_limit": "number",
+                "source_ids": "array",
+                "include_volatile": "boolean",
+            },
+            "llm:chat",
+            "memory",
+        ),
+        _tool(
+            "office_memory.refresh_volatile",
+            "질의와 관련된 영구 메모리 원천을 요약해 휘발성 메모리를 갱신합니다. 현재 "
+            "세션/사용자의 진행 맥락을 최신화할 때 사용하세요. 승인이 필요한 쓰기 작업입니다.",
+            {
+                "scope": {"type": "string", "enum": ["global", "user", "session"]},
+                "key": "string",
+                "query": "string",
+                "source_limit": "number",
+                "source_ids": "array",
+            },
+            "llm:chat",
+            "memory",
         ),
     ]
 
@@ -800,6 +981,149 @@ def _dispatch_org(container: Any, tool_name: str, arguments: dict[str, Any]) -> 
     raise ValueError(f"unknown MCP tool: {tool_name}")
 
 
+def _office_document_tool(
+    container: Any, tool_name: str, arguments: dict[str, Any], *, actor: str
+) -> dict[str, Any]:
+    # Imported lazily: ``_shared`` transitively imports ``agent_loop_service``,
+    # which imports this module — a module-level import would be circular.
+    from negotium.app.api._shared import (
+        HIRING_KIND_INSTRUCTIONS,
+        _generate_handover_brief,
+        _generate_hiring_document,
+        _generate_office_document,
+        _generate_weekly_report,
+    )
+    from negotium.app.schemas.core import (
+        GeneratedDocumentPayload,
+        HandoverRequest,
+        HiringRequest,
+        OfficeDocumentRequest,
+    )
+
+    actor = actor or "system"
+    if tool_name == "documents.generate":
+        payload = OfficeDocumentRequest(
+            document_type=arguments.get("document_type") or "meeting_minutes",
+            title=str(arguments.get("title") or ""),
+            source_text=str(arguments.get("source_text") or ""),
+            audience=str(arguments.get("audience") or ""),
+            participants=str(arguments.get("participants") or ""),
+            generate_tasks=bool(arguments.get("generate_tasks") or False),
+            output_format=arguments.get("output_format") or "auto",
+        )
+        doc_result: GeneratedDocumentPayload = _run_async_safe(
+            _generate_office_document(container, payload, actor=actor)
+        )
+        return doc_result.model_dump()
+    if tool_name == "work.weekly_report":
+        report_result: GeneratedDocumentPayload = _run_async_safe(
+            _generate_weekly_report(container, actor=actor)
+        )
+        return report_result.model_dump()
+    if tool_name == "work.handover_brief":
+        handover_payload = HandoverRequest(
+            work_title=str(arguments.get("work_title") or ""),
+            outgoing_owner=str(arguments.get("outgoing_owner") or ""),
+            incoming_owner=str(arguments.get("incoming_owner") or ""),
+            notes=str(arguments.get("notes") or ""),
+            generate_tasks=bool(arguments.get("generate_tasks", True)),
+        )
+        handover_result: GeneratedDocumentPayload = _run_async_safe(
+            _generate_handover_brief(container, handover_payload, actor=actor)
+        )
+        return handover_result.model_dump()
+    if tool_name == "hr.generate_kit":
+        kind = str(arguments.get("kind") or "")
+        instruction = HIRING_KIND_INSTRUCTIONS.get(kind)
+        if instruction is None:
+            raise ValueError(
+                f"kind must be one of {sorted(HIRING_KIND_INSTRUCTIONS)}, got: {kind!r}"
+            )
+        hiring_payload = HiringRequest(
+            role_title=str(arguments.get("role_title") or ""),
+            business_need=str(arguments.get("business_need") or ""),
+            priority=str(arguments.get("priority") or "normal"),
+            department_id=str(arguments.get("department_id") or ""),
+            position_id=str(arguments.get("position_id") or ""),
+            candidate_name=str(arguments.get("candidate_name") or ""),
+            candidate_profile=str(arguments.get("candidate_profile") or ""),
+            interview_stage=str(arguments.get("interview_stage") or ""),
+            include_workload=bool(arguments.get("include_workload", True)),
+        )
+        hiring_result: GeneratedDocumentPayload = _run_async_safe(
+            _generate_hiring_document(
+                container, hiring_payload, actor=actor, kind=kind, instruction=instruction
+            )
+        )
+        return hiring_result.model_dump()
+    raise ValueError(f"unknown MCP tool: {tool_name}")
+
+
+def _dispatch_office_memory_read(
+    container: Any, tool_name: str, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    if tool_name == "office_memory.search":
+        query = str(arguments.get("query") or "")
+        limit = max(1, min(int(arguments.get("limit") or 20), 100))
+        return {"sources": container.permanent_memory.search(query, limit=limit)}
+    if tool_name == "office_memory.read_source":
+        source_id = str(arguments.get("source_id") or "").strip()
+        if not source_id:
+            raise ValueError("source_id is required. 먼저 office_memory.search 로 id를 확인하세요.")
+        return {"source": container.permanent_memory.read_source(source_id)}
+    if tool_name == "office_memory.list_volatile":
+        scope_arg = arguments.get("scope") or None
+        if scope_arg is not None and scope_arg not in {"global", "user", "session"}:
+            raise ValueError(
+                f"scope must be one of ['global', 'user', 'session'], got: {scope_arg!r}"
+            )
+        return {"memories": container.volatile_memory.list(scope=scope_arg)}
+    raise ValueError(f"unknown MCP tool: {tool_name}")
+
+
+def _memory_tool(
+    container: Any, tool_name: str, arguments: dict[str, Any], *, actor: str
+) -> dict[str, Any]:
+    # Lazy import for the same reason as ``_office_document_tool`` above.
+    from negotium.app.api._shared import _compress_context_memory, _refresh_volatile_memory
+    from negotium.app.schemas.core import (
+        ContextCompressRequest,
+        MemoryRefreshRequest,
+        VolatileMemoryPayload,
+    )
+
+    actor = actor or "system"
+    raw_source_ids = arguments.get("source_ids")
+    source_ids = [str(item) for item in raw_source_ids] if isinstance(raw_source_ids, list) else []
+    if tool_name == "office_memory.compact":
+        compact_payload = ContextCompressRequest(
+            scope=arguments.get("scope") or "global",
+            key=str(arguments.get("key") or ""),
+            query=str(arguments.get("query") or ""),
+            token_budget=int(arguments.get("budget") or 4000),
+            source_limit=int(arguments.get("source_limit") or 20),
+            source_ids=source_ids,
+            include_volatile=bool(arguments.get("include_volatile") or False),
+        )
+        compact_result: dict[str, object] = _run_async_safe(
+            _compress_context_memory(container, compact_payload, actor=actor)
+        )
+        return compact_result
+    if tool_name == "office_memory.refresh_volatile":
+        refresh_payload = MemoryRefreshRequest(
+            scope=arguments.get("scope") or "user",
+            key=str(arguments.get("key") or ""),
+            query=str(arguments.get("query") or ""),
+            source_limit=int(arguments.get("source_limit") or 10),
+            source_ids=source_ids,
+        )
+        refresh_result: VolatileMemoryPayload = _run_async_safe(
+            _refresh_volatile_memory(container, refresh_payload, actor=actor)
+        )
+        return refresh_result.model_dump()
+    raise ValueError(f"unknown MCP tool: {tool_name}")
+
+
 def _dispatch_tool(
     container: Any,
     tool_name: str,
@@ -812,6 +1136,21 @@ def _dispatch_tool(
         return _dispatch_sheets(container, tool_name, arguments, route=route)
     if tool_name.startswith("org."):
         return _dispatch_org(container, tool_name, arguments)
+    if tool_name in {
+        "documents.generate",
+        "work.weekly_report",
+        "work.handover_brief",
+        "hr.generate_kit",
+    }:
+        return _office_document_tool(container, tool_name, arguments, actor=actor)
+    if tool_name in {
+        "office_memory.search",
+        "office_memory.read_source",
+        "office_memory.list_volatile",
+    }:
+        return _dispatch_office_memory_read(container, tool_name, arguments)
+    if tool_name in {"office_memory.compact", "office_memory.refresh_volatile"}:
+        return _memory_tool(container, tool_name, arguments, actor=actor)
     if tool_name == "setup.propose_result":
         from negotium.app.services.setup_chat_service import propose_setup_result
 

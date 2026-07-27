@@ -42,12 +42,16 @@ from negotium.app.schemas.core import (
     ChatRequest,
     ChatResponse,
     CompanyProfilePayload,
+    ContextCompressRequest,
     ContextUsagePayload,
     DocumentReadPayload,
     GeneratedDocumentPayload,
+    HandoverRequest,
     HiringRequest,
     InitialOfficeSetupResult,
     LocalLlmStatusPayload,
+    MemoryRefreshRequest,
+    OfficeDocumentRequest,
     ProcessPlanPayload,
     ReadableContextBundlePayload,
     ReadableContextPreviewRequest,
@@ -92,6 +96,7 @@ from negotium.app.services.skill_runtime import SkillError, run_skill
 from negotium.archive._paths import resolve_within
 from negotium.archive.access_control import ALL_PERMISSIONS
 from negotium.archive.ai_jobs import AiJobRecord
+from negotium.archive.context_compressor import CompressedContext
 from negotium.archive.llm_runtime import LlmProviderName, LlmRuntimeConfig, LlmTaskRoute
 from negotium.archive.process_plans import ProcessPlan
 from negotium.archive.schema import parse_front_matter
@@ -1629,6 +1634,90 @@ def _lines_from_markdown(markdown: str, *, prefix: str = "-") -> list[str]:
     return lines[:20]
 
 
+async def _refresh_volatile_memory(
+    container: Container, payload: MemoryRefreshRequest, *, actor: str
+) -> VolatileMemoryPayload:
+    key = payload.key.strip() or actor
+    lim = max(1, min(payload.source_limit, 50))
+    sources = container.permanent_memory.resolve_sources(
+        query=payload.query,
+        limit=lim,
+        source_ids=payload.source_ids if payload.source_ids else None,
+    )
+    if not sources:
+        sources = container.permanent_memory.search(payload.query, limit=lim)
+    prompt = _memory_refresh_prompt(payload.query, sources)
+    summary = await _complete_office_task(container, prompt, task="memory_summary")
+    saved = container.volatile_memory.write(
+        VolatileMemory(
+            scope=payload.scope,
+            key=key,
+            summary=summary,
+            current_intent=payload.query,
+            relevant_sources=[str(source["path"]) for source in sources],
+        )
+    )
+    _audit(
+        container,
+        actor=actor,
+        action="memory.volatile.refresh",
+        target="volatile_memory",
+        target_id=f"{payload.scope}:{key}",
+    )
+    return VolatileMemoryPayload.from_memory(saved)
+
+
+async def _compress_context_memory(
+    container: Container, payload: ContextCompressRequest, *, actor: str
+) -> dict[str, object]:
+    key = payload.key.strip() or actor
+    lim = max(1, min(payload.source_limit, 50))
+    sources = container.permanent_memory.resolve_sources(
+        query=payload.query,
+        limit=lim,
+        source_ids=payload.source_ids if payload.source_ids else None,
+    )
+    if not sources:
+        sources = container.permanent_memory.search(payload.query, limit=lim)
+    volatile_md = ""
+    if payload.include_volatile:
+        volatile_md = _volatile_memories_markdown(container)
+    prompt = _context_compression_prompt(
+        payload.query,
+        payload.token_budget,
+        sources,
+        volatile_appendix=volatile_md,
+    )
+    summary = await _complete_office_task(container, prompt, task="memory_summary")
+    saved = container.compressed_context.write(
+        CompressedContext(
+            scope=payload.scope,
+            key=key,
+            summary=summary,
+            facts=_lines_from_markdown(summary, prefix="-"),
+            source_refs=[str(source["path"]) for source in sources],
+            token_budget=payload.token_budget,
+        )
+    )
+    _audit(
+        container,
+        actor=actor,
+        action="memory.context.compress",
+        target="compressed_context",
+        target_id=f"{payload.scope}:{key}",
+    )
+    volatile_refs = (
+        [f"{item['scope']}:{item['key']}" for item in container.volatile_memory.list()]
+        if payload.include_volatile
+        else []
+    )
+    return {
+        "context": saved.to_dict(),
+        "used_sources": sources,
+        "volatile_memories": volatile_refs,
+    }
+
+
 def _agent_plan_steps(
     objective: str, schedule_refs: list[str], memory_refs: list[str]
 ) -> list[dict[str, object]]:
@@ -1835,6 +1924,246 @@ async def _generate_hiring_document(
         path=path,
         ai_job=_ai_job_payload(job).model_dump(),
     )
+
+
+HIRING_KIND_INSTRUCTIONS: dict[str, str] = {
+    "role_requirements": "필요 역량, 경험, 성향, 필수/우대 조건을 정리하세요.",
+    "interview_kit": "면접 질문, 좋은 답변 기준, 평가 루브릭을 작성하세요.",
+    "onboarding_plan": "입사 후 1주/1개월/3개월 온보딩 계획과 산출물을 작성하세요.",
+}
+
+_OFFICE_DOCUMENT_LABELS: dict[str, str] = {
+    "meeting_minutes": "회의록",
+    "report_draft": "보고서 초안",
+    "work_request": "업무 요청서",
+    "ppt_outline": "PPT 초안",
+}
+
+
+async def _generate_office_document(
+    container: Container, payload: OfficeDocumentRequest, *, actor: str
+) -> GeneratedDocumentPayload:
+    readable_bundle: ReadableContextBundlePayload | None = None
+    if payload.source_ids or payload.query.strip():
+        readable_bundle = _readable_context_bundle(
+            container,
+            ReadableContextPreviewRequest(
+                query=payload.query or payload.title,
+                source_ids=payload.source_ids,
+                source_limit=payload.source_limit,
+                include_volatile=payload.include_volatile,
+                token_budget=payload.token_budget,
+            ),
+        )
+    readable_context = readable_bundle.markdown if readable_bundle else ""
+    used_sources = [source.id for source in readable_bundle.used_sources] if readable_bundle else []
+
+    provider, route = _resolve_runtime_task(container, "document_generation")
+    model = _resolve_task_model(container, "document_generation", provider, route)
+    vision = model_supports_vision(provider, model)
+    audio = model_supports_audio(provider, model)
+    attachment_context, image_parts, attachment_notes = _resolve_document_attachments(
+        container, payload.attachment_ids, vision_enabled=vision, audio_enabled=audio
+    )
+
+    prompt = render_prompt(
+        "office/document_generation.md.j2",
+        context=_office_context(container),
+        readable_context=readable_context,
+        attachment_context=attachment_context,
+        document_label=_OFFICE_DOCUMENT_LABELS[payload.document_type],
+        title=payload.title,
+        audience=payload.audience,
+        source_text=payload.source_text,
+        output_format=payload.output_format,
+    ).strip()
+    job = _start_ai_job(
+        container,
+        task="document_generation",
+        actor=actor,
+        input_summary=f"{payload.document_type}: {payload.title}",
+        used_sources=used_sources,
+    )
+    try:
+        raw = await _complete_office_task(
+            container, prompt, task="document_generation", image_parts=image_parts or None
+        )
+        resolved_format, body = _resolve_output_format(raw, requested=payload.output_format)
+        path = _write_generated_doc(
+            container.settings.archive_dir,
+            folder="documents",
+            slug=f"{payload.document_type}_{payload.title}",
+            markdown=body,
+            output_format=resolved_format,
+        )
+        job = _finish_ai_job(
+            container, job, status="succeeded", result_path=path, used_sources=used_sources
+        )
+    except Exception as exc:
+        _finish_ai_job(container, job, status="failed", error=str(exc))
+        raise
+    created_tasks: list[dict[str, object]] = []
+    if payload.generate_tasks and payload.document_type == "meeting_minutes":
+        # Close the loop: action items in the minutes become ordered
+        # work-schedule assignments, same engine the handover flow uses.
+        basis = body if resolved_format == "markdown" else payload.source_text or body
+        steps = await _generate_process_steps(
+            container,
+            objective=f"{payload.title} 액션 아이템 실행",
+            scope=payload.participants or payload.audience,
+            markdown=basis,
+        )
+        created_tasks = _enqueue_process_steps(
+            container,
+            architecture_id=path,
+            objective=payload.title,
+            participants=payload.participants or payload.audience,
+            steps=steps,
+        )
+    result = GeneratedDocumentPayload(
+        title=payload.title,
+        markdown=body,
+        path=path,
+        ai_job=_ai_job_payload(job).model_dump(),
+        output_format=resolved_format,
+        attachment_notes=attachment_notes,
+        created_tasks=created_tasks,
+    )
+    _audit(container, actor=actor, action="document.create", target="document", target_id=path)
+    return result
+
+
+async def _generate_weekly_report(container: Container, *, actor: str) -> GeneratedDocumentPayload:
+    """One-click weekly manager report from accumulated work state.
+
+    Gathers the live work schedule, queue/bottleneck summaries, and recent
+    archive logs, then asks the document LLM for a manager-facing report.
+    """
+    schedule = container.work_schedule.list()
+    queue_items = _schedule_to_work_items(
+        schedule, plan_status_by_step=_plan_status_by_step(container)
+    )
+    logs = _recent_logs(container.settings.archive_dir, limit=12)
+
+    by_status: dict[str, list[dict[str, object]]] = {}
+    for item in schedule:
+        by_status.setdefault(str(item.get("status") or "todo"), []).append(item)
+    source_lines: list[str] = ["## 업무 스케줄 현황"]
+    for status_key in ("done", "in_progress", "blocked", "todo", "cancelled"):
+        rows = by_status.get(status_key, [])
+        if not rows:
+            continue
+        source_lines.append(f"### {status_key} ({len(rows)}건)")
+        for row in rows[:20]:
+            owner = str(row.get("owner_name") or row.get("owner_id") or "미배정")
+            note = str(row.get("completion_record") or row.get("notes") or "").strip()
+            line = f"- {row.get('title')} (담당: {owner})"
+            if note:
+                line += f" — {note[:160]}"
+            source_lines.append(line)
+    queue_summary = _summarize_queue(queue_items)
+    if queue_summary:
+        source_lines += ["", "## 프로세스 큐 요약", queue_summary]
+    source_lines += ["", "## 병목 요약", _summarize_bottlenecks(logs)]
+    if logs:
+        source_lines += ["", "## 최근 기록"]
+        source_lines += [f"- {log.get('path')}" for log in logs[:8]]
+    source_text = "\n".join(source_lines)
+
+    title = "주간 업무 보고"
+    prompt = render_prompt(
+        "office/document_generation.md.j2",
+        context=_office_context(container),
+        readable_context="",
+        attachment_context="",
+        document_label="주간 업무 보고서",
+        title=title,
+        audience="경영진/관리자",
+        source_text=source_text,
+        output_format="markdown",
+    ).strip()
+    job = _start_ai_job(
+        container,
+        task="document_generation",
+        actor=actor,
+        input_summary=f"weekly_report: 스케줄 {len(schedule)}건, 로그 {len(logs)}건",
+    )
+    try:
+        raw = await _complete_office_task(container, prompt, task="document_generation")
+        resolved_format, body = _resolve_output_format(raw, requested="markdown")
+        path = _write_generated_doc(
+            container.settings.archive_dir,
+            folder="documents",
+            slug=f"weekly_report_{title}",
+            markdown=body,
+            output_format=resolved_format,
+        )
+        job = _finish_ai_job(container, job, status="succeeded", result_path=path)
+    except Exception as exc:
+        _finish_ai_job(container, job, status="failed", error=str(exc))
+        raise
+    _audit(container, actor=actor, action="document.create", target="document", target_id=path)
+    return GeneratedDocumentPayload(
+        title=title,
+        markdown=body,
+        path=path,
+        ai_job=_ai_job_payload(job).model_dump(),
+        output_format=resolved_format,
+    )
+
+
+async def _generate_handover_brief(
+    container: Container, payload: HandoverRequest, *, actor: str
+) -> GeneratedDocumentPayload:
+    context = _office_context(container)
+    activity_log = _collect_owner_activity(container, payload.outgoing_owner)
+    prompt = render_prompt(
+        "office/handover.md.j2",
+        context=context,
+        work_title=payload.work_title,
+        outgoing_owner=payload.outgoing_owner,
+        incoming_owner=payload.incoming_owner,
+        notes=payload.notes,
+        activity_log=activity_log,
+    ).strip()
+    job = _start_ai_job(
+        container,
+        task="handover",
+        actor=actor,
+        input_summary=payload.work_title or payload.notes,
+    )
+    try:
+        markdown = await _complete_office_task(container, prompt, task="handover")
+        path = _write_generated_doc(
+            container.settings.archive_dir,
+            folder="handover",
+            slug=payload.work_title or "handover",
+            markdown=markdown,
+        )
+        job = _finish_ai_job(container, job, status="succeeded", result_path=path)
+    except Exception as exc:
+        _finish_ai_job(container, job, status="failed", error=str(exc))
+        raise
+    if payload.generate_tasks:
+        created = await _create_handover_tasks(
+            container,
+            work_title=payload.work_title,
+            incoming_owner=payload.incoming_owner,
+            handover_markdown=markdown,
+            activity_log=activity_log,
+            source_path=path,
+        )
+        if created:
+            bullets = "\n".join(f"- {title}" for title in created)
+            markdown = f"{markdown}\n\n## 신규 담당자 인수 업무 (작업 스케줄 등록됨)\n{bullets}\n"
+    result = GeneratedDocumentPayload(
+        title=payload.work_title,
+        markdown=markdown,
+        path=path,
+        ai_job=_ai_job_payload(job).model_dump(),
+    )
+    _audit(container, actor=actor, action="document.create", target="document", target_id=path)
+    return result
 
 
 def _hiring_target_context(container: Container, payload: HiringRequest) -> str:

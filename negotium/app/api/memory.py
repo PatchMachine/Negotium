@@ -7,16 +7,13 @@ from fastapi import APIRouter, Header, HTTPException, status
 from negotium.app.api._shared import (
     _archive_document_index,
     _audit,
-    _complete_office_task,
-    _context_compression_prompt,
+    _compress_context_memory,
     _is_internal_archive_document,
-    _lines_from_markdown,
-    _memory_refresh_prompt,
     _read_archive_document,
     _readable_context_bundle,
     _readable_source_payload,
+    _refresh_volatile_memory,
     _require,
-    _volatile_memories_markdown,
 )
 from negotium.app.container import Container
 from negotium.app.schemas.core import (
@@ -34,7 +31,6 @@ from negotium.app.schemas.core import (
     VolatileMemoryPayload,
     WorkMemoryPayload,
 )
-from negotium.archive.context_compressor import CompressedContext
 from negotium.archive.deletion_requests import DeletionRequest
 from negotium.archive.volatile_memory import MemoryScope, VolatileMemory
 
@@ -271,34 +267,7 @@ def create_memory_router(container: Container) -> APIRouter:
         x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> VolatileMemoryPayload:
         actor = _require(container, x_ng_user, "llm:chat")
-        key = payload.key.strip() or actor
-        lim = max(1, min(payload.source_limit, 50))
-        sources = container.permanent_memory.resolve_sources(
-            query=payload.query,
-            limit=lim,
-            source_ids=payload.source_ids if payload.source_ids else None,
-        )
-        if not sources:
-            sources = container.permanent_memory.search(payload.query, limit=lim)
-        prompt = _memory_refresh_prompt(payload.query, sources)
-        summary = await _complete_office_task(container, prompt, task="memory_summary")
-        saved = container.volatile_memory.write(
-            VolatileMemory(
-                scope=payload.scope,
-                key=key,
-                summary=summary,
-                current_intent=payload.query,
-                relevant_sources=[str(source["path"]) for source in sources],
-            )
-        )
-        _audit(
-            container,
-            actor=actor,
-            action="memory.volatile.refresh",
-            target="volatile_memory",
-            target_id=f"{payload.scope}:{key}",
-        )
-        return VolatileMemoryPayload.from_memory(saved)
+        return await _refresh_volatile_memory(container, payload, actor=actor)
 
     @router.post("/memory/context/compress")
     async def compress_context_memory(
@@ -306,52 +275,7 @@ def create_memory_router(container: Container) -> APIRouter:
         x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> dict[str, object]:
         actor = _require(container, x_ng_user, "llm:chat")
-        key = payload.key.strip() or actor
-        lim = max(1, min(payload.source_limit, 50))
-        sources = container.permanent_memory.resolve_sources(
-            query=payload.query,
-            limit=lim,
-            source_ids=payload.source_ids if payload.source_ids else None,
-        )
-        if not sources:
-            sources = container.permanent_memory.search(payload.query, limit=lim)
-        volatile_md = ""
-        if payload.include_volatile:
-            volatile_md = _volatile_memories_markdown(container)
-        prompt = _context_compression_prompt(
-            payload.query,
-            payload.token_budget,
-            sources,
-            volatile_appendix=volatile_md,
-        )
-        summary = await _complete_office_task(container, prompt, task="memory_summary")
-        saved = container.compressed_context.write(
-            CompressedContext(
-                scope=payload.scope,
-                key=key,
-                summary=summary,
-                facts=_lines_from_markdown(summary, prefix="-"),
-                source_refs=[str(source["path"]) for source in sources],
-                token_budget=payload.token_budget,
-            )
-        )
-        _audit(
-            container,
-            actor=actor,
-            action="memory.context.compress",
-            target="compressed_context",
-            target_id=f"{payload.scope}:{key}",
-        )
-        volatile_refs = (
-            [f"{item['scope']}:{item['key']}" for item in container.volatile_memory.list()]
-            if payload.include_volatile
-            else []
-        )
-        return {
-            "context": saved.to_dict(),
-            "used_sources": sources,
-            "volatile_memories": volatile_refs,
-        }
+        return await _compress_context_memory(container, payload, actor=actor)
 
     @router.get("/memory/context/compressed")
     async def read_compressed_context(

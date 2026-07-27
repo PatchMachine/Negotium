@@ -4,28 +4,15 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Header
 
-from negotium.adapters.llm.catalog import (
-    model_supports_audio,
-    model_supports_vision,
-)
 from negotium.app.api._shared import (
-    _ai_job_payload,
+    HIRING_KIND_INSTRUCTIONS,
     _audit,
     _complete_office_task,
-    _enqueue_process_steps,
-    _finish_ai_job,
     _generate_hiring_document,
-    _generate_process_steps,
+    _generate_office_document,
     _hr_evaluation_context,
     _hr_evaluation_markdown,
-    _office_context,
-    _readable_context_bundle,
     _require,
-    _resolve_document_attachments,
-    _resolve_output_format,
-    _resolve_runtime_task,
-    _resolve_task_model,
-    _start_ai_job,
     _write_generated_doc,
 )
 from negotium.app.container import Container
@@ -35,8 +22,6 @@ from negotium.app.schemas.core import (
     HrEvaluationDraftRequest,
     HrEvaluationSaveRequest,
     OfficeDocumentRequest,
-    ReadableContextBundlePayload,
-    ReadableContextPreviewRequest,
 )
 from negotium.prompts import render as render_prompt
 
@@ -56,7 +41,7 @@ def create_documents_router(container: Container) -> APIRouter:
             payload,
             actor=actor,
             kind="role_requirements",
-            instruction="필요 역량, 경험, 성향, 필수/우대 조건을 정리하세요.",
+            instruction=HIRING_KIND_INSTRUCTIONS["role_requirements"],
         )
         _audit(
             container,
@@ -78,7 +63,7 @@ def create_documents_router(container: Container) -> APIRouter:
             payload,
             actor=actor,
             kind="interview_kit",
-            instruction="면접 질문, 좋은 답변 기준, 평가 루브릭을 작성하세요.",
+            instruction=HIRING_KIND_INSTRUCTIONS["interview_kit"],
         )
         _audit(
             container,
@@ -100,7 +85,7 @@ def create_documents_router(container: Container) -> APIRouter:
             payload,
             actor=actor,
             kind="onboarding_plan",
-            instruction="입사 후 1주/1개월/3개월 온보딩 계획과 산출물을 작성하세요.",
+            instruction=HIRING_KIND_INSTRUCTIONS["onboarding_plan"],
         )
         _audit(
             container,
@@ -202,101 +187,6 @@ def create_documents_router(container: Container) -> APIRouter:
         x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> GeneratedDocumentPayload:
         actor = _require(container, x_ng_user, "documents:write")
-        labels = {
-            "meeting_minutes": "회의록",
-            "report_draft": "보고서 초안",
-            "work_request": "업무 요청서",
-            "ppt_outline": "PPT 초안",
-        }
-        readable_bundle: ReadableContextBundlePayload | None = None
-        if payload.source_ids or payload.query.strip():
-            readable_bundle = _readable_context_bundle(
-                container,
-                ReadableContextPreviewRequest(
-                    query=payload.query or payload.title,
-                    source_ids=payload.source_ids,
-                    source_limit=payload.source_limit,
-                    include_volatile=payload.include_volatile,
-                    token_budget=payload.token_budget,
-                ),
-            )
-        readable_context = readable_bundle.markdown if readable_bundle else ""
-        used_sources = (
-            [source.id for source in readable_bundle.used_sources] if readable_bundle else []
-        )
-
-        provider, route = _resolve_runtime_task(container, "document_generation")
-        model = _resolve_task_model(container, "document_generation", provider, route)
-        vision = model_supports_vision(provider, model)
-        audio = model_supports_audio(provider, model)
-        attachment_context, image_parts, attachment_notes = _resolve_document_attachments(
-            container, payload.attachment_ids, vision_enabled=vision, audio_enabled=audio
-        )
-
-        prompt = render_prompt(
-            "office/document_generation.md.j2",
-            context=_office_context(container),
-            readable_context=readable_context,
-            attachment_context=attachment_context,
-            document_label=labels[payload.document_type],
-            title=payload.title,
-            audience=payload.audience,
-            source_text=payload.source_text,
-            output_format=payload.output_format,
-        ).strip()
-        job = _start_ai_job(
-            container,
-            task="document_generation",
-            actor=actor,
-            input_summary=f"{payload.document_type}: {payload.title}",
-            used_sources=used_sources,
-        )
-        try:
-            raw = await _complete_office_task(
-                container, prompt, task="document_generation", image_parts=image_parts or None
-            )
-            resolved_format, body = _resolve_output_format(raw, requested=payload.output_format)
-            path = _write_generated_doc(
-                container.settings.archive_dir,
-                folder="documents",
-                slug=f"{payload.document_type}_{payload.title}",
-                markdown=body,
-                output_format=resolved_format,
-            )
-            job = _finish_ai_job(
-                container, job, status="succeeded", result_path=path, used_sources=used_sources
-            )
-        except Exception as exc:
-            _finish_ai_job(container, job, status="failed", error=str(exc))
-            raise
-        created_tasks: list[dict[str, object]] = []
-        if payload.generate_tasks and payload.document_type == "meeting_minutes":
-            # Close the loop: action items in the minutes become ordered
-            # work-schedule assignments, same engine the handover flow uses.
-            basis = body if resolved_format == "markdown" else payload.source_text or body
-            steps = await _generate_process_steps(
-                container,
-                objective=f"{payload.title} 액션 아이템 실행",
-                scope=payload.participants or payload.audience,
-                markdown=basis,
-            )
-            created_tasks = _enqueue_process_steps(
-                container,
-                architecture_id=path,
-                objective=payload.title,
-                participants=payload.participants or payload.audience,
-                steps=steps,
-            )
-        result = GeneratedDocumentPayload(
-            title=payload.title,
-            markdown=body,
-            path=path,
-            ai_job=_ai_job_payload(job).model_dump(),
-            output_format=resolved_format,
-            attachment_notes=attachment_notes,
-            created_tasks=created_tasks,
-        )
-        _audit(container, actor=actor, action="document.create", target="document", target_id=path)
-        return result
+        return await _generate_office_document(container, payload, actor=actor)
 
     return router
