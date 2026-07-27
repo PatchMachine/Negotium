@@ -98,6 +98,25 @@ class LlmRuntimePayload(BaseModel):
         )
 
 
+class ToolApprovalDecision(BaseModel):
+    """A user's answer to one write-tool confirmation card."""
+
+    approval_id: str
+    tool: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    decision: Literal["approve", "reject"] = "approve"
+
+
+class UiComponentPayload(BaseModel):
+    """A screen the assistant pulled into the chat thread."""
+
+    component: str
+    title: str = ""
+    mode: Literal["inline", "panel", "route"] = "inline"
+    props: dict[str, Any] = Field(default_factory=dict)
+    reason: str = ""
+
+
 class ChatRequest(BaseModel):
     message: str
     route: Literal["local", "api"] | None = None
@@ -105,6 +124,12 @@ class ChatRequest(BaseModel):
     task: str = "chat"
     attachment_ids: list[str] = Field(default_factory=list)
     history_limit: int = 8
+    conversation_id: str = ""
+    # Answers to confirmation cards from a previous turn that paused on a
+    # write tool. Resuming replays the stored trace rather than re-inferring.
+    approvals: list[ToolApprovalDecision] = Field(default_factory=list)
+    # None = let the server decide from the model's tier.
+    tools_enabled: bool | None = None
 
 
 class ChatResponse(BaseModel):
@@ -119,6 +144,14 @@ class ChatResponse(BaseModel):
     skill_result: dict[str, Any] = Field(default_factory=dict)
     attachment_notes: list[str] = Field(default_factory=list)
     used_history: int = 0
+    conversation_id: str = ""
+    turn_id: str = ""
+    tier: str = ""
+    reasoning: str = ""
+    tool_invocations: list[dict[str, Any]] = Field(default_factory=list)
+    ui_components: list[UiComponentPayload] = Field(default_factory=list)
+    pending_approval: dict[str, Any] = Field(default_factory=dict)
+    notes: list[str] = Field(default_factory=list)
 
 
 class LocalLlmStatusPayload(BaseModel):
@@ -558,6 +591,30 @@ class ApiKeyPayload(BaseModel):
     base_url: str = ""
 
 
+class ModelProfilePayload(BaseModel):
+    """Tier metadata for one selectable model.
+
+    ``capabilities``/``restricted`` let the setup wizard explain which product
+    features a given model choice turns off (e.g. a local general-tier model
+    cannot drive the tool-based chat surface).
+    """
+
+    id: str
+    tier: str = "unknown"
+    tier_label: str = ""
+    label: str = ""
+    strength: str = ""
+    context_window: int = 0
+    max_output_tokens: int = 0
+    supports_tools: bool = False
+    supports_parallel_tool_calls: bool = False
+    hidden_reasoning: bool = False
+    reasoning_effort: str = ""
+    source: str = "catalog"
+    capabilities: dict[str, bool] = Field(default_factory=dict)
+    restricted: list[str] = Field(default_factory=list)
+
+
 class ProviderModelPayload(BaseModel):
     provider: str
     models: list[str]
@@ -566,6 +623,17 @@ class ProviderModelPayload(BaseModel):
     reason: str = ""
     configured: bool = False
     requires_api_key: bool = True
+    # Index-aligned with ``models``.
+    model_profiles: list[ModelProfilePayload] = Field(default_factory=list)
+    tiers: dict[str, list[str]] = Field(default_factory=dict)
+
+
+class TaskRouteRecommendRequest(BaseModel):
+    provider: str
+    # Optional: when omitted the server lists the provider's live models.
+    models: list[str] = Field(default_factory=list)
+    api_key: str = ""
+    route: Literal["local", "api"] = "api"
 
 
 class ProviderModelPreviewPayload(BaseModel):
@@ -759,6 +827,23 @@ class PatchNoteRecommendationPayload(BaseModel):
     human_review_required: list[str] = Field(default_factory=list)
 
 
+class SetupChatMessage(BaseModel):
+    role: Literal["user", "assistant"] = "user"
+    content: str = ""
+
+
+class SetupChatRequest(BaseModel):
+    """One turn of the conversational first-run setup."""
+
+    message: str
+    history: list[SetupChatMessage] = Field(default_factory=list)
+    company_profile: CompanyProfilePayload | None = None
+    # The previously proposed draft, when the user is asking for edits.
+    draft: dict[str, Any] | None = None
+    approvals: list[ToolApprovalDecision] = Field(default_factory=list)
+    conversation_id: str = ""
+
+
 class InitialOfficeAnalyzeRequest(BaseModel):
     message: str = ""
     upload_ids: list[str] = Field(default_factory=list)
@@ -785,4 +870,20 @@ class InitialOfficeSetupResult(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     questions: list[str] = Field(default_factory=list)
     sensitive_hint: bool = False
+    ai_job: dict[str, Any] = Field(default_factory=dict)
+
+
+class SetupChatResponse(BaseModel):
+    """One assistant turn of the conversational first-run setup."""
+
+    answer: str = ""
+    provider: str = ""
+    model: str = ""
+    conversation_id: str = ""
+    tool_invocations: list[dict[str, Any]] = Field(default_factory=list)
+    ui_components: list[UiComponentPayload] = Field(default_factory=list)
+    pending_approval: dict[str, Any] = Field(default_factory=dict)
+    # Present once the assistant has proposed a setup draft to review.
+    result: InitialOfficeSetupResult | None = None
+    notes: list[str] = Field(default_factory=list)
     ai_job: dict[str, Any] = Field(default_factory=dict)

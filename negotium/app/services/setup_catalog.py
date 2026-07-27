@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from negotium.adapters.llm.catalog import PROVIDERS
 from negotium.app.schemas.core import CompanyProfilePayload
 
 PACKAGE_BY_SIZE = {
@@ -271,15 +272,25 @@ def _security_defaults(
 
 
 def _llm_task_routes(*, local_required: bool) -> dict[str, dict[str, str]]:
+    """Recommend per-task routes, tier-aware rather than hardcoded per model.
+
+    Sensitive-work installs pin everything to the local model; otherwise only
+    the two privacy-sensitive tasks stay local and the rest are left for the
+    wizard to fill in from the chosen cloud provider's tiers (see
+    ``services/task_routing_service.recommend_task_routes``).
+    """
+
+    from negotium.app.services.task_routing_service import (
+        ALL_TASKS,
+        recommend_task_routes,
+    )
+
+    local_models = list(PROVIDERS["vllm"].fallback_models)
     if local_required:
-        return {
-            task: {"route": "local", "provider": "vllm", "model": "Qwen/Qwen3-4B"}
-            for task in ("memory_summary", "document_generation", "chat", "hiring", "handover")
-        }
-    return {
-        "memory_summary": {"route": "local", "provider": "vllm", "model": "Qwen/Qwen3-4B"},
-        "chat": {"route": "local", "provider": "vllm", "model": "Qwen/Qwen3-4B"},
-    }
+        routes = recommend_task_routes("vllm", local_models, route="local")
+        return {task: routes[task] for task in ALL_TASKS if task in routes}
+    local = recommend_task_routes("vllm", local_models, route="local")
+    return {task: local[task] for task in ("memory_summary", "chat") if task in local}
 
 
 def _first_14_days(

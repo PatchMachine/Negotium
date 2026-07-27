@@ -9,7 +9,7 @@ import httpx
 
 from negotium.adapters.llm.multimodal import to_anthropic_content, to_text
 from negotium.domain.entities import LlmRoute
-from negotium.domain.ports import LlmMessage, LlmProvider, LlmResponse
+from negotium.domain.ports import LlmCallOptions, LlmMessage, LlmProvider, LlmResponse
 from negotium.observability import get_logger
 
 
@@ -35,6 +35,7 @@ class AnthropicProvider(LlmProvider):
         route: LlmRoute = "cloud",
         temperature: float = 0.0,
         max_tokens: int | None = None,
+        options: LlmCallOptions | None = None,
     ) -> LlmResponse:
         system = "\n\n".join(to_text(m.content) for m in messages if m.role == "system")
         user_messages = [

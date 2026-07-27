@@ -4296,3 +4296,224 @@ button.ghost {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Model tiers (에이전트형 / 추론형 / 일반형 / 미분류)
+   Shared by the setup wizard, admin settings and task routing.
+   --------------------------------------------------------------------------- */
+
+.tier-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  margin-left: 6px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-muted, var(--accent-soft));
+  color: var(--text-strong);
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.tier-badge-agent {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.tier-badge-reasoning {
+  border-color: var(--success);
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.tier-badge-general {
+  border-color: var(--line-strong);
+  background: transparent;
+  color: var(--muted);
+}
+
+.tier-badge-unknown {
+  border-color: var(--warning);
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.model-capability-warning {
+  border: 1px solid var(--warning);
+  background: var(--warning-soft);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin: 8px 0;
+  font-size: 0.85rem;
+}
+
+.model-capability-warning p {
+  margin: 0 0 4px;
+}
+
+.model-capability-warning ul {
+  margin: 4px 0 6px;
+  padding-left: 18px;
+}
+
+.model-capability-warning li {
+  margin: 2px 0;
+}
+
+.model-capability-ok {
+  margin: 8px 0;
+}
+
+.llm-task-warning {
+  color: var(--warning);
+}
+
+/* ---------------------------------------------------------------------------
+   Chat-first surface: tool activity, approval cards, inline feature screens.
+   --------------------------------------------------------------------------- */
+
+.chat-tool-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chat-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface-muted, transparent);
+  font-size: 0.78rem;
+}
+
+.chat-tool code {
+  font-size: 0.78rem;
+}
+
+.chat-tool-running {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.chat-tool-executed {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.chat-tool-denied,
+.chat-tool-rejected {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+.chat-tool-error {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.chat-approval {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-sm);
+  background: var(--warning-soft);
+}
+
+.chat-approval p {
+  margin: 0 0 6px;
+}
+
+.chat-approval-args {
+  max-height: 180px;
+  overflow: auto;
+  margin: 6px 0;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(15, 23, 42, 0.06);
+  font-size: 0.78rem;
+}
+
+.chat-approval-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* Inline feature screens. `container-type` lets the mounted page respond to the
+   bubble width rather than the viewport, so full pages fit inside the thread. */
+.chat-inline-surface {
+  container-type: inline-size;
+  margin: 10px 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface, transparent);
+  overflow: hidden;
+}
+
+.chat-inline-surface-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--accent-soft);
+}
+
+.chat-inline-surface-head p {
+  margin: 2px 0 0;
+}
+
+.chat-inline-surface-badge {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-on);
+  font-size: 0.72rem;
+}
+
+.chat-inline-surface-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.chat-inline-surface-body {
+  max-height: 70vh;
+  overflow: auto;
+  padding: 12px;
+}
+
+.chat-inline-surface-panel .chat-inline-surface-body {
+  max-height: 50vh;
+}
+
+.chat-inline-surface-missing {
+  padding: 12px;
+}
+
+.chat-nav-surfaces {
+  padding: 0 4px;
+}
+
+/* Conversational first-run setup */
+.setup-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.setup-chat-thread {
+  max-height: 55vh;
+  overflow: auto;
+}

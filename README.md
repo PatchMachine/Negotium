@@ -6,7 +6,7 @@ LLM 에이전트 기반 **AI 오피스워크 / BPA(Business Process Automation) 
 회의록 작성 → 업무 배정 → 주간보고 → 인수인계/채용까지, 회사의 반복 오피스워크를
 AI가 정리하고 굴러가게 돕습니다.
 민감한 사내 내용은 로컬 LLM으로, 일반 생성 업무는 클라우드 API로 라우팅할 수 있습니다.
-기본 클라우드 provider는 **Upstage Solar** (`solar-open2`)이며 GPT/Claude/Gemini/Together도 지원합니다.
+기본 클라우드 provider는 **Upstage Solar** (`solar-pro3`)이며 GPT/Claude/Gemini/Together도 지원합니다.
 모든 추론 과정과 결정 근거는 Markdown 파일로 저장되어(**MD GitOps**) 누구나 메모장으로 읽고 수정할 수 있습니다.
 
 > 이 프로젝트는 **Patch Machine**에서 **Negotium(네고티움)** 으로 리브랜딩되었습니다.
@@ -86,19 +86,35 @@ React 프론트엔드는 `http://localhost:5173`에서 열립니다. 개발 서�
 
 ## Upstage Solar (기본 클라우드 provider)
 
-Negotium의 기본 클라우드 LLM은 Upstage **Solar Open 2** (`solar-open2`)입니다.
+Negotium의 기본 클라우드 LLM은 Upstage **Solar Pro 3** (`solar-pro3`)입니다.
 [Upstage Console](https://console.upstage.ai)에서 API 키를 발급받아 설정하면 바로 사용할 수 있습니다.
 
 ```bash
 NG_LLM_DEFAULT_ROUTE=cloud
 NG_LLM_PROVIDER=solar
 NG_SOLAR_API_KEY=up_xxx           # console.upstage.ai에서 발급
-NG_SOLAR_MODEL=solar-open2
+NG_SOLAR_MODEL=solar-pro3
 NG_SOLAR_BASE_URL=https://api.upstage.ai/v1
 ```
 
+### 모델 티어
+
+모델 선택 화면은 모델을 **에이전트형 / 추론형 / 일반형 / 미분류** 로 구분해 보여주고,
+고른 모델로 인해 제한되는 기능을 함께 안내합니다.
+
+| 모델 | 티어 | 컨텍스트 | 도구 호출 | reasoning_effort |
+| --- | --- | --- | --- | --- |
+| `solar-pro3` | 에이전트형 (기본값) | 128k | 지원 (병렬 호출) | `high\|medium\|low\|minimal` |
+| `solar-pro2` | 추론형 | 65k | 지원 | `high\|medium\|low\|minimal` |
+| `solar-open2` | 에이전트형 (자체 호스팅) | 1M | 지원 | `high\|none` |
+| `solar-mini`, `syn-pro` | 일반형 | 32k | 지원 | 미지원 |
+
+`solar-open2`는 오픈 웨이트 모델로, vLLM 서빙 시
+`--tool-call-parser solar_open2 --enable-auto-tool-choice` 옵션이 필요합니다.
+응답 전에 숨은 추론에 토큰을 크게 쓰므로 `max_tokens`를 넉넉히 주세요.
+
 Solar는 OpenAI-compatible API로 호출되므로 별도 SDK 없이 동작하며, 키가 없어도
-UI의 provider 목록에는 fallback 모델 목록(`solar-open2` 등)이 표시됩니다.
+UI의 provider 목록에는 fallback 모델 목록(`solar-pro3` 등)이 표시됩니다.
 관리자 화면(API 키 설정)이나 초기 셋업 마법사에서 키를 저장한 뒤 "모델 목록 확인"으로
 사용 가능한 모델을 라이브로 조회할 수 있습니다.
 
@@ -107,7 +123,7 @@ UI의 provider 목록에는 fallback 모델 목록(`solar-open2` 등)이 표시�
 ```bash
 curl -s https://api.upstage.ai/v1/chat/completions \
   -H "Authorization: Bearer $NG_SOLAR_API_KEY" -H "Content-Type: application/json" \
-  -d '{"model":"solar-open2","messages":[{"role":"user","content":"ping"}]}'
+  -d '{"model":"solar-pro3","messages":[{"role":"user","content":"ping"}]}'
 ```
 
 ## LLM 채팅

@@ -27,6 +27,7 @@ from typing import Any, Literal, Protocol, cast
 
 from negotium.domain.entities import LlmRoute
 from negotium.domain.ports import (
+    LlmCallOptions,
     LlmMessage,
     LlmProvider,
     LlmResponse,
@@ -190,6 +191,7 @@ class VllmEmbeddedProvider(LlmProvider):
         route: LlmRoute = "local",
         temperature: float = 0.0,
         max_tokens: int | None = None,
+        options: LlmCallOptions | None = None,
     ) -> LlmResponse:
         bundle = await asyncio.to_thread(self._ensure_engine)
         prompt = bundle.tokenizer.apply_chat_template(

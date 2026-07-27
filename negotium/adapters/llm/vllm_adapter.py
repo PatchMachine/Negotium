@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from collections.abc import Sequence
+from typing import Any
 
 import httpx
 
 from negotium.adapters.llm.multimodal import to_text
 from negotium.domain.entities import LlmRoute
-from negotium.domain.ports import LlmMessage, LlmProvider, LlmResponse
+from negotium.domain.ports import (
+    LlmCallOptions,
+    LlmMessage,
+    LlmProvider,
+    LlmResponse,
+    ToolCall,
+)
 from negotium.observability import get_logger
 
 # httpx default read timeout is too small for first-request / long generations
@@ -19,6 +27,50 @@ _DEFAULT_TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0
 
 class VllmConnectionError(RuntimeError):
     """Raised when the vLLM HTTP server stays unreachable after startup retries."""
+
+
+def _to_vllm_message(message: LlmMessage) -> dict[str, Any]:
+    if message.role == "assistant" and message.raw:
+        return dict(message.raw)
+    if message.role == "tool":
+        return {
+            "role": "tool",
+            "tool_call_id": message.tool_call_id,
+            "content": message.content if isinstance(message.content, str) else "",
+        }
+    payload: dict[str, Any] = {"role": message.role, "content": to_text(message.content)}
+    if message.tool_calls:
+        payload["tool_calls"] = [
+            {
+                "id": call.id,
+                "type": "function",
+                "function": {"name": call.name, "arguments": json.dumps(call.arguments)},
+            }
+            for call in message.tool_calls
+        ]
+    return payload
+
+
+def _parse_vllm_tool_calls(message: dict[str, Any]) -> list[ToolCall]:
+    parsed: list[ToolCall] = []
+    for raw in message.get("tool_calls") or []:
+        if not isinstance(raw, dict):
+            continue
+        function = raw.get("function") or {}
+        try:
+            arguments = json.loads(function.get("arguments") or "{}")
+        except (TypeError, ValueError):
+            arguments = {}
+        if not isinstance(arguments, dict):
+            arguments = {"value": arguments}
+        parsed.append(
+            ToolCall(
+                id=str(raw.get("id") or ""),
+                name=str(function.get("name") or ""),
+                arguments=arguments,
+            )
+        )
+    return parsed
 
 
 class VllmProvider(LlmProvider):
@@ -47,14 +99,34 @@ class VllmProvider(LlmProvider):
         route: LlmRoute = "local",
         temperature: float = 0.0,
         max_tokens: int | None = None,
+        options: LlmCallOptions | None = None,
     ) -> LlmResponse:
-        payload = {
+        payload: dict[str, Any] = {
             "model": self._model,
-            "messages": [{"role": m.role, "content": to_text(m.content)} for m in messages],
+            "messages": [_to_vllm_message(message) for message in messages],
             "temperature": temperature,
         }
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
+        if options is not None:
+            if options.tools:
+                # Requires the server to be started with
+                # --enable-auto-tool-choice and a matching --tool-call-parser.
+                payload["tools"] = [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": tool.name,
+                            "description": tool.description,
+                            "parameters": tool.parameters,
+                        },
+                    }
+                    for tool in options.tools
+                ]
+                payload["tool_choice"] = options.tool_choice or "auto"
+            if options.reasoning_effort:
+                payload["reasoning_effort"] = options.reasoning_effort
+            payload.update(options.extra_body)
 
         started = time.perf_counter()
         client = self._resolve_client()
@@ -101,15 +173,23 @@ class VllmProvider(LlmProvider):
         data = response.json()
         latency_ms = int((time.perf_counter() - started) * 1000)
         choice = data["choices"][0]
-        text = (choice.get("message") or {}).get("content") or ""
+        message = choice.get("message") or {}
+        text = message.get("content") or ""
+        tool_calls = _parse_vllm_tool_calls(message)
         usage = data.get("usage") or {}
-        self._log.info("llm.vllm.complete", route=route, latency_ms=latency_ms)
+        self._log.info(
+            "llm.vllm.complete", route=route, latency_ms=latency_ms, tool_calls=len(tool_calls)
+        )
         return LlmResponse(
             text=text,
             prompt_tokens=int(usage.get("prompt_tokens") or 0),
             completion_tokens=int(usage.get("completion_tokens") or 0),
             route=route,
             model=self._model,
+            tool_calls=tool_calls,
+            stop_reason=str(choice.get("finish_reason") or ""),
+            reasoning=str(message.get("reasoning_content") or message.get("reasoning") or ""),
+            raw_message=dict(message) if tool_calls else None,
         )
 
     def _resolve_client(self) -> httpx.AsyncClient:

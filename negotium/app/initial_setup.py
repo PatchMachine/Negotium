@@ -114,26 +114,17 @@ def _read_delimited(path: Path, *, delimiter: str) -> list[dict[str, str]]:
 
 
 def _read_xlsx(path: Path) -> list[dict[str, str]]:
-    try:
-        from openpyxl import load_workbook
-    except ImportError as exc:  # pragma: no cover - dependency guard
-        raise RuntimeError("XLSX parsing requires openpyxl") from exc
+    """First sheet, first 100 rows — the compact shape the setup summary wants.
 
-    workbook = load_workbook(path, read_only=True, data_only=True)
-    sheet = workbook.active
-    rows = list(sheet.iter_rows(values_only=True))
-    if not rows:
-        return []
-    headers = [str(value or "").strip() for value in rows[0]]
-    parsed: list[dict[str, str]] = []
-    for row in rows[1:101]:
-        parsed.append(
-            {
-                headers[index] or f"col_{index + 1}": str(value or "").strip()
-                for index, value in enumerate(row)
-            },
-        )
-    return parsed
+    Delegates to :mod:`spreadsheet_service` so there is a single xlsx reader;
+    the agent tools use the same code with wider limits and multi-sheet access.
+    Imported lazily to avoid an import cycle (the service imports this module
+    for :func:`_has_sensitive_hint`).
+    """
+
+    from negotium.app.services.spreadsheet_service import read_sheet
+
+    return read_sheet(path, start_row=1, limit=100).rows
 
 
 def _rows_to_text(rows: list[dict[str, str]]) -> str:

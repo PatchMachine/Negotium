@@ -14,7 +14,9 @@ from negotium.app.api._shared import (
     _initial_setup_memories_with_recommendations,
     _parse_initial_setup_result,
     _require,
+    _run_setup_chat_turn,
     _selected_upload_records,
+    _setup_chat_capability,
     _start_ai_job,
 )
 from negotium.app.container import Container
@@ -23,6 +25,8 @@ from negotium.app.schemas.core import (
     InitialOfficeAnalyzeRequest,
     InitialOfficeSetupResult,
     OperationsMemoryPayload,
+    SetupChatRequest,
+    SetupChatResponse,
     WorkMemoryPayload,
 )
 from negotium.archive.access_control import ALL_PERMISSIONS
@@ -71,6 +75,33 @@ def create_setup_router(container: Container) -> APIRouter:
         )
         result.ai_job = _ai_job_payload(job).model_dump()
         return result
+
+    @router.post("/setup/office/chat")
+    async def setup_office_chat(
+        payload: SetupChatRequest,
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
+    ) -> SetupChatResponse:
+        """One turn of the Solar-driven setup conversation.
+
+        Runs the agent loop on the ``agent_planning`` route with a scoped tool
+        set. Deliberately does not add a new ``LlmTaskName``: that Literal is
+        consumed by several modules and unknown values downgrade silently.
+        """
+
+        actor = _require(container, x_ng_user, "admin:users")
+        return await _run_setup_chat_turn(container, payload, actor)
+
+    @router.get("/setup/office/chat/capability")
+    async def setup_chat_capability(
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
+    ) -> dict[str, object]:
+        """Whether the configured model can drive the conversational wizard.
+
+        The wizard falls back to the deterministic form flow when it cannot.
+        """
+
+        _require(container, x_ng_user, "admin:users")
+        return _setup_chat_capability(container)
 
     @router.post("/setup/office/apply")
     async def apply_initial_office_setup(

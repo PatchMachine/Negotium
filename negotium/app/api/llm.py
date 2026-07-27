@@ -37,15 +37,54 @@ from negotium.app.schemas.core import (
     HuggingFaceModelSearchResultPayload,
     LlmRuntimePayload,
     LocalLlmStatusPayload,
+    ModelProfilePayload,
     ProviderModelPayload,
     ProviderModelPreviewPayload,
+    TaskRouteRecommendRequest,
     TokenLimitPayload,
     TokenLimitStatusPayload,
 )
+from negotium.app.services.task_routing_service import route_recommendation
 from negotium.archive.llm_runtime import LlmRuntimeConfig
 from negotium.archive.token_usage import (
     TokenLimitConfig,
 )
+
+
+def _to_provider_model_payload(
+    payload: dict[str, object], *, fallback_provider: str
+) -> ProviderModelPayload:
+    """Convert a ``catalog.list_models`` result into the HTTP payload.
+
+    Shared by the live-list and preview routes so tier metadata can never be
+    wired into one and silently forgotten in the other.
+    """
+
+    raw_models = payload.get("models")
+    models = cast(list[object], raw_models) if isinstance(raw_models, list) else []
+    raw_profiles = payload.get("model_profiles")
+    profiles = cast(list[object], raw_profiles) if isinstance(raw_profiles, list) else []
+    raw_tiers = payload.get("tiers")
+    tiers = cast(dict[str, object], raw_tiers) if isinstance(raw_tiers, dict) else {}
+    return ProviderModelPayload(
+        provider=str(payload.get("provider") or fallback_provider),
+        models=[str(model) for model in models],
+        source=str(payload.get("source") or "fallback"),
+        refreshed_at=str(payload.get("refreshed_at") or ""),
+        reason=str(payload.get("reason") or ""),
+        configured=bool(payload.get("configured", False)),
+        requires_api_key=bool(payload.get("requires_api_key", True)),
+        model_profiles=[
+            ModelProfilePayload.model_validate(profile)
+            for profile in profiles
+            if isinstance(profile, dict)
+        ],
+        tiers={
+            str(tier): [str(model) for model in cast(list[object], ids)]
+            for tier, ids in tiers.items()
+            if isinstance(ids, list)
+        },
+    )
 
 
 def create_llm_router(container: Container) -> APIRouter:
@@ -68,17 +107,7 @@ def create_llm_router(container: Container) -> APIRouter:
             payload = await list_models(provider, api_key=api_key, base_url=base_url)
         except ValueError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-        raw_models = payload.get("models")
-        models = cast(list[object], raw_models) if isinstance(raw_models, list) else []
-        return ProviderModelPayload(
-            provider=str(payload.get("provider") or metadata.id),
-            models=[str(model) for model in models],
-            source=str(payload.get("source") or "fallback"),
-            refreshed_at=str(payload.get("refreshed_at") or ""),
-            reason=str(payload.get("reason") or ""),
-            configured=bool(payload.get("configured", False)),
-            requires_api_key=bool(payload.get("requires_api_key", True)),
-        )
+        return _to_provider_model_payload(payload, fallback_provider=metadata.id)
 
     @router.post("/llm/providers/{provider}/models/preview")
     async def preview_provider_models(
@@ -91,17 +120,7 @@ def create_llm_router(container: Container) -> APIRouter:
             result = await list_models(provider, api_key=payload.api_key.strip(), base_url=base_url)
         except ValueError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-        raw_models = result.get("models")
-        models = cast(list[object], raw_models) if isinstance(raw_models, list) else []
-        return ProviderModelPayload(
-            provider=str(result.get("provider") or metadata.id),
-            models=[str(model) for model in models],
-            source=str(result.get("source") or "fallback"),
-            refreshed_at=str(result.get("refreshed_at") or ""),
-            reason=str(result.get("reason") or ""),
-            configured=bool(result.get("configured", False)),
-            requires_api_key=bool(result.get("requires_api_key", True)),
-        )
+        return _to_provider_model_payload(result, fallback_provider=metadata.id)
 
     @router.post("/llm/local/huggingface/search")
     async def search_local_huggingface_models(
@@ -123,6 +142,38 @@ def create_llm_router(container: Container) -> APIRouter:
             query=payload.query,
             models=[HuggingFaceModelItemPayload(**item) for item in results],
         )
+
+    @router.post("/llm/runtime/recommend")
+    async def recommend_llm_routes(
+        payload: TaskRouteRecommendRequest,
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
+    ) -> dict[str, object]:
+        """Suggest per-task routes for a provider, based on model tiers.
+
+        Replaces the hardcoded task-route tables that were duplicated in the
+        setup wizard and ``setup_catalog``.
+        """
+
+        _require(container, x_ng_user, "admin:local_llm")
+        models = payload.models
+        if not models:
+            saved = container.secret_store.read(payload.provider)
+            api_key = (
+                payload.api_key
+                or (saved.api_key if saved else "")
+                or _settings_api_key(container, payload.provider)
+            )
+            try:
+                listed = await list_models(
+                    payload.provider,
+                    api_key=api_key,
+                    base_url=_default_base_url(container, payload.provider),
+                )
+            except ValueError as exc:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+            raw = listed.get("models")
+            models = [str(item) for item in raw] if isinstance(raw, list) else []
+        return route_recommendation(payload.provider, models, route=payload.route)
 
     @router.get("/llm/runtime")
     async def read_llm_runtime() -> LlmRuntimePayload:
@@ -216,8 +267,40 @@ def create_llm_router(container: Container) -> APIRouter:
         actor = _require(container, x_ng_user, "llm:chat")
 
         async def events() -> AsyncIterator[str]:
+            # The agent loop can spend a long time in tool calls before any
+            # text exists. Run the completion as a task and drain an event queue
+            # so tool_call/tool_result/ui_component reach the client live
+            # instead of the user staring at an empty bubble.
+            queue: asyncio.Queue[tuple[str, dict[str, object]] | None] = asyncio.Queue()
+
+            async def emit(event: str, data: dict[str, object]) -> None:
+                await queue.put((event, data))
+
+            async def run() -> ChatResponse:
+                try:
+                    return await _chat_complete(container, payload, actor, emit=emit)
+                finally:
+                    # Sentinel in `finally`: without it an exception would leave
+                    # the drain loop awaiting forever and the response hangs.
+                    await queue.put(None)
+
+            task = asyncio.create_task(run())
             try:
-                result = await _chat_complete(container, payload, actor)
+                while True:
+                    item = await queue.get()
+                    if item is None:
+                        break
+                    event, data = item
+                    yield _sse_event(event, data)
+            except GeneratorExit:
+                # Client disconnected. Without this the agent loop keeps
+                # running — including write tools and provider calls — and its
+                # result is never collected.
+                task.cancel()
+                raise
+
+            try:
+                result = await task
             except HTTPException as exc:
                 yield _sse_event("error", {"detail": str(exc.detail), "status": exc.status_code})
                 return
@@ -231,6 +314,7 @@ def create_llm_router(container: Container) -> APIRouter:
                     "provider": result.provider,
                     "model": result.model,
                     "skill_id": result.skill_id,
+                    "tier": result.tier,
                 },
             )
             for chunk in _chunk_text(result.answer):

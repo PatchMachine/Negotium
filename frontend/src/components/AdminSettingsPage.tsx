@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import {
   deleteApiKey,
   fetchContextFirewallAudit,
   fetchContextFirewallPolicy,
   fetchApiKeys,
+  fetchLlmProviders,
   fetchProviderModels,
   previewProviderModels,
   saveApiKey,
@@ -12,10 +13,25 @@ import {
   type ApiKeyInfo,
   type ContextFirewallAuditRecord,
   type ContextFirewallDecision,
+  type LlmProviderInfo,
   type ProviderModelPayload,
 } from '../api';
 import LocalAgentAdminPanel from './admin/LocalAgentAdminPanel';
+import {
+  ModelCapabilityNotice,
+  TOOL_FALLBACK_SUGGESTION,
+  TierBadge,
+  profileMap,
+} from './ai/ModelTier';
 import LlmTaskRoutingPanel from './ai/LlmTaskRoutingPanel';
+
+const FALLBACK_PROVIDER_CATALOG: LlmProviderInfo[] = [
+  { provider: 'solar', label: 'Upstage / Solar', base_url: '', base_url_source: '', fallback_models: [] },
+  { provider: 'openai', label: 'OpenAI / GPT', base_url: '', base_url_source: '', fallback_models: [] },
+  { provider: 'anthropic', label: 'Anthropic / Claude', base_url: '', base_url_source: '', fallback_models: [] },
+  { provider: 'gemini', label: 'Google / Gemini', base_url: '', base_url_source: '', fallback_models: [] },
+  { provider: 'together', label: 'Together AI', base_url: '', base_url_source: '', fallback_models: [] },
+];
 
 type AdminSettingsSection = 'api-keys' | 'local-agent' | 'task-routing' | 'context-firewall';
 
@@ -31,8 +47,10 @@ export default function AdminSettingsPage() {
   const [providers, setProviders] = useState<ApiKeyInfo[]>([]);
   const [draft, setDraft] = useState({ provider: 'solar', api_key: '', model: '' });
   const [models, setModels] = useState<ProviderModelPayload | null>(null);
+  const [providerCatalog, setProviderCatalog] = useState<LlmProviderInfo[]>(FALLBACK_PROVIDER_CATALOG);
   const [modelSearch, setModelSearch] = useState('');
   const [message, setMessage] = useState('');
+  const modelProfiles = useMemo(() => profileMap(models), [models]);
   const allModelOptions = models?.models.length ? models.models : [draft.model].filter(Boolean);
   const normalizedModelSearch = modelSearch.trim().toLowerCase();
   const filteredModelOptions = normalizedModelSearch
@@ -52,6 +70,21 @@ export default function AdminSettingsPage() {
 
   useEffect(() => {
     void refresh();
+  }, []);
+
+  useEffect(() => {
+    // Provider choices come from the backend catalog so a newly supported
+    // provider needs no frontend edit.
+    async function loadProviderCatalog() {
+      try {
+        const payload = await fetchLlmProviders();
+        const selectable = payload.providers.filter((item) => item.provider !== 'vllm');
+        if (selectable.length) setProviderCatalog(selectable);
+      } catch {
+        setProviderCatalog(FALLBACK_PROVIDER_CATALOG);
+      }
+    }
+    void loadProviderCatalog();
   }, []);
 
   useEffect(() => {
@@ -138,11 +171,11 @@ export default function AdminSettingsPage() {
                     setDraft({ provider: event.target.value, api_key: draft.api_key, model: '' });
                   }}
                 >
-                  <option value="solar">Upstage / Solar</option>
-                  <option value="openai">OpenAI / GPT</option>
-                  <option value="anthropic">Anthropic / Claude</option>
-                  <option value="gemini">Google / Gemini</option>
-                  <option value="together">Together AI</option>
+                  {providerCatalog.map((item) => (
+                    <option key={item.provider} value={item.provider}>
+                      {item.label}
+                    </option>
+                  ))}
                 </select>
               </label>
               <label>
@@ -168,17 +201,21 @@ export default function AdminSettingsPage() {
                   {modelOptions.length === 0 ? (
                     <p className="muted small">먼저 아래 "모델 목록 확인"을 눌러 사용 가능한 모델을 불러오세요.</p>
                   ) : (
-                    modelOptions.map((model) => (
-                      <button
-                        key={model}
-                        type="button"
-                        className={'model-option' + (draft.model === model ? ' selected' : '')}
-                        title={model}
-                        onClick={() => setDraft({ ...draft, model })}
-                      >
-                        {model}
-                      </button>
-                    ))
+                    modelOptions.map((model) => {
+                      const profile = modelProfiles.get(model);
+                      return (
+                        <button
+                          key={model}
+                          type="button"
+                          className={'model-option' + (draft.model === model ? ' selected' : '')}
+                          title={profile?.strength || model}
+                          onClick={() => setDraft({ ...draft, model })}
+                        >
+                          {model}
+                          {profile ? <TierBadge tier={profile.tier} label={profile.tier_label} /> : null}
+                        </button>
+                      );
+                    })
                   )}
                 </div>
                 <input
@@ -194,6 +231,12 @@ export default function AdminSettingsPage() {
                     {models.reason ? ` · ${models.reason}` : ''}
                   </p>
                 ) : null}
+                <ModelCapabilityNotice
+                  profile={modelProfiles.get(draft.model)}
+                  suggestion={
+                    modelProfiles.get(draft.model)?.supports_tools ? undefined : TOOL_FALLBACK_SUGGESTION
+                  }
+                />
               </div>
               <div className="admin-action-row">
                 <button className="secondary-button" type="button" onClick={() => void previewModels()}>

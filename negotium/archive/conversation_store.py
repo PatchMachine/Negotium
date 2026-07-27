@@ -102,34 +102,57 @@ class ConversationStore:
         model: str,
         route: str,
         source_refs: list[str] | None = None,
-    ) -> None:
-        self.append(
-            ConversationRecord.create(
-                user_id=user_id,
-                role="user",
-                content=user_message,
-                provider=provider,
-                model=model,
-                route=route,
-                derived_from=source_refs,
-            )
+        user_metadata: dict[str, object] | None = None,
+        assistant_metadata: dict[str, object] | None = None,
+    ) -> tuple[str, str]:
+        """Append the user turn and the assistant turn.
+
+        ``assistant_metadata`` carries the agent trace (tool calls, tool
+        results, reasoning) so an approval can be resumed by replaying the
+        trace instead of re-running inference, and so Solar reasoning survives
+        into the next turn — the model card warns against stripping it.
+
+        Returns the two record ids.
+        """
+
+        user_record = ConversationRecord.create(
+            user_id=user_id,
+            role="user",
+            content=user_message,
+            provider=provider,
+            model=model,
+            route=route,
+            derived_from=source_refs,
+            metadata=user_metadata,
         )
-        self.append(
-            ConversationRecord.create(
-                user_id=user_id,
-                role="assistant",
-                content=assistant_message,
-                provider=provider,
-                model=model,
-                route=route,
-                derived_from=source_refs,
-            )
+        self.append(user_record)
+        assistant_record = ConversationRecord.create(
+            user_id=user_id,
+            role="assistant",
+            content=assistant_message,
+            provider=provider,
+            model=model,
+            route=route,
+            derived_from=source_refs,
+            metadata=assistant_metadata,
         )
+        self.append(assistant_record)
+        return user_record.id, assistant_record.id
 
     def list_recent(
         self, *, user_id: str | None = None, limit: int = 100
     ) -> list[dict[str, object]]:
-        paths = [self._path_for(user_id)] if user_id else sorted(self._root.glob("*.jsonl"))
+        # Transcripts are sharded per day (``YYYY-MM-DD_<user>.jsonl``), so a
+        # single-file lookup would silently lose every conversation before
+        # today — chat history appeared to reset at UTC midnight. The date
+        # prefix makes the sorted glob chronological.
+        paths = (
+            # The date prefix is fixed-width, so anchoring on it stops
+            # `user` from also matching `admin_user`.
+            sorted(self._root.glob(f"????-??-??_{self._safe_user_id(user_id)}.jsonl"))
+            if user_id
+            else sorted(self._root.glob("*.jsonl"))
+        )
         records: list[ConversationRecord] = []
         for path in paths:
             if not path.exists():
@@ -145,8 +168,13 @@ class ConversationStore:
                     records.append(ConversationRecord.from_mapping(payload))
         return [record.to_dict() for record in records[-limit:]][::-1]
 
-    def _path_for(self, user_id: str | None) -> Path:
+    @staticmethod
+    def _safe_user_id(user_id: str | None) -> str:
         safe = "".join(
             ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in (user_id or "unknown")
         )
-        return self._root / f"{datetime.now(UTC).strftime('%Y-%m-%d')}_{safe or 'unknown'}.jsonl"
+        return safe or "unknown"
+
+    def _path_for(self, user_id: str | None) -> Path:
+        stamp = datetime.now(UTC).strftime("%Y-%m-%d")
+        return self._root / f"{stamp}_{self._safe_user_id(user_id)}.jsonl"

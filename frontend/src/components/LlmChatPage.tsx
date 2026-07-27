@@ -12,16 +12,27 @@ import {
   streamChatMessage,
   uploadDocument,
   type AgentPlan,
+  type ApprovalRequest,
   type ChatResponse,
   type ConversationRecord,
   type LlmProviderName,
   type LlmRuntime,
   type LlmRuntimeRoute,
   type SkillDescriptor,
+  type ToolApprovalDecision,
   type WorkScheduleItem,
 } from '../api';
+import { useChatSurfaces } from './chat/ChatSurfaceContext';
+import InlineSurface, { type SurfaceRequest } from './chat/InlineSurface';
 
 type AssistantMode = 'chat' | 'plan';
+
+type ToolActivity = {
+  callId: string;
+  tool: string;
+  status: 'running' | 'executed' | 'denied' | 'error' | 'rejected';
+  detail?: string;
+};
 
 type ChatMessage = {
   id: string;
@@ -31,6 +42,20 @@ type ChatMessage = {
   meta?: { provider: string; model: string; route: string };
   notes?: string[];
   skillId?: string;
+  /** Tool calls made while producing this answer, shown as live chips. */
+  tools?: ToolActivity[];
+  /** Screens the assistant pulled into the thread for this answer. */
+  surfaces?: SurfaceRequest[];
+  /** A write tool waiting on the user's confirmation. */
+  approval?: ApprovalRequest;
+};
+
+const TOOL_STATUS_LABELS: Record<ToolActivity['status'], string> = {
+  running: '실행 중',
+  executed: '완료',
+  denied: '권한 없음',
+  error: '실패',
+  rejected: '거부됨',
 };
 
 type Attachment = { id: string; filename: string };
@@ -131,7 +156,10 @@ export default function LlmChatPage() {
   const [activeThreadId, setActiveThreadId] = useState('new');
   const [historyTab, setHistoryTab] = useState<HistoryTab>('chat');
   const [historyQuery, setHistoryQuery] = useState('');
+  const [conversationId, setConversationId] = useState('');
   const threadRef = useRef<HTMLDivElement | null>(null);
+  // Screens loaded by a sidebar click land here rather than replacing the view.
+  const { surfaces: navSurfaces, closeSurface } = useChatSurfaces();
 
   useEffect(() => {
     void bootstrap();
@@ -458,6 +486,38 @@ export default function LlmChatPage() {
     }
   }
 
+  /**
+   * Answer a confirmation card by replaying the request with the decision
+   * attached. The server matches it by content hash, so approving one payload
+   * can never authorise a different one.
+   */
+  async function respondToApproval(entry: ChatMessage, decision: 'approve' | 'reject') {
+    const approval = entry.approval;
+    if (!approval || busy) return;
+    setMessages((current) =>
+      current.map((item) => (item.id === entry.id ? { ...item, approval: undefined } : item)),
+    );
+    if (decision === 'reject') {
+      setNotice(`'${approval.tool}' 실행을 거부했습니다.`);
+      return;
+    }
+    const originalIndex = messages.findIndex((item) => item.id === entry.id);
+    const request = [...messages.slice(0, originalIndex)].reverse().find((item) => item.role === 'user');
+    await sendTurn(request?.content || '계속 진행해줘', {
+      // The original question is already shown above; echoing it would
+      // duplicate the bubble and the persisted transcript entry.
+      echoUserMessage: false,
+      approvals: [
+        {
+          approval_id: approval.approval_id,
+          tool: approval.tool,
+          arguments: approval.arguments,
+          decision: 'approve',
+        },
+      ],
+    });
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const text = input.trim();
@@ -466,17 +526,36 @@ export default function LlmChatPage() {
       await handleAgentPlan(text);
       return;
     }
-    const attachmentIds = attachments.map((item) => item.id);
-    const userMessage: ChatMessage = { id: nextId(), role: 'user', content: text };
+    setInput('');
+    setShowSlash(false);
+    await sendTurn(text, { attachmentIds: attachments.map((item) => item.id) });
+    setAttachments([]);
+  }
+
+  /**
+   * Send one chat turn. `approvals` carries the user's answers to confirmation
+   * cards, which is how a turn paused on a write tool is resumed.
+   */
+  async function sendTurn(
+    text: string,
+    options: {
+      attachmentIds?: string[];
+      approvals?: ToolApprovalDecision[];
+      /** Resuming an approval: the user's turn is already in the thread. */
+      echoUserMessage?: boolean;
+    } = {},
+  ) {
+    const attachmentIds = options.attachmentIds ?? [];
+    const approvals = options.approvals ?? [];
+    const echoUserMessage = options.echoUserMessage ?? true;
     const assistantId = nextId();
     setMessages((current) => [
       ...current,
-      userMessage,
+      ...(echoUserMessage
+        ? [{ id: nextId(), role: 'user' as const, content: text }]
+        : []),
       { id: assistantId, role: 'assistant', content: '', streaming: true },
     ]);
-    setInput('');
-    setAttachments([]);
-    setShowSlash(false);
     setBusy(true);
     setNotice(null);
 
@@ -499,20 +578,73 @@ export default function LlmChatPage() {
                 item.id === assistantId ? { ...item, content: item.content + delta } : item,
               ),
             ),
-          onDone: (response: ChatResponse) =>
+          // Tool events arrive well before any answer text, so the user sees
+          // progress instead of an empty bubble during a long tool run.
+          onToolCall: (event) =>
+            setMessages((current) =>
+              current.map((item) =>
+                item.id === assistantId
+                  ? {
+                      ...item,
+                      tools: [
+                        ...(item.tools || []),
+                        { callId: event.call_id, tool: event.tool, status: 'running' },
+                      ],
+                    }
+                  : item,
+              ),
+            ),
+          onToolResult: (event) =>
+            setMessages((current) =>
+              current.map((item) =>
+                item.id === assistantId
+                  ? {
+                      ...item,
+                      tools: (item.tools || []).map((tool) =>
+                        tool.callId === event.call_id
+                          ? { ...tool, status: event.status, detail: event.error }
+                          : tool,
+                      ),
+                    }
+                  : item,
+              ),
+            ),
+          onUiComponent: (component) =>
+            setMessages((current) =>
+              current.map((item) =>
+                item.id === assistantId
+                  ? {
+                      ...item,
+                      surfaces: [
+                        ...(item.surfaces || []),
+                        { ...component, origin: 'assistant' as const },
+                      ],
+                    }
+                  : item,
+              ),
+            ),
+          onApprovalRequest: (request) => patchAssistant({ approval: request }),
+          onDone: (response: ChatResponse) => {
+            if (response.conversation_id) setConversationId(response.conversation_id);
             patchAssistant({
-              content: response.answer || '(빈 응답)',
+              // A turn paused on an approval legitimately has no prose yet.
+              content:
+                response.answer ||
+                (response.pending_approval && 'approval_id' in response.pending_approval
+                  ? ''
+                  : '(빈 응답)'),
               streaming: false,
-              notes: response.attachment_notes,
+              notes: [...(response.attachment_notes || []), ...(response.notes || [])],
               skillId: response.skill_id,
               meta: { provider: response.provider, model: response.model, route: response.route },
-            }),
+            });
+          },
           onError: (detail) => {
             patchAssistant({ content: `오류: ${detail}`, streaming: false });
             setNotice(detail);
           },
         },
-        { attachmentIds },
+        { attachmentIds, conversationId, approvals },
       );
     } catch (err) {
       patchAssistant({ content: '오류로 응답을 받지 못했습니다.', streaming: false });
@@ -622,6 +754,17 @@ export default function LlmChatPage() {
         onDrop={handleDrop}
       >
         {dragActive ? <div className="assistant-drop-overlay">파일을 여기에 놓으세요</div> : null}
+        {navSurfaces.length > 0 ? (
+          <div className="chat-nav-surfaces">
+            {navSurfaces.map((surface, index) => (
+              <InlineSurface
+                key={`${surface.component}-${index}`}
+                surface={surface}
+                onClose={() => closeSurface(index)}
+              />
+            ))}
+          </div>
+        ) : null}
         <div className="assistant-thread" ref={threadRef}>
           {messages.length === 0 ? (
             <p className="muted">대화를 시작해 보세요. 예) “이번 주 문서 자동화 업무의 다음 액션 알려줘”</p>
@@ -643,6 +786,50 @@ export default function LlmChatPage() {
                   ))}
                 </ul>
               ) : null}
+              {entry.tools && entry.tools.length > 0 ? (
+                <ul className="chat-tool-list">
+                  {entry.tools.map((tool) => (
+                    <li key={tool.callId} className={`chat-tool chat-tool-${tool.status}`}>
+                      <code>{tool.tool}</code>
+                      <span>{TOOL_STATUS_LABELS[tool.status]}</span>
+                      {tool.detail ? <em className="muted small">{tool.detail}</em> : null}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              {entry.approval ? (
+                <div className="chat-approval">
+                  <p>
+                    <strong>{entry.approval.summary_ko}</strong>
+                  </p>
+                  <pre className="chat-approval-args">
+                    {JSON.stringify(entry.approval.arguments, null, 2)}
+                  </pre>
+                  <p className="muted small">
+                    위험도 {entry.approval.risk_level} · 권한 {entry.approval.required_permission}
+                  </p>
+                  <div className="chat-approval-actions">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void respondToApproval(entry, 'approve')}
+                    >
+                      승인하고 실행
+                    </button>
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void respondToApproval(entry, 'reject')}
+                    >
+                      거부
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              {entry.surfaces?.map((surface, index) => (
+                <InlineSurface key={`${entry.id}-${surface.component}-${index}`} surface={surface} />
+              ))}
               {entry.meta ? (
                 <small className="muted">
                   {entry.meta.route} / {entry.meta.provider} / {entry.meta.model || 'unknown'}

@@ -55,6 +55,14 @@ export type ChatResponse = {
   skill_result?: Record<string, unknown>;
   attachment_notes?: string[];
   used_history?: number;
+  conversation_id?: string;
+  turn_id?: string;
+  tier?: string;
+  reasoning?: string;
+  tool_invocations?: Record<string, unknown>[];
+  ui_components?: UiComponent[];
+  pending_approval?: ApprovalRequest | Record<string, never>;
+  notes?: string[];
 };
 
 export type LocalLlmStatus = {
@@ -440,6 +448,29 @@ export type ApiKeyInfo = {
   base_url_source?: string;
 };
 
+export type ModelTier = 'agent' | 'reasoning' | 'general' | 'unknown';
+
+/** Capability keys mirror `CAPABILITY_LABELS` in `adapters/llm/catalog.py`. */
+export type ModelCapabilities = Record<string, boolean>;
+
+export type ModelProfile = {
+  id: string;
+  tier: ModelTier;
+  tier_label: string;
+  label: string;
+  strength: string;
+  context_window: number;
+  max_output_tokens: number;
+  supports_tools: boolean;
+  supports_parallel_tool_calls: boolean;
+  hidden_reasoning: boolean;
+  reasoning_effort: string;
+  source: string;
+  capabilities: ModelCapabilities;
+  /** Korean labels for features this model cannot do. */
+  restricted: string[];
+};
+
 export type ProviderModelPayload = {
   provider: string;
   models: string[];
@@ -448,6 +479,19 @@ export type ProviderModelPayload = {
   reason: string;
   configured: boolean;
   requires_api_key: boolean;
+  /** Index-aligned with `models`. */
+  model_profiles?: ModelProfile[];
+  tiers?: Partial<Record<ModelTier, string[]>>;
+};
+
+export type LlmProviderInfo = {
+  provider: string;
+  label: string;
+  base_url: string;
+  base_url_source: string;
+  fallback_models: string[];
+  fallback_model_profiles?: ModelProfile[];
+  tiers?: Partial<Record<ModelTier, string[]>>;
 };
 
 export type HuggingFaceModelItem = {
@@ -603,13 +647,71 @@ export type ChatSendOptions = {
   task?: string;
   attachmentIds?: string[];
   historyLimit?: number;
+  /** Continues an existing conversation; the server mints one when omitted. */
+  conversationId?: string;
+  /** Answers to confirmation cards from a turn that paused on a write tool. */
+  approvals?: ToolApprovalDecision[];
+  /** Override the server's tier-based decision on whether to offer tools. */
+  toolsEnabled?: boolean;
+};
+
+export type ToolCallEvent = {
+  call_id: string;
+  tool: string;
+  arguments_preview?: string;
+  iteration?: number;
+};
+
+export type ToolResultEvent = {
+  call_id: string;
+  tool: string;
+  status: 'executed' | 'denied' | 'error' | 'rejected';
+  summary?: Record<string, unknown>;
+  risk_level?: string;
+  error?: string;
+};
+
+export type UiComponent = {
+  component: string;
+  title?: string;
+  mode?: 'inline' | 'panel' | 'route';
+  props?: Record<string, unknown>;
+  reason?: string;
+};
+
+export type ApprovalRequest = {
+  approval_id: string;
+  call_id: string;
+  tool: string;
+  arguments: Record<string, unknown>;
+  risk_level: string;
+  required_permission: string;
+  summary_ko: string;
+};
+
+export type ToolApprovalDecision = {
+  approval_id: string;
+  tool: string;
+  arguments: Record<string, unknown>;
+  decision: 'approve' | 'reject';
 };
 
 export type ChatStreamHandlers = {
-  onMeta?: (meta: { route: string; provider: string; model: string; skill_id: string }) => void;
+  onMeta?: (meta: {
+    route: string;
+    provider: string;
+    model: string;
+    skill_id: string;
+    tier?: string;
+  }) => void;
   onDelta?: (text: string) => void;
   onDone?: (response: ChatResponse) => void;
   onError?: (detail: string) => void;
+  onReasoning?: (text: string) => void;
+  onToolCall?: (event: ToolCallEvent) => void;
+  onToolResult?: (event: ToolResultEvent) => void;
+  onUiComponent?: (component: UiComponent) => void;
+  onApprovalRequest?: (request: ApprovalRequest) => void;
 };
 
 /**
@@ -690,4 +792,41 @@ export type SkillCreateInput = {
   output_folder?: string;
   tool?: string;
   inputs?: SkillInputSchema[];
+};
+
+export type SetupChatMessage = {
+  role: 'user' | 'assistant';
+  content: string;
+};
+
+export type SetupChatRequest = {
+  message: string;
+  history?: SetupChatMessage[];
+  company_profile?: CompanyProfile;
+  draft?: InitialOfficeSetupResult | null;
+  approvals?: ToolApprovalDecision[];
+  conversation_id?: string;
+};
+
+export type SetupChatResponse = {
+  answer: string;
+  provider: string;
+  model: string;
+  conversation_id: string;
+  tool_invocations: Record<string, unknown>[];
+  ui_components: UiComponent[];
+  pending_approval: ApprovalRequest | Record<string, never>;
+  /** Present once the assistant has proposed a draft to review. */
+  result: InitialOfficeSetupResult | null;
+  notes: string[];
+  ai_job?: AiJobStatus;
+};
+
+/** Whether the configured model can drive the conversational wizard. */
+export type SetupChatCapability = {
+  chat_supported: boolean;
+  provider: string;
+  model: string;
+  tier: ModelTier;
+  reasons: string[];
 };

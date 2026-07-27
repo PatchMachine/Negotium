@@ -3,6 +3,9 @@ import type {
   AccessControlPayload,
   CompanyProfile,
   InitialOfficeSetupResult,
+  SetupChatCapability,
+  SetupChatRequest,
+  SetupChatResponse,
 } from './types';
 
 export function analyzeInitialOfficeSetup(payload: {
@@ -22,4 +25,19 @@ export function applyInitialOfficeSetup(payload: InitialOfficeSetupResult): Prom
     method: 'POST',
     body: JSON.stringify(payload),
   });
+}
+
+/**
+ * One turn of the Solar-driven setup conversation. Falls back to
+ * `analyzeInitialOfficeSetup` when the configured model cannot call tools.
+ */
+export function sendSetupChat(payload: SetupChatRequest): Promise<SetupChatResponse> {
+  return requestJson<SetupChatResponse>('/api/setup/office/chat', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fetchSetupChatCapability(): Promise<SetupChatCapability> {
+  return requestJson<SetupChatCapability>('/api/setup/office/chat/capability');
 }

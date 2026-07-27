@@ -131,6 +131,9 @@ PII_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("phone", re.compile(r"\b(?:\+?82[-.\s]?)?0?1[016789][-. ]?\d{3,4}[-. ]?\d{4}\b")),
     ("resident_registration_number", re.compile(r"\b\d{6}[- ]?[1-4]\d{6}\b")),
     ("business_registration_number", re.compile(r"\b\d{3}[- ]?\d{2}[- ]?\d{5}\b")),
+    # Candidate finder only — validated with Luhn before it counts as a card.
+    # A bare digit-run regex matched ~0.1% of UUIDs, silently mangling upload
+    # ids so the affected file became permanently unreadable by the AI tools.
     ("card_number", re.compile(r"\b(?:\d[ -]*?){13,19}\b")),
     ("ipv4_address", re.compile(r"\b(?:10|172\.(?:1[6-9]|2\d|3[0-1])|192\.168)(?:\.\d{1,3}){2}\b")),
 ]
@@ -240,29 +243,117 @@ def sanitize_llm_messages(
     task_type: str,
     policy: ContextFirewallPolicy | None = None,
 ) -> tuple[list[LlmMessage], ContextFirewallResult]:
-    payload = [{"role": message.role, "content": message.content} for message in messages]
-    result = sanitize_context(payload, destination=destination, task_type=task_type, policy=policy)
-    sanitized_payload = result.sanitized if isinstance(result.sanitized, list) else []
-    sanitized_messages = [
-        LlmMessage(str(item.get("role") or "user"), _coerce_message_content(item.get("content")))
-        for item in sanitized_payload
-        if isinstance(item, dict)
+    # Only ``content`` and ``reasoning`` carry model-authored text worth
+    # scanning. Tool-calling identity fields (tool_call_id, tool_calls, name)
+    # and the provider-native ``raw`` payload are carried across out of band:
+    # rebuilding messages from {role, content} alone silently strips them, and a
+    # ``tool`` message without its ``tool_call_id`` makes the provider reject the
+    # whole request on the next loop iteration.
+    payload = [
+        {"role": message.role, "content": message.content, "reasoning": message.reasoning}
+        for message in messages
     ]
+    result = sanitize_context(payload, destination=destination, task_type=task_type, policy=policy)
+    sanitized_payload = [item for item in (result.sanitized or []) if isinstance(item, dict)]
+    # Both sanitizers map lists 1:1, so index alignment holds. Guard anyway:
+    # a misaligned copy would attach one message's tool_call_id to another.
+    aligned = len(sanitized_payload) == len(messages)
+    sanitized_messages: list[LlmMessage] = []
+    for index, item in enumerate(sanitized_payload):
+        original = messages[index] if aligned else None
+        sanitized_messages.append(
+            LlmMessage(
+                str(item.get("role") or "user"),
+                _coerce_message_content(item.get("content")),
+                tool_calls=original.tool_calls if original else None,
+                tool_call_id=original.tool_call_id if original else "",
+                name=original.name if original else "",
+                reasoning=str(item.get("reasoning") or ""),
+                raw=_sanitized_raw(
+                    original,
+                    sanitized_content=_coerce_message_content(item.get("content")),
+                    sanitized_reasoning=str(item.get("reasoning") or ""),
+                    destination=destination,
+                    task_type=task_type,
+                )
+                if original
+                else None,
+            )
+        )
     if _is_frontier(destination) and result.decision in {"allow", "allow_redacted"}:
         sanitized_messages = [LlmMessage("system", CONTEXT_HEADER), *sanitized_messages]
     return sanitized_messages or messages, result
+
+
+def _sanitized_raw(
+    message: LlmMessage,
+    *,
+    sanitized_content: str | list[dict[str, Any]],
+    sanitized_reasoning: str,
+    destination: str,
+    task_type: str,
+) -> dict[str, Any] | None:
+    """Return the provider-native assistant payload with sanitized text.
+
+    ``raw`` is replayed verbatim to keep tool_call ids intact, so every piece of
+    model-authored text inside it must be replaced with its sanitized version —
+    otherwise the firewall's redaction is undone the moment the message is
+    replayed on the next loop iteration.
+    """
+
+    if not message.raw:
+        return None
+    raw = dict(message.raw)
+    for key in ("reasoning_content", "reasoning"):
+        if key in raw:
+            raw[key] = sanitized_reasoning
+    if isinstance(raw.get("content"), str) and raw["content"]:
+        raw["content"] = (
+            sanitized_content
+            if isinstance(sanitized_content, str)
+            else sanitize_text(str(raw["content"]), destination=destination, task_type=task_type)
+        )
+    # Tool-call arguments are model-authored too and can echo redacted input.
+    for call in raw.get("tool_calls") or []:
+        function = call.get("function") if isinstance(call, dict) else None
+        if isinstance(function, dict) and isinstance(function.get("arguments"), str):
+            function["arguments"] = sanitize_text(
+                function["arguments"], destination=destination, task_type=task_type
+            )
+    return raw
 
 
 def sanitize_llm_response(
     response: LlmResponse, *, destination: str, task_type: str
 ) -> LlmResponse:
     result = sanitize_context(response.text, destination=destination, task_type=task_type)
+    reasoning = (
+        sanitize_text(response.reasoning, destination=destination, task_type=task_type)
+        if response.reasoning
+        else ""
+    )
+    raw_message = response.raw_message
+    if raw_message:
+        raw_message = dict(raw_message)
+        for key in ("reasoning_content", "reasoning"):
+            if key in raw_message:
+                raw_message[key] = reasoning
+        # Replayed verbatim next turn, so its content must carry the same
+        # redaction as ``text``.
+        if isinstance(raw_message.get("content"), str) and raw_message["content"]:
+            raw_message["content"] = str(result.sanitized)
+    # tool_calls/stop_reason/raw_message must survive: dropping them turns a
+    # tool-calling turn into a silent no-op with an empty answer.
     return LlmResponse(
         text=str(result.sanitized),
         prompt_tokens=response.prompt_tokens,
         completion_tokens=response.completion_tokens,
         route=response.route,
         model=response.model,
+        tool_calls=response.tool_calls,
+        stop_reason=response.stop_reason,
+        reasoning=reasoning,
+        raw_message=raw_message,
     )
 
 
@@ -388,6 +479,40 @@ def _sanitize_value(value: Any) -> tuple[Any, list[FirewallFinding]]:
     return value, []
 
 
+def _luhn_valid(digits: str) -> bool:
+    """Standard card checksum. Random digit runs pass only ~10% of the time."""
+
+    total = 0
+    for index, char in enumerate(reversed(digits)):
+        value = int(char)
+        if index % 2:
+            value *= 2
+            if value > 9:
+                value -= 9
+        total += value
+    return total % 10 == 0
+
+
+def _redact_card_numbers(text: str) -> tuple[str, int]:
+    """Redact only digit runs that actually checksum as a card number.
+
+    The regex alone flagged hyphenated hex identifiers (UUIDs) as cards.
+    """
+
+    pattern = dict(PII_PATTERNS)["card_number"]
+    count = 0
+
+    def _replace(match: re.Match[str]) -> str:
+        nonlocal count
+        digits = re.sub(r"\D", "", match.group(0))
+        if len(digits) < 13 or not _luhn_valid(digits):
+            return match.group(0)
+        count += 1
+        return "[REDACTED_CARD_NUMBER]"
+
+    return pattern.sub(_replace, text), count
+
+
 def _sanitize_string(text: str) -> tuple[str, list[FirewallFinding]]:
     findings: list[FirewallFinding] = []
     sanitized = text
@@ -396,7 +521,10 @@ def _sanitize_string(text: str) -> tuple[str, list[FirewallFinding]]:
         if count:
             findings.append(FirewallFinding("secret_scanner", item_type, "S4", count))
     for item_type, pattern in PII_PATTERNS:
-        sanitized, count = pattern.subn(f"[REDACTED_{item_type.upper()}]", sanitized)
+        if item_type == "card_number":
+            sanitized, count = _redact_card_numbers(sanitized)
+        else:
+            sanitized, count = pattern.subn(f"[REDACTED_{item_type.upper()}]", sanitized)
         if count:
             findings.append(
                 FirewallFinding(

@@ -1,10 +1,12 @@
 import { getAuthHeaders } from '../auth';
 import { requestJson } from './http';
 import type {
+  ApprovalRequest,
   ChatResponse,
   ChatSendOptions,
   ChatStreamHandlers,
   HuggingFaceModelSearchResult,
+  LlmProviderInfo,
   LlmProviderName,
   LlmRuntime,
   LlmRuntimeRoute,
@@ -12,6 +14,9 @@ import type {
   ProviderModelPayload,
   TokenLimit,
   TokenLimitStatus,
+  ToolCallEvent,
+  ToolResultEvent,
+  UiComponent,
 } from './types';
 
 export function fetchLlmRuntime(): Promise<LlmRuntime> {
@@ -81,6 +86,9 @@ export async function streamChatMessage(
       task: options.task ?? 'chat',
       attachment_ids: options.attachmentIds ?? [],
       history_limit: options.historyLimit ?? 8,
+      conversation_id: options.conversationId ?? '',
+      approvals: options.approvals ?? [],
+      ...(options.toolsEnabled === undefined ? {} : { tools_enabled: options.toolsEnabled }),
     }),
   });
   if (!response.ok || !response.body) {
@@ -117,8 +125,20 @@ export async function streamChatMessage(
       else if (eventName === 'delta') handlers.onDelta?.((parsed as { text: string }).text);
       else if (eventName === 'done') handlers.onDone?.(parsed as ChatResponse);
       else if (eventName === 'error') handlers.onError?.((parsed as { detail: string }).detail);
+      // Agent-loop events. They arrive live, before any answer text exists,
+      // so the user sees what the assistant is doing during long tool runs.
+      else if (eventName === 'reasoning') handlers.onReasoning?.((parsed as { text: string }).text);
+      else if (eventName === 'tool_call') handlers.onToolCall?.(parsed as ToolCallEvent);
+      else if (eventName === 'tool_result') handlers.onToolResult?.(parsed as ToolResultEvent);
+      else if (eventName === 'ui_component') handlers.onUiComponent?.(parsed as UiComponent);
+      else if (eventName === 'approval_request')
+        handlers.onApprovalRequest?.(parsed as ApprovalRequest);
     }
   }
+}
+
+export function fetchLlmProviders(): Promise<{ providers: LlmProviderInfo[] }> {
+  return requestJson<{ providers: LlmProviderInfo[] }>('/api/llm/providers');
 }
 
 export function fetchProviderModels(provider: string): Promise<ProviderModelPayload> {
@@ -140,5 +160,29 @@ export function saveTokenLimits(payload: TokenLimit): Promise<TokenLimitStatus> 
   return requestJson<TokenLimitStatus>('/api/llm/token-limits', {
     method: 'PUT',
     body: JSON.stringify(payload),
+  });
+}
+
+export type TaskRouteRecommendation = {
+  provider: string;
+  route: LlmRuntimeRoute;
+  task_routes: Record<string, { route: LlmRuntimeRoute; provider: LlmProviderName; model: string }>;
+  /** Korean rationale shown to the user, including any capability warnings. */
+  notes: string[];
+};
+
+/**
+ * Ask the backend which model should serve each task, based on model tiers.
+ * Keeps the tier -> task policy in one place instead of duplicating it here.
+ */
+export function recommendTaskRoutes(payload: {
+  provider: string;
+  models?: string[];
+  api_key?: string;
+  route?: LlmRuntimeRoute;
+}): Promise<TaskRouteRecommendation> {
+  return requestJson<TaskRouteRecommendation>('/api/llm/runtime/recommend', {
+    method: 'POST',
+    body: JSON.stringify({ route: 'api', ...payload }),
   });
 }

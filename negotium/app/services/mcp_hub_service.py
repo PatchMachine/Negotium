@@ -6,6 +6,7 @@ import asyncio
 import concurrent.futures
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -17,6 +18,7 @@ from negotium.app.services.context_firewall_service import (
     sanitize_context,
 )
 from negotium.app.services.skill_registry import get_skill, get_skills
+from negotium.app.services.ui_surface_service import UI_SURFACES
 from negotium.archive.agent_execution import AgentPlan
 from negotium.archive.llm_runtime import LlmRuntimeConfig
 from negotium.prompts import render as render_prompt
@@ -28,6 +30,28 @@ READ_TOOLS = {
     "hf.list_recommended_models",
     "public_reference.search_cases",
     "public_reference.summarize_case",
+    "sheets.list_files",
+    "sheets.describe",
+    "sheets.read_range",
+    "sheets.aggregate",
+    "org.roster",
+    "org.find_people",
+    "ui.open_surface",
+    # Produces a draft for the admin to review; applying it is a separate
+    # explicit action (POST /setup/office/apply). Gating the *proposal* behind
+    # an approval added no safety and forced the user to re-approve every time
+    # the model repaired a validation error.
+    "setup.propose_result",
+}
+
+_SHEET_READ_POLICY = {
+    "permission": "work:read",
+    "scopes": ["uploads:read"],
+    "risk": "low",
+    # Raw cell values may contain 급여/주민등록 data. When the active route is a
+    # cloud provider and no local model is configured, the dispatcher returns
+    # headers + counts only. See ``_apply_sensitive_gate``.
+    "sensitive_route": "local_only",
 }
 
 TOOL_POLICIES: dict[str, dict[str, Any]] = {
@@ -53,6 +77,30 @@ TOOL_POLICIES: dict[str, dict[str, Any]] = {
     "public_reference.summarize_case": {
         "permission": "work:read",
         "scopes": ["public_reference:read"],
+        "risk": "low",
+    },
+    "sheets.list_files": {
+        "permission": "work:read",
+        "scopes": ["uploads:read"],
+        "risk": "low",
+    },
+    "sheets.describe": dict(_SHEET_READ_POLICY),
+    "sheets.read_range": dict(_SHEET_READ_POLICY),
+    "sheets.aggregate": {
+        "permission": "work:read",
+        "scopes": ["uploads:read"],
+        "risk": "low",
+    },
+    "org.roster": {"permission": "work:read", "scopes": ["org:read"], "risk": "low"},
+    "org.find_people": {"permission": "work:read", "scopes": ["org:read"], "risk": "low"},
+    # Renders a screen; changes nothing. The per-surface permission is checked
+    # dynamically inside the dispatcher.
+    "ui.open_surface": {"permission": "work:read", "scopes": ["ui:read"], "risk": "low"},
+    # Read-class: builds a draft, changes nothing. The real gate is the
+    # explicit apply step, which keeps its own permission check and audit.
+    "setup.propose_result": {
+        "permission": "admin:users",
+        "scopes": ["setup:read"],
         "risk": "low",
     },
 }
@@ -150,6 +198,85 @@ def list_tool_descriptors() -> list[dict[str, Any]]:
             {"query": "string"},
             "work:read",
             "public_reference",
+        ),
+        _tool(
+            "sheets.list_files",
+            "업로드된 엑셀/CSV 파일 목록을 조회합니다. upload_id 를 얻는 첫 단계입니다.",
+            {"query": "string", "limit": "number"},
+            "work:read",
+            "sheets",
+        ),
+        _tool(
+            "sheets.describe",
+            "업로드된 표 파일의 모든 시트 이름·행수·헤더·샘플 5행을 조회합니다. "
+            "본문을 읽기 전에 먼저 호출해 구조를 파악하세요.",
+            {"upload_id": "string"},
+            "work:read",
+            "sheets",
+        ),
+        _tool(
+            "sheets.read_range",
+            "표 파일의 특정 시트에서 행 범위를 읽습니다. start_row 는 헤더를 제외한 1부터 시작합니다.",
+            {
+                "upload_id": "string",
+                "sheet": "string",
+                "start_row": "number",
+                "limit": "number",
+                "columns": "array",
+            },
+            "work:read",
+            "sheets",
+        ),
+        _tool(
+            "sheets.aggregate",
+            "표 파일을 group_by 기준으로 집계합니다(sum/count/avg/min/max). "
+            "행이 많을 때는 원본을 읽지 말고 이 도구로 계산하세요.",
+            {
+                "upload_id": "string",
+                "sheet": "string",
+                "group_by": "array",
+                "measures": "array",
+                "agg": "string",
+            },
+            "work:read",
+            "sheets",
+        ),
+        _tool(
+            "org.roster",
+            "회사 조직도, 직급, 재직 인원 명부를 조회합니다.",
+            {"format": "string", "department": "string", "include_inactive": "boolean"},
+            "work:read",
+            "org",
+        ),
+        _tool(
+            "org.find_people",
+            "이름·직함·부서·직급으로 구성원을 검색합니다.",
+            {"query": "string", "department": "string", "position": "string", "limit": "number"},
+            "work:read",
+            "org",
+        ),
+        _tool(
+            "ui.open_surface",
+            "필요한 기능 화면을 채팅 안에 직접 띄웁니다. 사용자에게 '어디로 가세요'라고 "
+            "안내하는 대신 이 도구로 해당 화면을 불러오세요.",
+            {
+                # Enumerating the valid ids here stops the model burning a
+                # round-trip on a guessed surface name.
+                "surface": {"type": "string", "enum": sorted(UI_SURFACES)},
+                "title": "string",
+                "props": "object",
+                "reason": "string",
+            },
+            "work:read",
+            "ui",
+        ),
+        _tool(
+            "setup.propose_result",
+            "수집한 정보로 초기 설정안을 제안합니다. 회사 프로필·조직·직급·사용자를 "
+            "충분히 파악한 뒤 한 번만 호출하세요. 검토 화면이 대화 안에 표시됩니다.",
+            {"result": "object"},
+            "admin:users",
+            "setup",
         ),
         _tool(
             "agent.generate_plan",
@@ -250,6 +377,12 @@ def guard_tool_arguments(arguments: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(findings))
 
 
+def _as_guardable(value: Any) -> dict[str, Any]:
+    """Coerce an arbitrary tool result into the dict shape the guard scans."""
+
+    return value if isinstance(value, dict) else {"result": value}
+
+
 def required_permission(tool_name: str) -> str:
     policy = tool_policy(tool_name)
     return str(
@@ -273,7 +406,48 @@ def tool_policy(tool_name: str) -> dict[str, Any]:
     }
 
 
-def call_tool(container: Any, tool_name: str, arguments: dict[str, Any]) -> McpCallResult:
+def is_read_tool(tool_name: str) -> bool:
+    """True when a tool only reads state and can auto-execute without approval.
+
+    Write tools stop the agent loop and surface a confirmation card instead.
+    """
+
+    if tool_name in READ_TOOLS:
+        return True
+    policy = tool_policy(tool_name)
+    return policy.get("permission") == "work:read" and policy.get("risk") == "low"
+
+
+async def call_tool_async(
+    container: Any,
+    tool_name: str,
+    arguments: dict[str, Any],
+    *,
+    actor: str = "",
+    route: str = "",
+) -> McpCallResult:
+    """Async wrapper for :func:`call_tool`.
+
+    ``call_tool`` is synchronous and its internal ``_run_async_safe`` hops onto a
+    thread pool whenever it detects a running event loop. Dispatching the whole
+    call with ``asyncio.to_thread`` means the inner helper finds no running loop
+    and takes the cheap ``asyncio.run`` path, so this removes a thread hop
+    rather than adding one.
+    """
+
+    return await asyncio.to_thread(
+        call_tool, container, tool_name, arguments, actor=actor, route=route
+    )
+
+
+def call_tool(
+    container: Any,
+    tool_name: str,
+    arguments: dict[str, Any],
+    *,
+    actor: str = "",
+    route: str = "",
+) -> McpCallResult:
     firewall_policy = load_context_firewall_policy(container.settings.workspace_dir)
     original_guard_findings = guard_tool_arguments(arguments)
     arg_firewall = sanitize_context(
@@ -290,7 +464,14 @@ def call_tool(container: Any, tool_name: str, arguments: dict[str, Any]) -> McpC
     )
     args = _redact_payload(arg_firewall.sanitized)
     guard_findings = list(dict.fromkeys([*original_guard_findings, *guard_tool_arguments(args)]))
-    raw_result = _dispatch_tool(container, tool_name, args)
+    raw_result = _dispatch_tool(container, tool_name, args, actor=actor, route=route)
+    # Tool *results* are untrusted input too. guard_tool_arguments only ever
+    # scanned arguments, so a spreadsheet cell or an external page containing
+    # "ignore all previous instructions" flowed straight into the model's
+    # context unflagged. Scan the result as well and surface the findings.
+    guard_findings = list(
+        dict.fromkeys([*guard_findings, *guard_tool_arguments(_as_guardable(raw_result))])
+    )
     result_firewall = sanitize_context(
         raw_result,
         destination="mcp_result",
@@ -450,7 +631,204 @@ def summarize_result(result: dict[str, Any]) -> dict[str, Any]:
     return {"keys": sorted(result.keys())}
 
 
-def _dispatch_tool(container: Any, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+REDACTED_VALUE = "[민감정보 가림]"
+
+_SENSITIVE_NOTE = (
+    "민감정보로 판단되어 원본 셀 값은 클라우드 모델에 전달하지 않았습니다. "
+    "헤더와 행 수, 집계만 사용할 수 있습니다. "
+    "원본이 필요하면 로컬 라우트를 사용하거나 관리자 화면에서 반출 정책을 조정하세요."
+)
+
+
+def _bound_for_cloud(route: str) -> bool:
+    """True when this tool result will be fed to a cloud model.
+
+    Keyed on the *actual* route of the call rather than on whether a local
+    model happens to be enabled somewhere in the config: an install can have
+    ``local_enabled=True`` (the default!) while every task is routed to Solar,
+    in which case the values still leave the building. Unknown/blank routes are
+    treated as cloud so the gate fails safe.
+    """
+
+    return route.strip().lower() not in {"local"}
+
+
+def _apply_sensitive_gate(container: Any, payload: dict[str, Any], *, route: str) -> dict[str, Any]:
+    """Strip raw cell values from a sensitive sheet bound for a cloud model.
+
+    Most Korean SMBs run Solar-only. Silently shipping 급여/주민등록 columns to
+    an external API is the failure mode that would kill this product, so the
+    default is to withhold the values and say so.
+    """
+
+    del container  # policy is route-based; kept for call-site symmetry
+    if not payload.get("sensitive_hint") or not _bound_for_cloud(route):
+        return payload
+    guarded = dict(payload)
+    # ``rows`` is a list on a SheetPage but an int row-count on a SheetSummary,
+    # so it cannot be len()'d blindly.
+    raw_rows = guarded.get("rows")
+    redacted_rows = len(raw_rows) if isinstance(raw_rows, list) else _as_row_count(raw_rows)
+    if isinstance(raw_rows, list):
+        guarded.pop("rows", None)
+    guarded.pop("sample", None)
+    guarded["redacted"] = True
+    guarded["redacted_row_count"] = redacted_rows
+    guarded["notes"] = [*guarded.get("notes", []), _SENSITIVE_NOTE]
+    return guarded
+
+
+def _as_row_count(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _mask_sensitive_groups(payload: dict[str, Any], *, route: str) -> dict[str, Any]:
+    """Mask group-key values that are themselves sensitive columns.
+
+    Aggregates are derived numbers, but ``group_by`` keys are copied verbatim
+    from the sheet — ``group_by=["이름","주민등록번호"]`` would otherwise return
+    up to MAX_GROUPS rows of raw PII straight past the read_range gate.
+    """
+
+    from negotium.app.initial_setup import _has_sensitive_hint
+
+    if not _bound_for_cloud(route):
+        return payload
+    group_by = [str(column) for column in payload.get("group_by") or []]
+    sensitive = [column for column in group_by if _has_sensitive_hint(column, column)]
+    if not sensitive:
+        return payload
+    guarded = dict(payload)
+    guarded["groups"] = [
+        {key: (REDACTED_VALUE if key in sensitive else value) for key, value in dict(group).items()}
+        for group in payload.get("groups") or []
+    ]
+    guarded["redacted_columns"] = sensitive
+    guarded["notes"] = [
+        *guarded.get("notes", []),
+        f"민감 컬럼({', '.join(sensitive)})의 값은 클라우드 모델에 전달하지 않았습니다.",
+    ]
+    return guarded
+
+
+def _upload_path(container: Any, arguments: dict[str, Any]) -> Any:
+    upload_id = str(arguments.get("upload_id") or "").strip()
+    if not upload_id:
+        raise ValueError("upload_id 는 필수입니다. 먼저 sheets.list_files 로 확인하세요.")
+    return container.uploads.resolve_path(upload_id)
+
+
+def _dispatch_sheets(
+    container: Any, tool_name: str, arguments: dict[str, Any], *, route: str = ""
+) -> dict[str, Any]:
+    from negotium.app.services import spreadsheet_service
+
+    if tool_name == "sheets.list_files":
+        query = str(arguments.get("query") or "").strip().lower()
+        limit = max(1, min(int(arguments.get("limit") or 20), 100))
+        files = [
+            record
+            for record in container.uploads.list()
+            if Path(str(record.get("filename") or "")).suffix.lower()
+            in spreadsheet_service.SPREADSHEET_SUFFIXES
+            and (not query or query in str(record.get("filename") or "").lower())
+        ]
+        return {"files": files[:limit], "total": len(files)}
+
+    path = _upload_path(container, arguments)
+
+    if tool_name == "sheets.describe":
+        sheets = [sheet.to_dict() for sheet in spreadsheet_service.describe_workbook(path)]
+        return {
+            "filename": path.name,
+            "sheets": [_apply_sensitive_gate(container, sheet, route=route) for sheet in sheets],
+        }
+
+    if tool_name == "sheets.read_range":
+        columns = arguments.get("columns")
+        page = spreadsheet_service.read_sheet(
+            path,
+            sheet=str(arguments.get("sheet") or ""),
+            start_row=int(arguments.get("start_row") or 1),
+            limit=int(arguments.get("limit") or 100),
+            columns=[str(item) for item in columns] if isinstance(columns, list) else None,
+        )
+        return _apply_sensitive_gate(container, page.to_dict(), route=route)
+
+    if tool_name == "sheets.aggregate":
+        group_by = arguments.get("group_by")
+        measures = arguments.get("measures")
+        agg = str(arguments.get("agg") or "sum")
+        if agg not in {"sum", "count", "avg", "min", "max"}:
+            raise ValueError(f"지원하지 않는 집계 방식입니다: {agg}")
+        # Measures are derived numbers, but group_by keys are verbatim cell
+        # values, so those still need masking.
+        aggregated = spreadsheet_service.aggregate_sheet(
+            path,
+            sheet=str(arguments.get("sheet") or ""),
+            group_by=[str(item) for item in group_by] if isinstance(group_by, list) else [],
+            measures=[str(item) for item in measures] if isinstance(measures, list) else [],
+            agg=agg,  # type: ignore[arg-type]
+        )
+        return _mask_sensitive_groups(aggregated, route=route)
+
+    raise ValueError(f"unknown MCP tool: {tool_name}")
+
+
+def _dispatch_org(container: Any, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    from negotium.app.services import org_service
+
+    if tool_name == "org.roster":
+        if str(arguments.get("format") or "json") == "markdown":
+            return {"markdown": org_service.render_org_roster_markdown(container)}
+        return org_service.roster_json(
+            container,
+            department=str(arguments.get("department") or ""),
+            include_inactive=bool(arguments.get("include_inactive")),
+        )
+    if tool_name == "org.find_people":
+        return org_service.find_people(
+            container,
+            str(arguments.get("query") or ""),
+            department=str(arguments.get("department") or ""),
+            position=str(arguments.get("position") or ""),
+            limit=int(arguments.get("limit") or 20),
+        )
+    raise ValueError(f"unknown MCP tool: {tool_name}")
+
+
+def _dispatch_tool(
+    container: Any,
+    tool_name: str,
+    arguments: dict[str, Any],
+    *,
+    actor: str = "",
+    route: str = "",
+) -> dict[str, Any]:
+    if tool_name.startswith("sheets."):
+        return _dispatch_sheets(container, tool_name, arguments, route=route)
+    if tool_name.startswith("org."):
+        return _dispatch_org(container, tool_name, arguments)
+    if tool_name == "setup.propose_result":
+        from negotium.app.services.setup_chat_service import propose_setup_result
+
+        raw = arguments.get("result")
+        return propose_setup_result(container, raw if isinstance(raw, dict) else {})
+    if tool_name == "ui.open_surface":
+        from negotium.app.services.ui_surface_service import open_surface
+
+        props = arguments.get("props")
+        return open_surface(
+            container,
+            surface=str(arguments.get("surface") or ""),
+            title=str(arguments.get("title") or ""),
+            props=props if isinstance(props, dict) else {},
+            reason=str(arguments.get("reason") or ""),
+            actor=actor,
+        )
     if tool_name == "skills.list":
         return {"skills": [skill.to_descriptor() for skill in get_skills().values()]}
     if tool_name == "skills.run":
@@ -631,11 +1009,25 @@ def _public_reference_tool(
 
 
 def _tool(
-    name: str, description: str, properties: dict[str, str], permission: str, server: str
+    name: str,
+    description: str,
+    properties: dict[str, str | dict[str, Any]],
+    permission: str,
+    server: str,
 ) -> dict[str, Any]:
+    """Build a tool descriptor.
+
+    A property value is normally just a JSON-Schema type name; pass a dict to
+    supply a richer schema (an ``enum``, for instance, which saves the model a
+    wasted round-trip guessing at valid values).
+    """
+
     schema = {
         "type": "object",
-        "properties": {key: {"type": value} for key, value in properties.items()},
+        "properties": {
+            key: (value if isinstance(value, dict) else {"type": value})
+            for key, value in properties.items()
+        },
     }
     policy = tool_policy(name)
     return {

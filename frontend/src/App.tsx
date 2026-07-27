@@ -10,6 +10,8 @@ import {
   type OperationsMemory,
 } from './api';
 import AppShell from './components/AppShell';
+import { ChatSurfaceProvider, useChatSurfaces } from './components/chat/ChatSurfaceContext';
+import { surfaceComponents } from './components/chat/surfaceRegistry';
 import { hasIncompleteInitialSetupDraft } from './components/setup/setupDraft';
 
 // Every page is code-split: only the shell ships in the initial bundle and the
@@ -123,6 +125,24 @@ const simplePages: Partial<Record<Page, ComponentType>> = {
   personnel: PersonnelManagementPage,
 };
 
+/**
+ * Chat-first shell: the assistant is the home screen, and clicking a nav item
+ * loads that feature *into* the conversation instead of navigating away from
+ * it. Screens with no inline surface (dense admin tables) still route normally.
+ *
+ * Stored as a preference so the whole shell change can be reverted without a
+ * redeploy.
+ */
+const CHAT_FIRST_KEY = 'negotium-chat-first';
+
+function chatFirstEnabled(): boolean {
+  try {
+    return window.localStorage.getItem(CHAT_FIRST_KEY) !== 'off';
+  } catch {
+    return true;
+  }
+}
+
 function canAccess(user: AuthUser, item: NavItem): boolean {
   if (!item.requiredPermission) return true;
   const permissions = user.permissions || [];
@@ -132,11 +152,20 @@ function canAccess(user: AuthUser, item: NavItem): boolean {
 const pageFallback = <section className="panel">로딩 중...</section>;
 
 export default function App() {
+  return (
+    <ChatSurfaceProvider>
+      <AppContent />
+    </ChatSurfaceProvider>
+  );
+}
+
+function AppContent() {
   const [memory, setMemory] = useState<OperationsMemory>(emptyMemory);
   const [status, setStatus] = useState<ApiStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [page, setPage] = useState<Page>('home');
+  const [page, setPage] = useState<Page>(chatFirstEnabled() ? 'assistant' : 'home');
+  const { pushSurface, clearSurfaces } = useChatSurfaces();
   const [pageHistory, setPageHistory] = useState<Page[]>([]);
   const [setupRequired, setSetupRequired] = useState(false);
   const [resumeInitialSetup, setResumeInitialSetup] = useState(false);
@@ -226,7 +255,20 @@ export default function App() {
   const activePage: Page = activePageAllowed ? page : 'profile';
 
   function navigate(nextPage: Page) {
+    // Chat-first: a nav click for a screen that can render inline loads it into
+    // the conversation rather than replacing the view, so the user never loses
+    // the thread they were in.
+    if (chatFirstEnabled() && nextPage !== 'assistant' && surfaceComponents[nextPage]) {
+      const label = navItems.find((item) => item.id === nextPage)?.label || nextPage;
+      pushSurface({ component: nextPage, title: label, mode: 'inline', origin: 'nav' });
+      if (activePage !== 'assistant') {
+        setPageHistory((current) => [...current, activePage]);
+        setPage('assistant');
+      }
+      return;
+    }
     if (nextPage === activePage) return;
+    if (nextPage === 'assistant') clearSurfaces();
     setPageHistory((current) => [...current, activePage]);
     setPage(nextPage);
   }

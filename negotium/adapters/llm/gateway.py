@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from negotium.archive.llm_runtime import LlmProviderName
 from negotium.domain.entities import LlmRoute
 from negotium.domain.ports import (
+    LlmCallOptions,
     LlmMessage,
     LlmProvider,
     LlmResponse,
@@ -46,8 +47,11 @@ class LlmGateway(LlmProvider):
         route: LlmRoute = "cloud",
         temperature: float = 0.0,
         max_tokens: int | None = None,
+        options: LlmCallOptions | None = None,
     ) -> LlmResponse:
         effective: LlmRoute = route if route else self.default_route
+        # Tool results re-enter here as ordinary messages on the next loop
+        # iteration, so the secret scan covers spreadsheet/tool content too.
         if self._needs_local(messages) and effective == "cloud":
             self._log.warning("llm.gateway.force_local", reason="secret_pattern")
             effective = "local"
@@ -57,6 +61,7 @@ class LlmGateway(LlmProvider):
             route=effective,
             temperature=temperature,
             max_tokens=max_tokens,
+            options=options,
         )
 
     async def complete_with_provider(
@@ -67,6 +72,7 @@ class LlmGateway(LlmProvider):
         route: LlmRoute,
         temperature: float = 0.0,
         max_tokens: int | None = None,
+        options: LlmCallOptions | None = None,
     ) -> LlmResponse:
         provider = self._resolve_named_provider(provider_name=provider_name, route=route)
         return await provider.complete(
@@ -74,6 +80,7 @@ class LlmGateway(LlmProvider):
             route=route,
             temperature=temperature,
             max_tokens=max_tokens,
+            options=options,
         )
 
     def _resolve_provider(self, route: LlmRoute) -> LlmProvider:

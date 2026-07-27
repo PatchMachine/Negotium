@@ -30,6 +30,7 @@ from negotium.app.services.skill_registry import (
     register_skill,
 )
 from negotium.app.services.skill_runtime import SkillError, run_skill
+from negotium.app.services.ui_surface_service import surface_payload
 from negotium.archive.agent_execution import AgentPlan
 
 
@@ -269,5 +270,18 @@ def create_agent_router(container: Container) -> APIRouter:
             details={"status": result.status},
         )
         return {"ok": result.status == "succeeded", "result": result.to_dict()}
+
+    @router.get("/ui/surfaces")
+    async def list_ui_surfaces(
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
+    ) -> dict[str, object]:
+        """Screens the caller may open, for the chat's inline surface registry.
+
+        Served from the same registry the ``ui.open_surface`` tool uses so the
+        frontend never hardcodes the list a second time.
+        """
+
+        actor = _require(container, x_ng_user, "llm:chat")
+        return {"surfaces": surface_payload(container, actor)}
 
     return router

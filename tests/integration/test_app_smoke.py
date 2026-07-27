@@ -134,6 +134,10 @@ def test_llm_chat_uses_operations_memory_context(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert "청우식품" in response.json()["answer"]
     assert any("청우식품" in message.content for call in fake.calls for message in call)
+    # Regression guard: a plain chat turn must stay a single completion. If the
+    # agent tool loop ever engages by default it would consume extra scripted
+    # responses and silently shift every other test's expectations.
+    assert len(fake.calls) == 1
 
 
 def test_chat_replays_history_and_supports_slash_and_stream(tmp_path: Path) -> None:
@@ -803,8 +807,13 @@ def test_secure_admin_and_upload_endpoints(tmp_path: Path) -> None:
             files={"file": ("hello.txt", b"hello", "text/plain")},
             data={"description": "demo", "tags": "office", "work_title": "test"},
         )
-        uploads = client.get("/api/uploads")
+        uploads = client.get("/api/uploads", headers=headers)
+        # Listing uploads leaks filenames, paths and descriptions, so it must
+        # require work:read rather than being open to anonymous callers.
+        uploads_anonymous = client.get("/api/uploads")
         audit = client.get("/api/admin/audit-log", headers=headers)
+
+    assert uploads_anonymous.status_code == 401
 
     assert denied.status_code == 401
     assert saved_key.status_code == 200

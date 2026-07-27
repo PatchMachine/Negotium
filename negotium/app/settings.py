@@ -19,8 +19,13 @@ class LlmSettings(BaseSettings):
     provider: Literal[
         "solar", "openai", "vllm", "ollama", "anthropic", "gemini", "together", "fake"
     ] = Field("solar", validation_alias=AliasChoices("NG_LLM_PROVIDER", "NG_PROVIDER"))
+    # Master switch for the agent tool-calling loop. Off means every route
+    # behaves exactly as it did before tools existed — one completion per turn.
+    agent_tools_enabled: bool = Field(
+        False, validation_alias=AliasChoices("NG_LLM_AGENT_TOOLS", "NG_AGENT_TOOLS")
+    )
     solar_api_key: str = ""
-    solar_model: str = "solar-pro2"
+    solar_model: str = "solar-pro3"
     solar_base_url: str = "https://api.upstage.ai/v1"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
@@ -50,7 +55,17 @@ class LlmSettings(BaseSettings):
         "", validation_alias=AliasChoices("NG_LLM_GATEWAY_URL", "NG_GATEWAY_URL")
     )
 
-    model_config = SettingsConfigDict(env_prefix="NG_", populate_by_name=True)
+    # env_file is required here as well as on Settings: a nested BaseSettings
+    # does not inherit its parent's env_file, so without this every documented
+    # NG_SOLAR_*/NG_OPENAI_* entry in .env was silently ignored and only real
+    # environment variables took effect.
+    model_config = SettingsConfigDict(
+        env_prefix="NG_",
+        populate_by_name=True,
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
 class Settings(BaseSettings):

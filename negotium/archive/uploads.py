@@ -12,6 +12,8 @@ from uuid import uuid4
 
 import portalocker
 
+from negotium.archive._paths import resolve_within
+
 
 @dataclass(frozen=True)
 class UploadRecord:
@@ -74,6 +76,37 @@ class UploadStore:
         records.insert(0, record)
         self._write_index(records)
         return record
+
+    def get(self, upload_id: str) -> UploadRecord | None:
+        return next(
+            (record for record in self._read_index() if record.id == upload_id),
+            None,
+        )
+
+    def resolve_path(self, upload_id: str) -> Path:
+        """Absolute path of a stored upload.
+
+        The stored ``path`` is written through ``_safe_filename``, but the
+        index is a plain JSON file on disk that can be hand-edited or migrated,
+        so it is treated as untrusted input and re-checked against the archive
+        root.
+        """
+
+        record = self.get(upload_id)
+        if record is None:
+            raise FileNotFoundError(f"업로드를 찾을 수 없습니다: {upload_id}")
+        path = resolve_within(self._archive_dir, record.path)
+        if not path.exists() or not path.is_file():
+            raise FileNotFoundError(f"업로드 파일이 존재하지 않습니다: {record.path}")
+        return path
+
+    def read_bytes(self, upload_id: str, *, max_bytes: int = 0) -> bytes:
+        path = self.resolve_path(upload_id)
+        if max_bytes and path.stat().st_size > max_bytes:
+            raise ValueError(
+                f"파일이 너무 큽니다({path.stat().st_size} bytes). 최대 {max_bytes} bytes."
+            )
+        return path.read_bytes()
 
     def delete(self, upload_id: str) -> bool:
         records = self._read_index()

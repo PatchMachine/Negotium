@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
+from uuid import uuid4
 
 import httpx
 from fastapi import HTTPException, status
@@ -20,9 +21,14 @@ from fastapi import HTTPException, status
 from negotium.adapters.llm.anthropic_adapter import AnthropicProvider
 from negotium.adapters.llm.catalog import (
     default_base_url,
+    model_hidden_reasoning,
     model_supports_audio,
+    model_supports_parallel_tool_calls,
+    model_supports_tools,
     model_supports_vision,
+    model_tier,
     provider_payload,
+    solar_reasoning_effort,
 )
 from negotium.adapters.llm.gateway import LlmGateway
 from negotium.adapters.llm.gemini_adapter import GeminiProvider
@@ -45,11 +51,19 @@ from negotium.app.schemas.core import (
     ReadableContextBundlePayload,
     ReadableContextPreviewRequest,
     ReadableContextSourcePayload,
+    SetupChatRequest,
+    SetupChatResponse,
     TokenLimitPayload,
     TokenLimitStatusPayload,
     TokenUsageEntryPayload,
     TokenUsageSummaryPayload,
+    UiComponentPayload,
     VolatileMemoryPayload,
+)
+from negotium.app.services.agent_loop_service import (
+    AgentLoopResult,
+    EmitFn,
+    run_agent_loop,
 )
 from negotium.app.services.attachment_service import extract_attachment
 from negotium.app.services.context_firewall_service import (
@@ -62,15 +76,18 @@ from negotium.app.services.document_output import (
     resolve_output_format,
     write_generated_doc,
 )
+from negotium.app.services.org_service import render_org_roster_markdown
 from negotium.app.services.setup_catalog import (
     recommend_patchnote_setup,
     render_recommendation_markdown,
 )
+from negotium.app.services.setup_chat_service import SETUP_TOOL_NAMES
 from negotium.app.services.skill_registry import (
     get_skill,
     get_skills,
 )
 from negotium.app.services.skill_runtime import SkillError, run_skill
+from negotium.archive._paths import resolve_within
 from negotium.archive.access_control import ALL_PERMISSIONS
 from negotium.archive.ai_jobs import AiJobRecord
 from negotium.archive.llm_runtime import LlmProviderName, LlmRuntimeConfig, LlmTaskRoute
@@ -83,6 +100,7 @@ from negotium.archive.volatile_memory import VolatileMemory
 from negotium.archive.work_memory import WorkScheduleItem
 from negotium.domain.entities import LlmRoute
 from negotium.domain.ports import (
+    LlmCallOptions,
     LlmMessage,
     LlmResponse,
     audio_part,
@@ -102,15 +120,21 @@ _PRELOAD_TASKS: set[asyncio.Task[None]] = set()
 # front so a single call suffices.
 _OFFICE_MAX_TOKENS = 8000
 _OFFICE_REASONING_MAX_TOKENS = 16000
+# Per *call* budget inside the tool loop. It does not need to exceed a reasoning
+# call: the loop makes several calls and ``MAX_TURN_OUTPUT_TOKENS`` bounds the
+# turn as a whole. Going higher also trips ``TokenLimitConfig
+# .per_request_max_tokens`` (30k) and 429s every agent turn.
+_AGENT_LOOP_MAX_TOKENS = _OFFICE_REASONING_MAX_TOKENS
+# Solar reasoning traces can be enormous; cap what reaches the archive.
+_AGENT_TRACE_CHAR_CAP = 20000
+
 
 # Concern A (reasoning): models that reason before emitting content. Kept
 # separate from Concern B (general routing / empty-response retry) on purpose —
 # this only decides the first-attempt token budget, not which provider is used.
-_REASONING_MODEL_PREFIXES = ("o1", "o3", "o4", "o5", "gpt-5", "gpt-6")
-_REASONING_MODEL_KEYWORDS = ("reasoning", "solar-open")
-
-
-def _is_reasoning_model(model: str) -> bool:
+# The catalog owns the classification; passing ``provider`` lets it use the
+# curated per-model table instead of the name-pattern fallback.
+def _is_reasoning_model(model: str, *, provider: str = "") -> bool:
     """Return True when the model reasons (hidden tokens) before emitting content.
 
     Covers OpenAI ``o*``/``gpt-5*`` and Upstage Solar ``solar-open*`` reasoning
@@ -118,12 +142,7 @@ def _is_reasoning_model(model: str) -> bool:
     models) return False and keep the fast small first-attempt budget.
     """
 
-    name = (model or "").strip().lower()
-    if not name:
-        return False
-    if name.startswith(_REASONING_MODEL_PREFIXES):
-        return True
-    return any(keyword in name for keyword in _REASONING_MODEL_KEYWORDS)
+    return model_hidden_reasoning(provider, model)
 
 
 def _selected_upload_records(
@@ -133,6 +152,125 @@ def _selected_upload_records(
         return records[:5]
     wanted = {item.strip() for item in upload_ids if item.strip()}
     return [record for record in records if str(record.get("id") or "") in wanted]
+
+
+def _setup_chat_capability(container: Container) -> dict[str, object]:
+    """Whether the configured model can drive the conversational wizard."""
+
+    provider, route = _resolve_runtime_task(container, "agent_planning")
+    model = _resolve_task_model(container, "agent_planning", provider, route)
+    supported = _tools_enabled(container, provider=provider, model=model)
+    reasons: list[str] = []
+    if not container.settings.llm.agent_tools_enabled:
+        reasons.append("NG_LLM_AGENT_TOOLS 설정이 꺼져 있어 대화형 마법사를 쓸 수 없습니다.")
+    elif not supported:
+        reasons.append(
+            f"{model} 모델은 도구 호출을 지원하지 않아 대화형 마법사를 쓸 수 없습니다. "
+            "단계별 폼으로 진행합니다."
+        )
+    return {
+        "chat_supported": supported,
+        "provider": provider,
+        "model": model,
+        "tier": model_tier(provider, model),
+        "reasons": reasons,
+    }
+
+
+async def _run_setup_chat_turn(
+    container: Container, payload: SetupChatRequest, actor: str
+) -> SetupChatResponse:
+    """Run one turn of the setup conversation with a scoped tool set."""
+
+    provider, route = _resolve_runtime_task(container, "agent_planning")
+    model = _resolve_task_model(container, "agent_planning", provider, route)
+    if not _tools_enabled(container, provider=provider, model=model):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"{model} 모델은 도구 호출을 지원하지 않습니다. "
+                "단계별 설치 마법사(/setup/office/analyze)를 사용하세요."
+            ),
+        )
+
+    context_lines: list[str] = []
+    if payload.company_profile is not None:
+        context_lines.append(
+            "사용자가 입력한 회사 프로필: "
+            + json.dumps(payload.company_profile.model_dump(), ensure_ascii=False)
+        )
+    uploads = container.uploads.list()
+    if uploads:
+        context_lines.append(
+            "업로드된 파일: "
+            + ", ".join(f"{item['filename']}(id={item['id']})" for item in uploads[:10])
+        )
+    if payload.draft is not None:
+        context_lines.append("직전에 제안한 설정안이 있습니다. 사용자의 수정 요청을 반영하세요.")
+
+    messages = [
+        LlmMessage("system", render_prompt("office/setup_chat_system.md.j2").strip()),
+        *([LlmMessage("system", "\n".join(context_lines))] if context_lines else []),
+        *[
+            LlmMessage("assistant" if item.role == "assistant" else "user", item.content)
+            for item in payload.history[-8:]
+        ],
+        LlmMessage("user", payload.message),
+    ]
+
+    job = _start_ai_job(
+        container,
+        task="initial_office_setup.chat",
+        actor=actor,
+        input_summary=payload.message,
+    )
+    try:
+        loop_result = await run_agent_loop(
+            container,
+            messages,
+            complete=_complete_with_provider,
+            provider=provider,
+            route=route,
+            model=model,
+            actor=actor,
+            task="agent_planning",
+            temperature=0.2,
+            max_tokens=_AGENT_LOOP_MAX_TOKENS,
+            tool_names=SETUP_TOOL_NAMES,
+            approvals={item.approval_id: item.model_dump() for item in payload.approvals},
+            conversation_id=payload.conversation_id or "setup",
+            reasoning_effort=solar_reasoning_effort(provider, model, mode="agent"),
+        )
+        job = _finish_ai_job(container, job, status="succeeded")
+    except Exception as exc:
+        _finish_ai_job(container, job, status="failed", error=str(exc))
+        raise
+
+    # The proposed draft rides in the tool result, so the endpoint returns it
+    # typed rather than making the frontend dig through tool payloads.
+    proposed: InitialOfficeSetupResult | None = None
+    for invocation in loop_result.invocations:
+        if invocation.name == "setup.propose_result" and invocation.status == "executed":
+            raw = invocation.result.get("result")
+            if isinstance(raw, dict):
+                proposed = InitialOfficeSetupResult.model_validate(raw)
+
+    return SetupChatResponse(
+        answer=loop_result.text,
+        provider=provider,
+        model=loop_result.model or model,
+        conversation_id=payload.conversation_id or "setup",
+        tool_invocations=[item.to_dict() for item in loop_result.invocations],
+        ui_components=[
+            UiComponentPayload.model_validate(item) for item in loop_result.ui_components
+        ],
+        pending_approval=(
+            loop_result.pending_approval.to_dict() if loop_result.pending_approval else {}
+        ),
+        result=proposed,
+        notes=list(loop_result.notes),
+        ai_job=_ai_job_payload(job).model_dump(),
+    )
 
 
 def _initial_office_setup_prompt(
@@ -402,6 +540,7 @@ def _build_chat_messages(
     user_id: str = "default",
     history_limit: int = 8,
     media_parts: list[dict[str, Any]] | None = None,
+    tools_enabled: bool = False,
 ) -> tuple[list[LlmMessage], int]:
     """Build chat messages with persistent memory, recent history, and media.
 
@@ -425,7 +564,7 @@ def _build_chat_messages(
         f"status={entry.get('status', '')}"
         for entry in recent
     )
-    system = render_prompt("office/chat_system.md.j2").strip()
+    system = render_prompt("office/chat_system.md.j2", tools_enabled=tools_enabled).strip()
     context = render_prompt(
         "office/chat_context.md.j2",
         memory=memory,
@@ -611,8 +750,18 @@ async def _chat_run_slash(
     )
 
 
-async def _chat_complete(container: Container, payload: ChatRequest, actor: str) -> ChatResponse:
-    """Shared chat pipeline used by both the JSON and streaming endpoints."""
+async def _chat_complete(
+    container: Container,
+    payload: ChatRequest,
+    actor: str,
+    *,
+    emit: EmitFn | None = None,
+) -> ChatResponse:
+    """Shared chat pipeline used by both the JSON and streaming endpoints.
+
+    ``emit`` lets the streaming endpoint forward tool/UI events as they happen
+    instead of after the whole turn completes.
+    """
 
     runtime = container.llm_runtime.read()
     task_route = runtime.route_for(payload.task or "chat")
@@ -636,35 +785,74 @@ async def _chat_complete(container: Container, payload: ChatRequest, actor: str)
     user_message = payload.message
     if attachment_context:
         user_message = f"{payload.message}\n\n[첨부 자료]\n{attachment_context}"
+    use_tools = (
+        payload.tools_enabled
+        if payload.tools_enabled is not None
+        else _tools_enabled(container, provider=provider, model=model)
+    )
     messages, used_history = _build_chat_messages(
         container,
         user_message,
         user_id=actor,
         history_limit=payload.history_limit,
         media_parts=media_parts,
+        tools_enabled=use_tools,
     )
     job = _start_ai_job(
         container, task=payload.task or "chat", actor=actor, input_summary=payload.message
     )
+    conversation_id = payload.conversation_id or str(uuid4())
+    loop_result: AgentLoopResult | None = None
     try:
         # Reasoning models can consume the entire small budget internally and
         # return a successful completion with no visible assistant content.
         # Give them the same budget used by other office-generation tasks.
         chat_max_tokens = (
-            _OFFICE_REASONING_MAX_TOKENS if _is_reasoning_model(model) else 1024
+            _OFFICE_REASONING_MAX_TOKENS if _is_reasoning_model(model, provider=provider) else 1024
         )
-        response = await _complete_with_provider(
-            container,
-            messages,
-            provider=provider,
-            route=llm_route,
-            temperature=0.2,
-            max_tokens=chat_max_tokens,
-            task=payload.task or "chat",
-            actor=actor,
-            model=model,
-        )
-        if not response.text.strip():
+        if use_tools:
+            loop_result = await run_agent_loop(
+                container,
+                messages,
+                complete=_complete_with_provider,
+                provider=provider,
+                route=llm_route,
+                model=model,
+                actor=actor,
+                task=payload.task or "chat",
+                temperature=0.2,
+                max_tokens=max(chat_max_tokens, _AGENT_LOOP_MAX_TOKENS),
+                approvals={item.approval_id: item.model_dump() for item in payload.approvals},
+                conversation_id=conversation_id,
+                reasoning_effort=solar_reasoning_effort(provider, model, mode="agent"),
+                parallel_tool_calls=(
+                    True if model_supports_parallel_tool_calls(provider, model) else None
+                ),
+                emit=emit,
+            )
+            response = LlmResponse(
+                text=loop_result.text,
+                prompt_tokens=loop_result.prompt_tokens,
+                completion_tokens=loop_result.completion_tokens,
+                route=llm_route,
+                model=loop_result.model,
+            )
+        else:
+            response = await _complete_with_provider(
+                container,
+                messages,
+                provider=provider,
+                route=llm_route,
+                temperature=0.2,
+                max_tokens=chat_max_tokens,
+                task=payload.task or "chat",
+                actor=actor,
+                model=model,
+                options=_office_call_options(provider, model),
+            )
+        # A turn paused on an approval legitimately has no prose yet.
+        awaiting_approval = loop_result is not None and loop_result.pending_approval is not None
+        if not response.text.strip() and not awaiting_approval:
             raise RuntimeError(
                 f"{model} 모델이 빈 응답을 반환했습니다. 출력 토큰 한도 또는 모델 상태를 확인하세요."
             )
@@ -679,7 +867,7 @@ async def _chat_complete(container: Container, payload: ChatRequest, actor: str)
         tokens_out=response.completion_tokens,
         latency_ms=0,
     )
-    container.conversations.append_pair(
+    _, turn_id = container.conversations.append_pair(
         user_id=actor,
         user_message=payload.message,
         assistant_message=response.text,
@@ -687,6 +875,12 @@ async def _chat_complete(container: Container, payload: ChatRequest, actor: str)
         model=response.model,
         route=route,
         source_refs=[],
+        assistant_metadata=_chat_turn_metadata(
+            conversation_id=conversation_id,
+            provider=provider,
+            model=response.model,
+            loop_result=loop_result,
+        ),
     )
     _update_user_volatile_memory_after_chat(
         container, actor=actor, user_message=payload.message, answer=response.text
@@ -701,7 +895,86 @@ async def _chat_complete(container: Container, payload: ChatRequest, actor: str)
         ai_job=_ai_job_payload(job).model_dump(),
         attachment_notes=attachment_notes,
         used_history=used_history,
+        conversation_id=conversation_id,
+        turn_id=turn_id,
+        tier=model_tier(provider, model),
+        reasoning="",
+        tool_invocations=[
+            item.to_dict() for item in (loop_result.invocations if loop_result else [])
+        ],
+        ui_components=[
+            UiComponentPayload.model_validate(item)
+            for item in (loop_result.ui_components if loop_result else [])
+        ],
+        pending_approval=(
+            loop_result.pending_approval.to_dict()
+            if loop_result and loop_result.pending_approval
+            else {}
+        ),
+        notes=list(loop_result.notes) if loop_result else [],
     )
+
+
+def _chat_turn_metadata(
+    *,
+    conversation_id: str,
+    provider: str,
+    model: str,
+    loop_result: AgentLoopResult | None,
+) -> dict[str, object]:
+    """Assistant-turn metadata persisted alongside the transcript.
+
+    The agent trace lets an approval be resumed by replay instead of a second
+    inference pass, and preserves Solar reasoning for the following turn.
+    """
+
+    metadata: dict[str, object] = {
+        "conversation_id": conversation_id,
+        "tier": model_tier(provider, model),
+    }
+    if loop_result is None:
+        return metadata
+    metadata["stop_reason"] = loop_result.stop_reason
+    metadata["iterations"] = loop_result.iterations
+    metadata["tool_invocations"] = [item.to_dict() for item in loop_result.invocations]
+    metadata["ui_components"] = loop_result.ui_components
+    if loop_result.pending_approval is not None:
+        metadata["pending_approval"] = loop_result.pending_approval.to_dict()
+    trace = _serialize_agent_trace(loop_result.messages)
+    if trace:
+        metadata["agent_trace"] = trace
+    return metadata
+
+
+def _serialize_agent_trace(messages: list[LlmMessage]) -> list[dict[str, Any]]:
+    """Persist only the tool-bearing tail of a turn, capped in size.
+
+    Solar reasoning traces can be enormous, so they are truncated here rather
+    than at read time — the archive is the durable copy.
+    """
+
+    trace: list[dict[str, Any]] = []
+    budget = _AGENT_TRACE_CHAR_CAP
+    for message in messages:
+        if message.role not in {"assistant", "tool"}:
+            continue
+        if not message.tool_calls and message.role == "assistant" and not message.reasoning:
+            continue
+        content = message.content if isinstance(message.content, str) else ""
+        entry: dict[str, Any] = {"role": message.role, "content": content[:budget]}
+        if message.tool_call_id:
+            entry["tool_call_id"] = message.tool_call_id
+        if message.name:
+            entry["name"] = message.name
+        if message.tool_calls:
+            entry["tool_calls"] = [call.to_dict() for call in message.tool_calls]
+        if message.reasoning:
+            entry["reasoning"] = message.reasoning[:budget]
+        budget -= len(json.dumps(entry, ensure_ascii=False))
+        trace.append(entry)
+        if budget <= 0:
+            break
+    return trace
 
 
 def _sse_event(event: str, data: dict[str, Any]) -> str:
@@ -1659,6 +1932,38 @@ def _sync_embedded_model(container: Container, model: str) -> None:
         embedded.configure_model(effective)
 
 
+def _tools_enabled(container: Container, *, provider: str, model: str) -> bool:
+    """Whether this turn may offer tools to the model.
+
+    ``fake`` defaults to False so existing tests keep making exactly one LLM
+    call per route; a tool loop would consume extra scripted responses and
+    shift every downstream assertion. Tests opt in with
+    ``FakeLlmProvider(supports_tools=True)``.
+    """
+
+    if not container.settings.llm.agent_tools_enabled:
+        return False
+    if provider == "fake":
+        return bool(getattr(container.llm, "supports_tools", False))
+    return model_supports_tools(provider, model)
+
+
+def _office_call_options(provider: str, model: str) -> LlmCallOptions | None:
+    """Per-call knobs for a single-shot (non-agentic) office generation.
+
+    Measured on Upstage Solar: ``solar-open2`` defaults to reasoning ON, so a
+    plain 3-line summary burned the entire 2000-token budget on hidden
+    reasoning and returned **no content at all** (26s). Explicitly asking for
+    the model's "direct" reasoning level brings it back to ~78 output tokens in
+    1.7s. Office tasks are single-shot, so they always want direct answers.
+    """
+
+    effort = solar_reasoning_effort(provider, model, mode="direct")
+    if not effort:
+        return None
+    return LlmCallOptions(reasoning_effort=effort)
+
+
 async def _complete_office_task(
     container: Container,
     prompt: str,
@@ -1682,8 +1987,11 @@ async def _complete_office_task(
     # Concern A — reasoning models get the generous budget up front so a single
     # call suffices; non-reasoning models keep the low-latency small budget.
     first_max_tokens = (
-        _OFFICE_REASONING_MAX_TOKENS if _is_reasoning_model(model) else _OFFICE_MAX_TOKENS
+        _OFFICE_REASONING_MAX_TOKENS
+        if _is_reasoning_model(model, provider=provider)
+        else _OFFICE_MAX_TOKENS
     )
+    options = _office_call_options(provider, model)
     response = await _complete_with_provider(
         container,
         messages,
@@ -1693,6 +2001,7 @@ async def _complete_office_task(
         max_tokens=first_max_tokens,
         task=task,
         model=model,
+        options=options,
     )
     text = response.text.strip()
     if text:
@@ -1709,6 +2018,7 @@ async def _complete_office_task(
             max_tokens=max(_OFFICE_REASONING_MAX_TOKENS, first_max_tokens),
             task=task,
             model=model,
+            options=options,
         )
         retry_text = retry.text.strip()
         if retry_text:
@@ -1783,6 +2093,7 @@ async def _complete_with_provider(
     task: str = "chat",
     actor: str = "",
     model: str = "",
+    options: LlmCallOptions | None = None,
 ) -> LlmResponse:
     effective_model = _effective_provider_model(container, provider, model=model, route=route)
     if route == "local" and provider == "vllm":
@@ -1854,7 +2165,13 @@ async def _complete_with_provider(
                 api_key=api_key,
                 model=effective_model or saved_model or container.settings.llm.openai_model,
                 base_url=default_base_url("openai"),
-            ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
+            ).complete(
+                messages,
+                route=route,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                options=options,
+            )
             sanitized = sanitize_llm_response(
                 response, destination=destination, task_type=str(provider)
             )
@@ -1872,7 +2189,13 @@ async def _complete_with_provider(
                 api_key=api_key,
                 model=effective_model or saved_model or container.settings.llm.anthropic_model,
                 base_url=default_base_url("anthropic"),
-            ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
+            ).complete(
+                messages,
+                route=route,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                options=options,
+            )
             sanitized = sanitize_llm_response(
                 response, destination=destination, task_type=str(provider)
             )
@@ -1890,7 +2213,13 @@ async def _complete_with_provider(
                 api_key=api_key,
                 model=effective_model or saved_model or container.settings.llm.gemini_model,
                 base_url=default_base_url("gemini"),
-            ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
+            ).complete(
+                messages,
+                route=route,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                options=options,
+            )
             sanitized = sanitize_llm_response(
                 response, destination=destination, task_type=str(provider)
             )
@@ -1908,7 +2237,13 @@ async def _complete_with_provider(
                 api_key=api_key,
                 model=effective_model or saved_model or container.settings.llm.solar_model,
                 base_url=saved_base_url or container.settings.llm.solar_base_url,
-            ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
+            ).complete(
+                messages,
+                route=route,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                options=options,
+            )
             sanitized = sanitize_llm_response(
                 response, destination=destination, task_type=str(provider)
             )
@@ -1926,7 +2261,13 @@ async def _complete_with_provider(
                 api_key=api_key,
                 model=effective_model or saved_model or container.settings.llm.together_model,
                 base_url=saved_base_url or container.settings.llm.together_base_url,
-            ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
+            ).complete(
+                messages,
+                route=route,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                options=options,
+            )
             sanitized = sanitize_llm_response(
                 response, destination=destination, task_type=str(provider)
             )
@@ -1944,7 +2285,13 @@ async def _complete_with_provider(
                 base_url=saved.base_url or container.settings.llm.vllm_base_url,
                 model=effective_model or saved.model or container.settings.llm.vllm_model,
                 api_key=saved.api_key or "EMPTY",
-            ).complete(messages, route=route, temperature=temperature, max_tokens=max_tokens)
+            ).complete(
+                messages,
+                route=route,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                options=options,
+            )
             sanitized = sanitize_llm_response(
                 response, destination="local_llm", task_type=str(provider)
             )
@@ -1964,6 +2311,7 @@ async def _complete_with_provider(
                 route=route,
                 temperature=temperature,
                 max_tokens=max_tokens,
+                options=options,
             )
             sanitized = sanitize_llm_response(
                 response, destination=destination, task_type=str(provider)
@@ -1982,6 +2330,7 @@ async def _complete_with_provider(
             route=route,
             temperature=temperature,
             max_tokens=max_tokens,
+            options=options,
         )
         sanitized = sanitize_llm_response(
             response, destination=destination, task_type=str(provider)
@@ -2078,9 +2427,7 @@ def _fallback_office_task_markdown(prompt: str, *, task: str, diagnostic: str = 
     title = (
         _extract_prompt_field(prompt, ("제목", "목표", "Objective", "Title")) or "자동 생성 초안"
     )
-    source = (
-        _extract_prompt_field(prompt, ("원문/메모", "원문", "메모", "Source", "source_text"))
-    )
+    source = _extract_prompt_field(prompt, ("원문/메모", "원문", "메모", "Source", "source_text"))
     source_line = f"- 확인된 입력: {source[:240]}" if source else "- 정보 부족"
     return "\n".join(
         [
@@ -2165,84 +2512,10 @@ def _as_int(value: Any, default: int = 0) -> int:
         return default
 
 
-def _org_roster_markdown(container: Container) -> str:
-    acl = container.access_control.read()
-    users = acl.get("users", [])
-    departments = acl.get("departments", [])
-    roles_by_id = {
-        str(role.get("id")): str(role.get("name") or role.get("id"))
-        for role in acl.get("roles", [])
-    }
-    positions = acl.get("positions", [])
-    positions_by_id = {
-        str(position.get("id")): str(position.get("name") or position.get("id"))
-        for position in positions
-    }
-    lines: list[str] = []
-    if departments:
-        children_by_parent: dict[str, list[dict[str, Any]]] = {}
-        dept_ids = {str(dept.get("id")) for dept in departments}
-        for dept in departments:
-            parent_id = str(dept.get("parent_id") or "")
-            # Treat references to missing parents as roots.
-            key = parent_id if parent_id in dept_ids else ""
-            children_by_parent.setdefault(key, []).append(dept)
-
-        def _render(dept: dict[str, Any], depth: int) -> None:
-            dept_id = str(dept.get("id"))
-            members = [
-                str(user.get("display_name") or user.get("id"))
-                for user in users
-                if str(user.get("department") or "") == dept_id
-            ]
-            lead_id = str(dept.get("lead_user_id") or "")
-            lead = next(
-                (
-                    str(user.get("display_name") or user.get("id"))
-                    for user in users
-                    if str(user.get("id")) == lead_id
-                ),
-                "",
-            )
-            member_text = ", ".join(members) if members else "구성원 미지정"
-            lead_text = f" · 리드 {lead}" if lead else ""
-            indent = "  " * depth
-            lines.append(f"{indent}- {dept.get('name')}{lead_text}: {member_text}")
-            for child in children_by_parent.get(dept_id, []):
-                _render(child, depth + 1)
-
-        lines.append("부서(조직도):")
-        for root in children_by_parent.get("", []):
-            _render(root, 0)
-    else:
-        lines.append("부서: 등록된 부서 없음")
-    if positions:
-        ordered = sorted(positions, key=lambda item: _as_int(item.get("level")), reverse=True)
-        lines.append("직급:")
-        for position in ordered:
-            lines.append(f"- {position.get('name')} (level {_as_int(position.get('level'))})")
-    active_users = [user for user in users if user.get("active", True)]
-    lines.append("사원:")
-    if active_users:
-        for user in active_users:
-            dept_id = str(user.get("department") or "")
-            dept_name = next(
-                (str(dept.get("name")) for dept in departments if str(dept.get("id")) == dept_id),
-                "부서 미배정",
-            )
-            role_name = roles_by_id.get(
-                str(user.get("role_id") or ""), str(user.get("role_id") or "")
-            )
-            position_name = positions_by_id.get(str(user.get("position_id") or ""), "")
-            position_text = f" · 직급 {position_name}" if position_name else ""
-            title = str(user.get("title") or "")
-            title_text = f" ({title})" if title else ""
-            lines.append(
-                f"- {user.get('display_name')}{title_text} · {dept_name}{position_text} · 권한 {role_name}"
-            )
-    else:
-        lines.append("- 등록된 사원 없음")
-    return "\n".join(lines)
+# Implementation moved to app/services/org_service.py so the MCP tool
+# dispatcher can reuse it without importing the HTTP layer. Re-exported
+# under the old name to keep the existing prompt call site unchanged.
+_org_roster_markdown = render_org_roster_markdown
 
 
 def _office_context(container: Container) -> str:
@@ -2941,19 +3214,10 @@ def _summarize_bottlenecks(items: list[dict[str, Any]]) -> str:
 
 
 def _read_archive_document(container: Container, raw_path: str) -> DocumentReadPayload:
-    if not raw_path or not raw_path.strip():
-        raise ValueError("path 는 필수입니다.")
-    cleaned = raw_path.strip().lstrip("/")
-    if "\x00" in cleaned:
-        raise ValueError("path 에 잘못된 문자가 포함되어 있습니다.")
     archive_root = container.settings.archive_dir.resolve()
-    candidate = (archive_root / cleaned).resolve()
-    try:
-        candidate.relative_to(archive_root)
-    except ValueError as exc:
-        raise ValueError("archive 외부 경로는 열람할 수 없습니다.") from exc
+    candidate = resolve_within(archive_root, raw_path)
     if not candidate.exists() or not candidate.is_file():
-        raise FileNotFoundError(f"문서를 찾을 수 없습니다: {cleaned}")
+        raise FileNotFoundError(f"문서를 찾을 수 없습니다: {raw_path.strip().lstrip('/')}")
     if candidate.suffix.lower() not in {
         ".md",
         ".markdown",

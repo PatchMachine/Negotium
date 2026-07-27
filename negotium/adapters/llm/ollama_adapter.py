@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from negotium.domain.entities import LlmRoute
-from negotium.domain.ports import LlmMessage, LlmProvider, LlmResponse
+from negotium.domain.ports import LlmCallOptions, LlmMessage, LlmProvider, LlmResponse
 
 
 class OllamaProvider(LlmProvider):
@@ -20,5 +20,6 @@ class OllamaProvider(LlmProvider):
         route: LlmRoute = "local",
         temperature: float = 0.0,
         max_tokens: int | None = None,
+        options: LlmCallOptions | None = None,
     ) -> LlmResponse:
         raise NotImplementedError("OllamaProvider is a Phase 4 stub")

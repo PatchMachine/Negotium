@@ -3,8 +3,11 @@ import { ChangeEvent, useEffect, useMemo, useState } from 'react';
 import {
   analyzeInitialOfficeSetup,
   applyInitialOfficeSetup,
+  fetchLlmProviders,
   fetchLlmRuntime,
+  fetchProviderModels,
   previewProviderModels,
+  recommendTaskRoutes,
   saveApiKey,
   saveLlmRuntime,
   searchHuggingFaceModels,
@@ -15,13 +18,24 @@ import {
   type CompanyProfile,
   type HuggingFaceModelItem,
   type InitialOfficeSetupResult,
+  type LlmProviderInfo,
   type LlmProviderName,
+  type LlmRuntime,
+  type ModelProfile,
   type PatchNoteRecommendationItem,
   type ProviderModelPayload,
   type UploadRecord,
 } from '../../api';
 import { setSessionToken } from '../../auth';
+import {
+  ModelCapabilityNotice,
+  TOOL_FALLBACK_SUGGESTION,
+  TierBadge,
+  TieredModelOptions,
+  profileMap,
+} from '../ai/ModelTier';
 import AiJobStatusBar from '../common/AiJobStatusBar';
+import SetupChatStep from './SetupChatStep';
 import { SETUP_DRAFT_KEY } from './setupDraft';
 
 type Props = {
@@ -29,7 +43,7 @@ type Props = {
   initialUser?: AuthUser | null;
 };
 
-type Step = 'admin' | 'llm' | 'profile' | 'files' | 'analyze' | 'review';
+type Step = 'admin' | 'llm' | 'chat' | 'profile' | 'files' | 'analyze' | 'review';
 type LlmChoice = 'local' | 'api';
 type ReviewSection = 'memory' | 'agents' | 'templates' | 'workflows' | 'security' | 'integrations' | 'routes';
 
@@ -66,40 +80,15 @@ const recommendedLocalModels = [
   },
 ];
 
-const recommendedSolarModels = [
-  {
-    name: 'Solar Open 2',
-    model: 'solar-open2',
-    strength: '한국어 오피스워크에 최적화된 Upstage 오픈 모델 (기본 권장)',
-  },
-  {
-    name: 'Solar Pro 2',
-    model: 'solar-pro2',
-    strength: '고품질 문서 생성/분석용 상위 모델',
-  },
-  {
-    name: 'Solar Mini',
-    model: 'solar-mini',
-    strength: '빠른 응답이 필요한 요약/분류 작업 후보',
-  },
-];
-
-const recommendedTogetherModels = [
-  {
-    name: 'Llama 3.1 8B Turbo',
-    model: 'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo',
-    strength: '빠른 응답과 비용 효율이 좋은 기본 업무 자동화 후보',
-  },
-  {
-    name: 'GPT OSS 20B',
-    model: 'openai/gpt-oss-20b',
-    strength: '오픈 모델 기반 문서 생성/요약 후보',
-  },
-  {
-    name: 'Mixtral 8x7B Instruct',
-    model: 'mistralai/Mixtral-8x7B-Instruct-v0.1',
-    strength: '긴 문서와 범용 지시 처리 실험 후보',
-  },
+// Provider/model recommendations now come from the backend catalog
+// (`adapters/llm/catalog.py`) so tier labels, Korean blurbs and the
+// "what stops working" guidance cannot drift between screens.
+const FALLBACK_PROVIDERS: LlmProviderInfo[] = [
+  { provider: 'solar', label: 'Upstage / Solar', base_url: '', base_url_source: '', fallback_models: [] },
+  { provider: 'openai', label: 'OpenAI / GPT', base_url: '', base_url_source: '', fallback_models: [] },
+  { provider: 'anthropic', label: 'Anthropic / Claude', base_url: '', base_url_source: '', fallback_models: [] },
+  { provider: 'gemini', label: 'Google / Gemini', base_url: '', base_url_source: '', fallback_models: [] },
+  { provider: 'together', label: 'Together AI', base_url: '', base_url_source: '', fallback_models: [] },
 ];
 
 type SetupDraft = {
@@ -184,11 +173,15 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
   const [step, setStep] = useState<Step>(restoredStep || (initialUser ? 'llm' : 'admin'));
   const [admin, setAdmin] = useState({ ...(savedDraft?.admin || { user_id: '', display_name: '', title: '시스템 관리자' }), password: '' });
   const [sessionUser, setSessionUser] = useState<AuthUser | null>(initialUser);
-  const [llmChoice, setLlmChoice] = useState<LlmChoice>(savedDraft?.llmChoice || 'local');
+  // Solar API entry is the default: the conversational wizard needs a
+// tool-capable model, and Solar is the product's default cloud provider.
+  const [llmChoice, setLlmChoice] = useState<LlmChoice>(savedDraft?.llmChoice || 'api');
   const [provider, setProvider] = useState<LlmProviderName>(savedDraft?.provider || 'solar');
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState(savedDraft?.model || '');
   const [models, setModels] = useState<ProviderModelPayload | null>(null);
+  const [providerList, setProviderList] = useState<LlmProviderInfo[]>(FALLBACK_PROVIDERS);
+  const [localModelProfiles, setLocalModelProfiles] = useState<Map<string, ModelProfile>>(new Map());
   const [modelSearch, setModelSearch] = useState('');
   const allModelOptions = models?.models.length ? models.models : [model].filter(Boolean);
   const normalizedModelSearch = modelSearch.trim().toLowerCase();
@@ -198,12 +191,22 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
   const modelOptions = model && !filteredModelOptions.includes(model)
     ? [model, ...filteredModelOptions]
     : filteredModelOptions;
+  const apiModelProfiles = useMemo(() => profileMap(models), [models]);
+  const selectedApiProfile = apiModelProfiles.get(model);
+  // Catalog-curated picks for this provider, in tier order (agent first).
+  const recommendedApiModels = useMemo(
+    () => (models?.model_profiles || []).filter((profile) => profile.source === 'catalog').slice(0, 6),
+    [models],
+  );
   const [localModel, setLocalModel] = useState(savedDraft?.localModel || 'Qwen/Qwen3-4B');
   const [localModelQuery, setLocalModelQuery] = useState(savedDraft?.localModelQuery || 'Qwen');
   const [hfModels, setHfModels] = useState<HuggingFaceModelItem[]>([]);
   const [adapterModel, setAdapterModel] = useState(savedDraft?.adapterModel || '');
   const [localModelUploads, setLocalModelUploads] = useState<UploadRecord[]>(savedDraft?.localModelUploads || []);
   const [selectedUploadPath, setSelectedUploadPath] = useState(savedDraft?.selectedUploadPath || '');
+  const effectiveLocalModel =
+    (selectedUploadPath || adapterModel || localModel).trim() || 'Qwen/Qwen3-4B';
+  const selectedLocalProfile = localModelProfiles.get(effectiveLocalModel);
   const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(
     mergeCompanyProfile(savedDraft?.companyProfile),
   );
@@ -277,6 +280,35 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
     }
   }, [llmChoice, provider]);
 
+  useEffect(() => {
+    // The provider dropdown is served by the backend catalog so a newly
+    // supported provider shows up without a frontend change.
+    async function loadProviders() {
+      try {
+        const payload = await fetchLlmProviders();
+        const selectable = payload.providers.filter((item) => item.provider !== 'vllm');
+        if (selectable.length) setProviderList(selectable);
+      } catch {
+        setProviderList(FALLBACK_PROVIDERS);
+      }
+    }
+    void loadProviders();
+  }, []);
+
+  useEffect(() => {
+    // Tier metadata for local (vLLM) models, so the local branch can warn about
+    // restricted features before the user commits.
+    async function loadLocalProfiles() {
+      try {
+        const payload = await fetchProviderModels('vllm');
+        setLocalModelProfiles(profileMap(payload));
+      } catch {
+        setLocalModelProfiles(new Map());
+      }
+    }
+    if (llmChoice === 'local') void loadLocalProfiles();
+  }, [llmChoice]);
+
   async function createAdmin() {
     setBusy(true);
     setNotice('');
@@ -303,6 +335,16 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
           return;
         }
         await saveApiKey({ provider, api_key: apiKey, model });
+        // Tier-aware routing comes from the backend so the policy lives in one
+        // place instead of being duplicated here per task.
+        // Only the model the user actually picked: passing the provider's whole
+        // list let the recommender substitute a different (higher-tier) model
+        // and silently override the choice.
+        const recommended = await recommendTaskRoutes({
+          provider,
+          models: [model],
+          route: 'api',
+        });
         await saveLlmRuntime({
           ...runtime,
           local_enabled: runtime.local_enabled,
@@ -311,14 +353,10 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
           default_provider: provider,
           task_routes: {
             ...(runtime.task_routes || {}),
-            memory_summary: { route: 'api', provider, model },
-            agent_planning: { route: 'api', provider, model },
-            document_generation: { route: 'api', provider, model },
-            hiring: { route: 'api', provider, model },
-            handover: { route: 'api', provider, model },
-            chat: { route: 'api', provider, model },
+            ...(recommended.task_routes as LlmRuntime['task_routes']),
           },
         });
+        if (recommended.notes.length) setNotice(recommended.notes.join(' '));
       } else {
         const selectedLocalModel = (selectedUploadPath || adapterModel || localModel).trim() || 'Qwen/Qwen3-4B';
         await saveLlmRuntime({
@@ -330,16 +368,19 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
           default_provider: 'vllm',
           task_routes: {
             ...(runtime.task_routes || {}),
-            memory_summary: { route: 'local', provider: 'vllm', model: selectedLocalModel },
-            agent_planning: { route: 'local', provider: 'vllm', model: selectedLocalModel },
-            document_generation: { route: 'local', provider: 'vllm', model: selectedLocalModel },
-            hiring: { route: 'local', provider: 'vllm', model: selectedLocalModel },
-            handover: { route: 'local', provider: 'vllm', model: selectedLocalModel },
-            chat: { route: 'local', provider: 'vllm', model: selectedLocalModel },
+            ...((
+              await recommendTaskRoutes({
+                provider: 'vllm',
+                models: [selectedLocalModel],
+                route: 'local',
+              })
+            ).task_routes as LlmRuntime['task_routes']),
           },
         });
       }
-      setStep('profile');
+      // Prefer the conversational wizard; SetupChatStep falls back to the
+      // deterministic form flow when the model cannot call tools.
+      setStep('chat');
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'LLM 설정 실패');
     } finally {
@@ -489,7 +530,8 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
 
   function goToPreviousStep() {
     const previous: Partial<Record<Step, Step>> = {
-      profile: 'llm',
+      chat: 'llm',
+      profile: 'chat',
       files: 'profile',
       analyze: 'files',
       review: 'analyze',
@@ -613,11 +655,11 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
                     setModelSearch('');
                   }}
                 >
-                  <option value="solar">Upstage / Solar</option>
-                  <option value="openai">OpenAI / GPT</option>
-                  <option value="anthropic">Anthropic / Claude</option>
-                  <option value="gemini">Google / Gemini</option>
-                  <option value="together">Together AI</option>
+                  {providerList.map((item) => (
+                    <option key={item.provider} value={item.provider}>
+                      {item.label}
+                    </option>
+                  ))}
                 </select>
                 {provider === 'solar' ? (
                   <div className="local-llm-status">
@@ -644,30 +686,18 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
                   </div>
                 ) : null}
                 <input type="password" placeholder="API Key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
-                {provider === 'solar' ? (
+                {recommendedApiModels.length ? (
                   <div className="recommended-model-grid">
-                    {recommendedSolarModels.map((item) => (
-                      <article className={model === item.model ? 'model-card model-card-selected' : 'model-card'} key={item.model}>
-                        <small>Upstage</small>
-                        <strong>{item.name}</strong>
+                    {recommendedApiModels.map((item) => (
+                      <article className={model === item.id ? 'model-card model-card-selected' : 'model-card'} key={item.id}>
+                        <small>
+                          <TierBadge tier={item.tier} label={item.tier_label} />
+                        </small>
+                        <strong>{item.label || item.id}</strong>
                         <p>{item.strength}</p>
-                        <code>{item.model}</code>
-                        <button className="secondary-button" type="button" onClick={() => setModel(item.model)}>
-                          선택
-                        </button>
-                      </article>
-                    ))}
-                  </div>
-                ) : null}
-                {provider === 'together' ? (
-                  <div className="recommended-model-grid">
-                    {recommendedTogetherModels.map((item) => (
-                      <article className={model === item.model ? 'model-card model-card-selected' : 'model-card'} key={item.model}>
-                        <small>Together AI</small>
-                        <strong>{item.name}</strong>
-                        <p>{item.strength}</p>
-                        <code>{item.model}</code>
-                        <button className="secondary-button" type="button" onClick={() => setModel(item.model)}>
+                        <code>{item.id}</code>
+                        {item.supports_tools ? null : <p className="hint">도구 사용 불가</p>}
+                        <button className="secondary-button" type="button" onClick={() => setModel(item.id)}>
                           선택
                         </button>
                       </article>
@@ -685,9 +715,7 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
                     />
                     <select value={model} onChange={(e) => setModel(e.target.value)}>
                       {modelOptions.length ? null : <option value="">먼저 모델 목록을 확인하세요</option>}
-                      {modelOptions.map((option) => (
-                        <option key={option} value={option}>{option}</option>
-                      ))}
+                      <TieredModelOptions models={modelOptions} profiles={apiModelProfiles} />
                     </select>
                     <input
                       list="initial-setup-model-options"
@@ -710,6 +738,10 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
                     {models.reason ? ` · ${models.reason}` : ''}
                   </p>
                 ) : null}
+                <ModelCapabilityNotice
+                  profile={selectedApiProfile}
+                  suggestion={selectedApiProfile?.supports_tools ? undefined : TOOL_FALLBACK_SUGGESTION}
+                />
                 <label className="checkbox-inline">
                   <input type="checkbox" checked={apiRiskAccepted} onChange={(e) => setApiRiskAccepted(e.target.checked)} />
                   민감정보가 포함된 파일은 외부 API로 전송될 수 있음을 확인했습니다.
@@ -804,12 +836,47 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
                   </div>
                 ) : null}
                 <p className="muted">
-                  저장 대상: {(selectedUploadPath || adapterModel || localModel).trim() || 'Qwen/Qwen3-4B'}
+                  저장 대상: {effectiveLocalModel}
                 </p>
+                <ModelCapabilityNotice
+                  profile={selectedLocalProfile}
+                  suggestion={selectedLocalProfile?.supports_tools ? undefined : TOOL_FALLBACK_SUGGESTION}
+                />
+                {selectedLocalProfile?.supports_tools ? (
+                  <p className="hint">
+                    로컬 도구 호출은 vLLM 서버를 <code>--enable-auto-tool-choice</code> 옵션으로 실행했을 때만
+                    동작합니다.
+                  </p>
+                ) : null}
               </div>
             ) : null}
             <button type="button" disabled={busy} onClick={() => void configureLlm()}>LLM 설정 저장 후 계속</button>
           </div>
+        ) : null}
+
+        {step === 'chat' ? (
+          <SetupChatStep
+            companyProfile={companyProfile}
+            uploads={uploads}
+            onUploaded={(record) => setUploads((current) => [...current, record])}
+            onProposed={(proposed) => {
+              setResult(proposed);
+              setStep('review');
+            }}
+            onFallback={(reason) => {
+              // The configured model cannot call tools, so fall back to the
+              // deterministic step-by-step flow.
+              setNotice(reason);
+              setStep('profile');
+            }}
+            renderProfileForm={(onDone) => (
+              <ProfileStep
+                companyProfile={companyProfile}
+                setCompanyProfile={setCompanyProfile}
+                onContinue={onDone}
+              />
+            )}
+          />
         ) : null}
 
         {step === 'profile' ? (
@@ -1229,6 +1296,7 @@ function StepBar({ step }: { step: Step }) {
   const steps: Array<[Step, string]> = [
     ['admin', '관리자'],
     ['llm', 'LLM'],
+    ['chat', 'AI 설정'],
     ['profile', '프로파일'],
     ['files', '파일'],
     ['analyze', 'AI 분석'],
