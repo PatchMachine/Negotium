@@ -1,3 +1,14 @@
+FROM node:22-alpine AS frontend
+
+WORKDIR /frontend
+
+COPY frontend/package*.json ./
+RUN npm ci
+
+COPY frontend ./
+RUN npm run build
+
+
 FROM python:3.11-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -15,12 +26,15 @@ WORKDIR /app
 
 COPY pyproject.toml README.md ./
 COPY negotium ./negotium
-COPY templates ./templates
-COPY config ./config
 
 RUN pip install --upgrade pip \
  && pip install ".[dev]" \
  && pip install -e .
+
+# The backend serves the console itself, so the image publishes a single port.
+# NG_FRONTEND_DIST points at the build copied out of the node stage above.
+COPY --from=frontend /frontend/dist ./frontend/dist
+ENV NG_FRONTEND_DIST=/app/frontend/dist
 
 RUN adduser --disabled-password --gecos "" negotium \
  && mkdir -p /var/ng/workspaces /app/archive \

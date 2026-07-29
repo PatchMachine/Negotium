@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from negotium.app.api import create_operations_api_router
+from negotium.app.console_site import install_console
 from negotium.app.container import Container
 from negotium.app.contributor_site import create_contributor_site_router
 from negotium.observability import get_logger
@@ -56,6 +57,10 @@ def create_app(container: Container | None = None) -> FastAPI:
             "ok": True,
             "metrics": container.metrics.snapshot(),
         }
+
+    # Assets mount + SPA fallback on unmatched-GET 404s; routing semantics
+    # (405s, slash redirects, endpoint-raised 404 bodies) stay untouched.
+    install_console(app, container.settings.frontend_dist)
 
     return app
 

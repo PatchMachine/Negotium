@@ -23,8 +23,8 @@ services:
       NG_LLM_GATEWAY_URL: http://llm-gateway:8090
     volumes:
       - ../archive:/app/archive
-      - ../config:/app/config:ro
       - ng-workspaces:/var/ng/workspaces
+    # Console + API on one port; open http://localhost:8080 directly.
     ports:
       - "${NG_HOST_HTTP_PORT:-8080}:8080"
     healthcheck:
@@ -59,24 +59,5 @@ services:
       timeout: 5s
       retries: 3
 
-  frontend:
-    build:
-      context: ..
-      dockerfile: docker/frontend.Dockerfile
-    image: negotium-frontend:0.1.0
-    container_name: negotium-frontend
-    restart: unless-stopped
-    depends_on:
-      - negotium
-    environment:
-      VITE_API_PROXY_TARGET: http://negotium:8080
-    volumes:
-      - ../frontend:/app
-      - frontend-node-modules:/app/node_modules
-    ports:
-      - "${NG_HOST_FRONTEND_PORT:-5173}:5173"
-    command: npm run dev
-
 volumes:
-  frontend-node-modules:
   ng-workspaces:

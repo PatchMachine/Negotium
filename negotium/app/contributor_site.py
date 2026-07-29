@@ -1,4 +1,8 @@
-"""Contributor-facing website routes."""
+"""Contributor-facing website routes.
+
+These live under ``/contribute`` because ``/`` now serves the console SPA
+(see ``console_site.py``) — the console and the API share one port.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +13,8 @@ from fastapi import APIRouter, Form
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 
 from negotium.archive.operations_memory import OperationsMemory, OperationsMemoryStore
+
+BASE = "/contribute"
 
 _CSS = """
 :root {
@@ -234,7 +240,7 @@ footer {
 }
 """.strip()
 
-_HOME_HTML = """
+_HOME_HTML = f"""
 <!doctype html>
 <html lang="ko">
 <head>
@@ -245,7 +251,7 @@ _HOME_HTML = """
     name="description"
     content="Negotium에 버그 리포트, 코드 리뷰, 검증 자료로 참여하는 방법을 안내합니다."
   >
-  <link rel="stylesheet" href="/site.css">
+  <link rel="stylesheet" href="{BASE}/site.css">
 </head>
 <body>
   <main class="shell">
@@ -257,8 +263,9 @@ _HOME_HTML = """
         에이전트가 패치 제안까지 이어가는 자동 SI/SE 실험에 참여하세요.
       </p>
       <div class="actions">
-        <a class="button primary" href="/join">참여 방법 보기</a>
-        <a class="button" href="/operations">운영 메모리 설정</a>
+        <a class="button primary" href="{BASE}/join">참여 방법 보기</a>
+        <a class="button" href="{BASE}/operations">운영 메모리 설정</a>
+        <a class="button" href="/">콘솔 열기</a>
         <a class="button" href="/docs">API 문서 열기</a>
         <a class="button" href="/health">상태 확인</a>
       </div>
@@ -293,7 +300,7 @@ _HOME_HTML = """
 </html>
 """.strip()
 
-_JOIN_HTML = """
+_JOIN_HTML = f"""
 <!doctype html>
 <html lang="ko">
 <head>
@@ -304,7 +311,7 @@ _JOIN_HTML = """
     name="description"
     content="Negotium 외부 참여자가 좋은 제보와 검증 피드백을 남기는 절차입니다."
   >
-  <link rel="stylesheet" href="/site.css">
+  <link rel="stylesheet" href="{BASE}/site.css">
 </head>
 <body>
   <main class="shell">
@@ -316,8 +323,8 @@ _JOIN_HTML = """
         재현 가능한 맥락을 남기는 것이 가장 큰 도움이 됩니다.
       </p>
       <div class="actions">
-        <a class="button primary" href="/">홈으로 돌아가기</a>
-        <a class="button" href="/operations">운영 메모리 설정</a>
+        <a class="button primary" href="{BASE}">홈으로 돌아가기</a>
+        <a class="button" href="{BASE}/operations">운영 메모리 설정</a>
         <a class="button" href="/docs">Webhook/API 확인</a>
       </div>
     </section>
@@ -354,32 +361,38 @@ _JOIN_HTML = """
     </section>
   </main>
   <footer>
-    <div class="shell">Public routes: <a href="/">/</a>, <a href="/join">/join</a>, <a href="/operations">/operations</a>, <a href="/health">/health</a>.</div>
+    <div class="shell">Public routes: <a href="{BASE}">{BASE}</a>, <a href="{BASE}/join">{BASE}/join</a>, <a href="{BASE}/operations">{BASE}/operations</a>, <a href="/health">/health</a>.</div>
   </footer>
 </body>
 </html>
 """.strip()
 
 
+# The pages carry no cache validators and /operations renders live store
+# state, so keep browsers from caching them heuristically. They are tiny;
+# re-rendering is cheaper than ever showing a stale form.
+_NO_STORE = {"Cache-Control": "no-store"}
+
+
 def create_contributor_site_router(memory_store: OperationsMemoryStore) -> APIRouter:
     router = APIRouter(tags=["contributor-site"])
 
-    @router.get("/", response_class=HTMLResponse, include_in_schema=False)
+    @router.get(BASE, response_class=HTMLResponse, include_in_schema=False)
     async def home() -> HTMLResponse:
         """Render the contributor landing page."""
-        return HTMLResponse(_HOME_HTML)
+        return HTMLResponse(_HOME_HTML, headers=_NO_STORE)
 
-    @router.get("/join", response_class=HTMLResponse, include_in_schema=False)
+    @router.get(f"{BASE}/join", response_class=HTMLResponse, include_in_schema=False)
     async def join() -> HTMLResponse:
         """Render the contributor onboarding page."""
-        return HTMLResponse(_JOIN_HTML)
+        return HTMLResponse(_JOIN_HTML, headers=_NO_STORE)
 
-    @router.get("/operations", response_class=HTMLResponse, include_in_schema=False)
+    @router.get(f"{BASE}/operations", response_class=HTMLResponse, include_in_schema=False)
     async def operations(saved: bool = False) -> HTMLResponse:
         """Render the operations memory form."""
-        return HTMLResponse(_render_operations(memory_store.read(), saved=saved))
+        return HTMLResponse(_render_operations(memory_store.read(), saved=saved), headers=_NO_STORE)
 
-    @router.post("/operations", include_in_schema=False)
+    @router.post(f"{BASE}/operations", include_in_schema=False)
     async def save_operations(
         company_name: Annotated[str, Form()] = "",
         office_project: Annotated[str, Form()] = "",
@@ -393,12 +406,28 @@ def create_contributor_site_router(memory_store: OperationsMemoryStore) -> APIRo
                 active_plan=active_plan.strip(),
             )
         )
-        return RedirectResponse("/operations?saved=true", status_code=303)
+        return RedirectResponse(f"{BASE}/operations?saved=true", status_code=303)
 
-    @router.get("/site.css", response_class=PlainTextResponse, include_in_schema=False)
+    @router.get(f"{BASE}/site.css", response_class=PlainTextResponse, include_in_schema=False)
     async def stylesheet() -> PlainTextResponse:
         """Serve the small built-in stylesheet for the contributor site."""
-        return PlainTextResponse(_CSS, media_type="text/css")
+        # Unlike the pages above this is a compiled-in constant — let it cache.
+        return PlainTextResponse(
+            _CSS, media_type="text/css", headers={"Cache-Control": "public, max-age=3600"}
+        )
+
+    # The site used to live at the root; browsers may hold the old pages in
+    # cache and old bookmarks still exist. Send both to the new home so any
+    # click on a stale page lands on current content instead of a fallback.
+    for legacy, current in (
+        ("/join", f"{BASE}/join"),
+        ("/operations", f"{BASE}/operations"),
+        ("/site.css", f"{BASE}/site.css"),
+    ):
+
+        @router.get(legacy, include_in_schema=False)
+        async def _legacy_redirect(target: str = current) -> RedirectResponse:
+            return RedirectResponse(target, status_code=301)
 
     return router
 
@@ -416,7 +445,7 @@ def _render_operations(memory: OperationsMemory, *, saved: bool = False) -> str:
     name="description"
     content="Negotium 에이전트가 참고할 운영 회사, 프로젝트, 계획 메모리를 설정합니다."
   >
-  <link rel="stylesheet" href="/site.css">
+  <link rel="stylesheet" href="{BASE}/site.css">
 </head>
 <body>
   <main class="shell">
@@ -428,14 +457,14 @@ def _render_operations(memory: OperationsMemory, *, saved: bool = False) -> str:
         함께 전달됩니다.
       </p>
       <div class="actions">
-        <a class="button" href="/">홈으로 돌아가기</a>
-        <a class="button" href="/join">참여 방법 보기</a>
+        <a class="button" href="{BASE}">홈으로 돌아가기</a>
+        <a class="button" href="{BASE}/join">참여 방법 보기</a>
       </div>
     </section>
 
     {saved_notice}
 
-    <form method="post" action="/operations">
+    <form method="post" action="{BASE}/operations">
       <label>
         현재 운영하려는 회사 이름
         <input

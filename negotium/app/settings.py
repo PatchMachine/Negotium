@@ -82,6 +82,9 @@ class Settings(BaseSettings):
     archive_dir: Path = Path("./archive")
     http_host: str = "0.0.0.0"
     http_port: int = 8080
+    # Built console (``npm run build --prefix frontend``) served from this same
+    # process, so the UI and the API share one port. None => repo frontend/dist.
+    frontend_dist: Path | None = None
     llm_gateway_host: str = "0.0.0.0"
     llm_gateway_port: int = 8090
     secret_key: str = ""

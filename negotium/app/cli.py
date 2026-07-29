@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
+from pathlib import Path
 
 import typer
 import uvicorn
@@ -29,15 +32,40 @@ def _load_env_file() -> None:
     load_dotenv(override=False)
 
 
+def _build_frontend(served_dist: Path | None) -> None:
+    """Run ``npm run build`` so the console can be served from this process."""
+    from negotium.app.console_site import default_frontend_dist
+
+    dist = default_frontend_dist()
+    frontend = dist.parent
+    npm = shutil.which("npm")
+    if npm is None:
+        raise typer.BadParameter("npm not found; install Node 20+ or drop --build-frontend")
+    if not (frontend / "node_modules").is_dir():
+        typer.echo("프론트엔드 의존성을 설치합니다 (npm ci)...")
+        subprocess.run([npm, "ci", "--prefix", str(frontend)], check=True)
+    typer.echo("콘솔을 빌드합니다 (npm run build)...")
+    subprocess.run([npm, "run", "build", "--prefix", str(frontend)], check=True)
+    if served_dist is not None and served_dist.resolve() != dist.resolve():
+        typer.echo(
+            f"경고: 빌드는 {dist} 에 생성됐지만 서버는 NG_FRONTEND_DIST={served_dist} 를 서빙합니다."
+        )
+
+
 @app.command()
 def serve(
     host: str | None = typer.Option(None, help="HTTP bind host (overrides settings)."),
     port: int | None = typer.Option(None, help="HTTP bind port (overrides settings)."),
+    build_frontend: bool = typer.Option(
+        False, "--build-frontend", help="Build the React console before serving."
+    ),
 ) -> None:
-    """Run the Negotium office console FastAPI server."""
+    """Run the Negotium office console — UI and API on a single port."""
     _load_env_file()
     container = Container.build()
     settings = container.settings
+    if build_frontend:
+        _build_frontend(settings.frontend_dist)
     configure_logging(settings.log_level)
     uvicorn.run(
         "negotium.app.main:create_app",
