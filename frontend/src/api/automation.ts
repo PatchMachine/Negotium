@@ -2,12 +2,17 @@ import { requestJson } from './http';
 import type {
   AutomationConfig,
   AutomationStatus,
+  BackupStats,
   NotificationsPayload,
   SearchIndexStats,
 } from './types';
 
 export function fetchSearchIndexStats(): Promise<SearchIndexStats> {
   return requestJson<SearchIndexStats>('/api/automation/search-index');
+}
+
+export function fetchBackupStats(): Promise<BackupStats> {
+  return requestJson<BackupStats>('/api/automation/backup');
 }
 
 export function fetchAutomationStatus(): Promise<AutomationStatus> {

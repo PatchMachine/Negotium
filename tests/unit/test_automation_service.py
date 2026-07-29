@@ -245,3 +245,47 @@ async def test_run_jobs_forces_execution_regardless_of_slot(
     executed = await run_jobs(container, ["weekly_report"], now=_MONDAY_0859_KST)
     assert executed == ["weekly_report"]
     assert automation_service is not None  # keep the module import referenced
+
+
+async def test_backup_job_due_by_interval_and_marks_attempt(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    from negotium.archive.automation import BackupConfig
+
+    container = _container(tmp_path)
+    container.automation.write_config(
+        AutomationConfig(backup=BackupConfig(enabled=True, interval_minutes=30))
+    )
+    (container.settings.archive_dir / "documents").mkdir(parents=True, exist_ok=True)
+    (container.settings.archive_dir / "documents" / "a.md").write_text("# A", encoding="utf-8")
+
+    first = await run_due_jobs(container, now=_MONDAY_0930_KST)
+    assert first == ["archive_backup"]
+    assert container.automation.read_state().last_backup_attempt
+
+    # 29 minutes later: not due; 31 minutes later: due again.
+    assert await run_due_jobs(container, now=_MONDAY_0930_KST + timedelta(minutes=29)) == []
+    again = await run_due_jobs(container, now=_MONDAY_0930_KST + timedelta(minutes=31))
+    assert again == ["archive_backup"]
+
+
+async def test_backup_job_disabled_never_fires(tmp_path: Path) -> None:
+    container = _container(tmp_path)
+    assert await run_due_jobs(container, now=_MONDAY_0930_KST) == []
+
+
+async def test_state_fields_survive_other_jobs(tmp_path: Path, fake_weekly: list[str]) -> None:
+    """Marking one job's state key must not erase the others'."""
+    from negotium.archive.automation import BackupConfig
+
+    container = _container(tmp_path)
+    container.automation.write_config(
+        AutomationConfig(
+            weekly_report=WeeklyReportConfig(enabled=True, weekday=0, time="09:00"),
+            backup=BackupConfig(enabled=True),
+        )
+    )
+    await run_due_jobs(container, now=_MONDAY_0930_KST)
+    state = container.automation.read_state()
+    assert state.last_weekly_run_key
+    assert state.last_backup_attempt, "backup mark must survive the weekly-job state write"

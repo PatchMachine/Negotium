@@ -99,10 +99,39 @@ class SearchConfig:
 
 
 @dataclass(frozen=True)
+class BackupConfig:
+    """Nested-git archive backup; remote_url may embed a token — never log it."""
+
+    enabled: bool = False
+    interval_minutes: int = 30
+    remote_url: str = ""
+
+    @classmethod
+    def from_mapping(cls, payload: dict[str, Any]) -> BackupConfig:
+        try:
+            interval = int(payload.get("interval_minutes", 30))
+        except (TypeError, ValueError):
+            interval = 30
+        return cls(
+            enabled=bool(payload.get("enabled", False)),
+            interval_minutes=min(1440, max(5, interval)),
+            remote_url=str(payload.get("remote_url") or "").strip(),
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "enabled": self.enabled,
+            "interval_minutes": self.interval_minutes,
+            "remote_url": self.remote_url,
+        }
+
+
+@dataclass(frozen=True)
 class AutomationConfig:
     weekly_report: WeeklyReportConfig = field(default_factory=WeeklyReportConfig)
     reminders: ReminderConfig = field(default_factory=ReminderConfig)
     search: SearchConfig = field(default_factory=SearchConfig)
+    backup: BackupConfig = field(default_factory=BackupConfig)
     webhook_url: str = ""
 
     @classmethod
@@ -110,6 +139,7 @@ class AutomationConfig:
         weekly = payload.get("weekly_report")
         reminders = payload.get("reminders")
         search = payload.get("search")
+        backup = payload.get("backup")
         return cls(
             weekly_report=WeeklyReportConfig.from_mapping(
                 weekly if isinstance(weekly, dict) else {}
@@ -118,6 +148,7 @@ class AutomationConfig:
                 reminders if isinstance(reminders, dict) else {}
             ),
             search=SearchConfig.from_mapping(search if isinstance(search, dict) else {}),
+            backup=BackupConfig.from_mapping(backup if isinstance(backup, dict) else {}),
             webhook_url=str(payload.get("webhook_url") or "").strip(),
         )
 
@@ -126,6 +157,7 @@ class AutomationConfig:
             "weekly_report": self.weekly_report.to_dict(),
             "reminders": self.reminders.to_dict(),
             "search": self.search.to_dict(),
+            "backup": self.backup.to_dict(),
             "webhook_url": self.webhook_url,
         }
 
@@ -134,18 +166,21 @@ class AutomationConfig:
 class AutomationState:
     last_weekly_run_key: str = ""  # ISO week key, e.g. "2026-W31"
     last_reminder_date: str = ""  # local date, "YYYY-MM-DD"
+    last_backup_attempt: str = ""  # ISO timestamp
 
     @classmethod
     def from_mapping(cls, payload: dict[str, Any]) -> AutomationState:
         return cls(
             last_weekly_run_key=str(payload.get("last_weekly_run_key") or ""),
             last_reminder_date=str(payload.get("last_reminder_date") or ""),
+            last_backup_attempt=str(payload.get("last_backup_attempt") or ""),
         )
 
     def to_dict(self) -> dict[str, object]:
         return {
             "last_weekly_run_key": self.last_weekly_run_key,
             "last_reminder_date": self.last_reminder_date,
+            "last_backup_attempt": self.last_backup_attempt,
         }
 
 

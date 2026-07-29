@@ -884,11 +884,27 @@ export type SearchConfig = {
   embeddings_enabled: boolean;
 };
 
+export type BackupConfig = {
+  enabled: boolean;
+  interval_minutes: number;
+  remote_url: string;
+};
+
 export type AutomationConfig = {
   weekly_report: WeeklyReportConfig;
   reminders: ReminderConfig;
   search: SearchConfig;
+  backup: BackupConfig;
   webhook_url: string;
+};
+
+export type BackupStats = {
+  initialized: boolean;
+  commits: number;
+  last_commit_at: string;
+  dirty: boolean;
+  enabled: boolean;
+  remote_url_set: boolean;
 };
 
 export type SearchIndexStats = {

@@ -59,9 +59,10 @@ def is_operational_internal_file(path: Path, archive_dir: Path) -> bool:
         return True
     parts = rel.parts
     # search_index holds the derived retrieval cache itself — indexing it
-    # would make the index its own corpus.
+    # would make the index its own corpus. .git is the nested backup repo.
     return rel.as_posix() == "audit_log.jsonl" or bool(
-        parts and parts[0] in {"token_usage", "context_firewall", "mcp_hub", "search_index"}
+        parts
+        and parts[0] in {"token_usage", "context_firewall", "mcp_hub", "search_index", ".git"}
     )
 
 

@@ -16,7 +16,9 @@ from negotium.app.schemas.automation import (
     RunJobsPayload,
     RunResultPayload,
 )
+from negotium.app.services.archive_backup_service import backup_stats
 from negotium.app.services.automation_service import (
+    BACKUP_JOB,
     REMINDER_JOB,
     SEARCH_INDEX_JOB,
     WEEKLY_JOB,
@@ -24,7 +26,7 @@ from negotium.app.services.automation_service import (
     run_jobs,
 )
 
-_KNOWN_JOBS = {WEEKLY_JOB, REMINDER_JOB, SEARCH_INDEX_JOB}
+_KNOWN_JOBS = {WEEKLY_JOB, REMINDER_JOB, SEARCH_INDEX_JOB, BACKUP_JOB}
 
 
 def create_automation_router(container: Container) -> APIRouter:
@@ -70,6 +72,8 @@ def create_automation_router(container: Container) -> APIRouter:
                 "weekly_enabled": config.weekly_report.enabled,
                 "reminders_enabled": config.reminders.enabled,
                 "search_embeddings_enabled": config.search.embeddings_enabled,
+                "backup_enabled": config.backup.enabled,
+                "backup_remote_set": bool(config.backup.remote_url),
                 "webhook_url_set": bool(config.webhook_url),
             },
         )
@@ -106,6 +110,18 @@ def create_automation_router(container: Container) -> APIRouter:
         return {
             **container.search_index.stats(),
             "embeddings_enabled": config.search.embeddings_enabled,
+        }
+
+    @router.get("/automation/backup")
+    async def read_backup_stats(
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
+    ) -> dict[str, object]:
+        _require(container, x_ng_user, "admin:integrations")
+        config = container.automation.read_config()
+        return {
+            **backup_stats(container.settings.archive_dir),
+            "enabled": config.backup.enabled,
+            "remote_url_set": bool(config.backup.remote_url),
         }
 
     @router.get("/notifications")

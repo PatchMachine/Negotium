@@ -100,6 +100,34 @@ def test_manual_run_generates_report_and_notification(tmp_path: Path) -> None:
         assert unknown.status_code == 400
 
 
+def test_backup_config_roundtrip_and_manual_run(tmp_path: Path) -> None:
+    container = _container(tmp_path)
+    admin = _headers(container, user_id="owner", role_id="owner")
+    (container.settings.archive_dir / "documents").mkdir(parents=True, exist_ok=True)
+    (container.settings.archive_dir / "documents" / "a.md").write_text("# A", encoding="utf-8")
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        saved = client.put(
+            "/api/automation/config",
+            headers=admin,
+            json={"backup": {"enabled": True, "interval_minutes": 15, "remote_url": ""}},
+        )
+        assert saved.status_code == 200
+        assert saved.json()["config"]["backup"]["interval_minutes"] == 15
+
+        run = client.post("/api/automation/run", headers=admin, json={"jobs": ["archive_backup"]})
+        stats = client.get("/api/automation/backup", headers=admin)
+
+    assert run.status_code == 200
+    assert run.json()["executed"] == ["archive_backup"]
+    payload = stats.json()
+    assert payload["initialized"] is True
+    assert payload["commits"] >= 1
+    assert payload["remote_url_set"] is False
+    assert (container.settings.archive_dir / ".git").exists()
+
+
 def test_notifications_require_login(tmp_path: Path) -> None:
     container = _container(tmp_path)
     app = create_app(container)

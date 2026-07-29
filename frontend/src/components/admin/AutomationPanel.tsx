@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react';
 
 import {
   fetchAutomationStatus,
+  fetchBackupStats,
   fetchSearchIndexStats,
   runAutomationJobs,
   saveAutomationConfig,
   type AutomationConfig,
+  type BackupStats,
   type SearchIndexStats,
 } from '../../api';
 
@@ -15,6 +17,7 @@ const emptyConfig: AutomationConfig = {
   weekly_report: { enabled: false, weekday: 0, time: '09:00', timezone: 'Asia/Seoul' },
   reminders: { enabled: false, time: '09:30', stale_days: 3 },
   search: { embeddings_enabled: false },
+  backup: { enabled: false, interval_minutes: 30, remote_url: '' },
   webhook_url: '',
 };
 
@@ -22,6 +25,7 @@ export default function AutomationPanel() {
   const [config, setConfig] = useState<AutomationConfig>(emptyConfig);
   const [state, setState] = useState<Record<string, string>>({});
   const [searchStats, setSearchStats] = useState<SearchIndexStats | null>(null);
+  const [backupStats, setBackupStats] = useState<BackupStats | null>(null);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -37,6 +41,11 @@ export default function AutomationPanel() {
       setSearchStats(await fetchSearchIndexStats());
     } catch {
       setSearchStats(null);
+    }
+    try {
+      setBackupStats(await fetchBackupStats());
+    } catch {
+      setBackupStats(null);
     }
   }
 
@@ -221,6 +230,65 @@ export default function AutomationPanel() {
             {searchStats.last_embed_run
               ? ` · 마지막 실행 ${searchStats.last_embed_run.slice(0, 16).replace('T', ' ')}`
               : ''}
+          </p>
+        ) : null}
+      </div>
+
+      <div className="memory-form">
+        <h3>아카이브 백업 (git)</h3>
+        <p className="muted small">
+          archive/ 디렉터리를 자체 git 저장소로 버전 관리합니다 — 문서 변경 이력 추적과 실수
+          복구가 가능해집니다. secrets와 파생 캐시는 커밋되지 않습니다.
+        </p>
+        <label>
+          <input
+            type="checkbox"
+            checked={config.backup.enabled}
+            onChange={(e) =>
+              setConfig({ ...config, backup: { ...config.backup, enabled: e.target.checked } })
+            }
+          />
+          자동 커밋 사용
+        </label>
+        <label>
+          주기 (분)
+          <input
+            type="number"
+            min={5}
+            max={1440}
+            value={config.backup.interval_minutes}
+            onChange={(e) =>
+              setConfig({
+                ...config,
+                backup: { ...config.backup, interval_minutes: Number(e.target.value) || 30 },
+              })
+            }
+          />
+        </label>
+        <label>
+          원격 저장소 URL (선택)
+          <input
+            placeholder="https://<token>@github.com/company/archive-backup.git"
+            value={config.backup.remote_url}
+            onChange={(e) =>
+              setConfig({ ...config, backup: { ...config.backup, remote_url: e.target.value } })
+            }
+          />
+        </label>
+        <p className="muted small">
+          원격 URL을 설정하면 커밋 후 push합니다 — 회사 데이터가 외부 저장소로 전송되며, URL에
+          포함된 액세스 토큰은 로그·감사 기록에 남지 않습니다.
+        </p>
+        <button type="button" disabled={busy} onClick={() => void runNow('archive_backup')}>
+          지금 백업
+        </button>
+        {backupStats?.initialized ? (
+          <p className="muted small">
+            커밋 {backupStats.commits}
+            {backupStats.last_commit_at
+              ? ` · 마지막 ${backupStats.last_commit_at.slice(0, 16).replace('T', ' ')}`
+              : ''}
+            {backupStats.dirty ? ' · 미커밋 변경 있음' : ''}
           </p>
         ) : null}
       </div>

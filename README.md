@@ -222,6 +222,15 @@ POST합니다(슬랙 incoming webhook 호환 — 카카오워크/디스코드류
 스케줄러 자체는 `NG_AUTOMATION_ENABLED=false`로 완전히 끌 수 있습니다.
 설정·실행 상태는 `archive/automation.json`, 알림은 `archive/notifications.json`에 저장됩니다.
 
+### 아카이브 백업 (git)
+
+**관리자 설정 → 자동화**에서 켜면 `archive/`가 자체 git 저장소로 버전 관리됩니다 —
+주기적으로(기본 30분) 변경분이 자동 커밋되어 문서 이력 추적과 실수 복구가 가능합니다
+(`git -C archive log`). `secrets/`(마스터 키)·인증 상태·파생 캐시는 커밋되지 않습니다.
+원격 저장소 URL을 설정하면 커밋 후 push까지 수행합니다 — 회사 데이터가 외부로 전송되니
+사설 저장소를 사용하고, URL에 포함된 토큰은 로그·감사에 기록되지 않습니다.
+`negotium reset-state`는 git 이력까지 함께 삭제합니다.
+
 ### 아카이브 검색
 
 채팅과 메모리 검색은 아카이브 전체(회의록·보고서·인수인계·업로드·대화 기록)를

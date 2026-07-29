@@ -8,7 +8,7 @@ is not hammered every tick; the admin "지금 실행" endpoint is the recovery p
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
@@ -33,6 +33,7 @@ AUTOMATION_ACTOR = "automation"
 WEEKLY_JOB = "weekly_report"
 REMINDER_JOB = "reminders"
 SEARCH_INDEX_JOB = "search_index"
+BACKUP_JOB = "archive_backup"
 _WEBHOOK_TIMEOUT_SECONDS = 10.0
 _EMBED_REFRESH_MINUTES = 15
 
@@ -63,6 +64,8 @@ async def run_due_jobs(container: Container, *, now: datetime | None = None) -> 
         due.append(REMINDER_JOB)
     if config.search.embeddings_enabled and _is_embed_refresh_due(container, moment):
         due.append(SEARCH_INDEX_JOB)
+    if config.backup.enabled and _is_backup_due(config, state, moment):
+        due.append(BACKUP_JOB)
     if not due:
         return []
     return await run_jobs(container, due, now=moment)
@@ -82,23 +85,22 @@ async def run_jobs(
             # Mark before attempting: one attempt per slot, no retry storm.
             state = container.automation.read_state()
             container.automation.write_state(
-                AutomationState(
-                    last_weekly_run_key=_weekly_slot_key(local_now),
-                    last_reminder_date=state.last_reminder_date,
-                )
+                replace(state, last_weekly_run_key=_weekly_slot_key(local_now))
             )
             if await _run_weekly_report(container, config):
                 executed.append(WEEKLY_JOB)
         elif job == REMINDER_JOB:
             state = container.automation.read_state()
             container.automation.write_state(
-                AutomationState(
-                    last_weekly_run_key=state.last_weekly_run_key,
-                    last_reminder_date=local_now.date().isoformat(),
-                )
+                replace(state, last_reminder_date=local_now.date().isoformat())
             )
             if await _run_reminders(container, config, today=local_now.date()):
                 executed.append(REMINDER_JOB)
+        elif job == BACKUP_JOB:
+            state = container.automation.read_state()
+            container.automation.write_state(replace(state, last_backup_attempt=moment.isoformat()))
+            if await _run_backup_job(container):
+                executed.append(BACKUP_JOB)
         elif job == SEARCH_INDEX_JOB:
             # Bookkeeping lives in the index manifest, not AutomationState —
             # marking first keeps the attempt-once-per-slot idiom.
@@ -122,6 +124,40 @@ async def deliver_webhook(container: Container, url: str, text: str) -> bool:
         _log.warning("automation.webhook_failed", error=str(exc))
         _audit_event(container, action="automation.webhook_failed", details={"error": str(exc)})
         return False
+    return True
+
+
+def _is_backup_due(config: AutomationConfig, state: AutomationState, moment: datetime) -> bool:
+    if not state.last_backup_attempt:
+        return True
+    try:
+        parsed = datetime.fromisoformat(state.last_backup_attempt)
+    except ValueError:
+        return True
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return (moment - parsed) >= timedelta(minutes=config.backup.interval_minutes)
+
+
+async def _run_backup_job(container: Container) -> bool:
+    from negotium.app.services.archive_backup_service import run_backup
+
+    try:
+        result = await run_backup(container)
+    except Exception as exc:
+        _log.warning("automation.backup_failed", error=str(exc))
+        _audit_event(
+            container,
+            action="automation.job_failed",
+            details={"job": BACKUP_JOB, "error": str(exc)},
+        )
+        return False
+    # The remote URL may carry a token — audit only booleans/reasons.
+    _audit_event(
+        container,
+        action="automation.archive_backup",
+        details={"committed": result.get("committed"), "pushed": result.get("pushed")},
+    )
     return True
 
 

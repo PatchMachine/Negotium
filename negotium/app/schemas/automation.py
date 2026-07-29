@@ -26,10 +26,17 @@ class SearchConfigPayload(BaseModel):
     embeddings_enabled: bool = False
 
 
+class BackupConfigPayload(BaseModel):
+    enabled: bool = False
+    interval_minutes: int = Field(30, ge=5, le=1440)
+    remote_url: str = ""
+
+
 class AutomationConfigPayload(BaseModel):
     weekly_report: WeeklyReportConfigPayload = Field(default_factory=WeeklyReportConfigPayload)
     reminders: ReminderConfigPayload = Field(default_factory=ReminderConfigPayload)
     search: SearchConfigPayload = Field(default_factory=SearchConfigPayload)
+    backup: BackupConfigPayload = Field(default_factory=BackupConfigPayload)
     webhook_url: str = ""
 
     def to_config(self) -> AutomationConfig:
