@@ -7,6 +7,9 @@ automation pipeline can feed to an LLM:
 * text-like files (md/txt/csv/tsv/xlsx) are flattened to text;
 * PDFs are text-extracted with ``pypdf`` (falling back to image/OCR when the
   page text is empty, e.g. scanned PDFs are out of scope and reported);
+* office documents (docx/hwp/hwpx) use the pre-parsed markdown when the caller
+  obtained one from Upstage Document Parse (cloud route only), otherwise the
+  local parsers in :mod:`office_doc_parser`;
 * images are base64-encoded for vision passthrough, with an optional OCR text
   fallback when ``pytesseract``/``Pillow`` are installed.
 
@@ -20,7 +23,12 @@ import base64
 from dataclasses import dataclass
 from pathlib import Path
 
-from negotium.app.initial_setup import ParsedSetupFile, parse_setup_file
+from negotium.app.initial_setup import ParsedSetupFile, _has_sensitive_hint, parse_setup_file
+from negotium.app.services.office_doc_parser import (
+    OFFICE_DOC_SUFFIXES,
+    OfficeDocParseError,
+    extract_office_doc_text,
+)
 
 TEXT_SUFFIXES = {".md", ".markdown", ".txt", ".json", ".jsonl", ".yaml", ".yml"}
 TABULAR_SUFFIXES = {".csv", ".tsv", ".xlsx"}
@@ -66,7 +74,7 @@ class ExtractedAttachment:
 
     filename: str
     path: str
-    kind: str  # text | tabular | pdf | image | audio | unsupported
+    kind: str  # text | tabular | pdf | image | audio | document | unsupported
     text: str = ""
     image_b64: str = ""
     audio_b64: str = ""
@@ -102,8 +110,14 @@ class ExtractedAttachment:
         return "\n".join(lines).strip()
 
 
-def extract_attachment(path: Path, *, archive_root: Path | None = None) -> ExtractedAttachment:
-    """Extract text and/or image bytes from a stored upload file."""
+def extract_attachment(
+    path: Path, *, archive_root: Path | None = None, office_doc_markdown: str = ""
+) -> ExtractedAttachment:
+    """Extract text and/or image bytes from a stored upload file.
+
+    ``office_doc_markdown`` carries a cloud Document Parse result for
+    docx/hwp/hwpx files; when empty the local parsers run instead.
+    """
 
     relative = path.relative_to(archive_root).as_posix() if archive_root else path.as_posix()
     if not path.exists() or not path.is_file():
@@ -123,6 +137,8 @@ def extract_attachment(path: Path, *, archive_root: Path | None = None) -> Extra
         return _extract_pdf(path, relative=relative)
     if suffix in TABULAR_SUFFIXES:
         return _extract_tabular(path, relative=relative, archive_root=archive_root)
+    if suffix in OFFICE_DOC_SUFFIXES:
+        return _extract_office_doc(path, relative=relative, parsed_markdown=office_doc_markdown)
     if suffix in TEXT_SUFFIXES or suffix == "":
         return _extract_text(path, relative=relative, suffix=suffix)
     # Unknown binary type: try a defensive UTF-8 read, otherwise mark unsupported.
@@ -141,6 +157,41 @@ def extract_attachment(path: Path, *, archive_root: Path | None = None) -> Extra
         kind="text",
         text=text,
         truncated=len(text) >= _TEXT_CHAR_CAP,
+    )
+
+
+def _extract_office_doc(
+    path: Path, *, relative: str, parsed_markdown: str = ""
+) -> ExtractedAttachment:
+    if parsed_markdown:
+        text = parsed_markdown[:_PDF_CHAR_CAP]
+        return ExtractedAttachment(
+            filename=path.name,
+            path=relative,
+            kind="document",
+            text=text,
+            sensitive_hint=_has_sensitive_hint(path.name, text),
+            truncated=len(parsed_markdown) > _PDF_CHAR_CAP,
+            note="Upstage Document Parse로 표/서식을 마크다운으로 변환했습니다.",
+        )
+    try:
+        raw = extract_office_doc_text(path)
+    except OfficeDocParseError as exc:
+        return ExtractedAttachment(
+            filename=path.name,
+            path=relative,
+            kind="document",
+            note=f"문서 파싱 실패: {exc}",
+        )
+    text = raw[:_PDF_CHAR_CAP]
+    return ExtractedAttachment(
+        filename=path.name,
+        path=relative,
+        kind="document",
+        text=text,
+        sensitive_hint=_has_sensitive_hint(path.name, text),
+        truncated=len(raw) > _PDF_CHAR_CAP,
+        note="로컬 파서로 텍스트만 추출했습니다(표/서식 제외).",
     )
 
 

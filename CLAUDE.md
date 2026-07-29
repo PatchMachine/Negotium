@@ -33,14 +33,15 @@ pytest -q
 pytest tests/integration/test_app_smoke.py -q      # end-to-end office flows (FakeLLM)
 pytest tests/unit/test_llm_gateway.py::test_name -q
 
-# Run backend (FastAPI on :8080)
-negotium serve
+# Run everything (console + API on :8080 — one port, one origin)
+negotium serve                     # serves frontend/dist at / when it exists
+negotium serve --build-frontend    # npm install/build first (needs Node 20+)
 # Other CLI: llm-gateway --port 8090 | reset-state --yes --actor <name> | skill list/run
 
-# Frontend (React+Vite on :5173, proxies /api and /health to :8080; needs Node 20+)
+# Frontend HMR only (optional; :5173 proxies /api and /health to :8080)
 npm install --prefix frontend
 npm run dev --prefix frontend
-npm run build --prefix frontend    # tsc -b && vite build
+npm run build --prefix frontend    # tsc -b && vite build → served by :8080, no restart needed
 
 # Docker (no vLLM/CUDA in image; forces NG_VLLM_MODE=http)
 docker compose -f docker/docker-compose.yml up --build
@@ -53,11 +54,12 @@ Pre-commit runs ruff (with `--fix`), ruff-format, and strict mypy.
 - **`negotium/domain/`** — `LlmRoute`, and `ports.py` with the `LlmProvider`/`LlmMessage`/`LlmResponse` protocol every LLM adapter implements (incl. multimodal ContentPart helpers).
 - **`negotium/adapters/llm/`** — providers (openai, anthropic, gemini, vllm HTTP, vllm embedded in-process, ollama, `fake_adapter.py` for tests), `gateway.py` (local/cloud routing + secret-pattern force-local), `catalog.py` (provider metadata + live model listing). **Solar reuses `OpenAiProvider`** with a different base_url — no dedicated adapter.
 - **`negotium/archive/`** — one file-backed store class per concern (access control, secrets, audit log, operations/permanent/volatile memory, work schedule, process plans, HR evaluations, MCP audit/sessions, …). Shared locked-file persistence helpers live in `archive/_store.py` — use them instead of hand-rolling portalocker+json. Stores persist to `archive/` at the repo root (or `NG_ARCHIVE_DIR`).
-- **`negotium/app/`** — FastAPI app (`main.py`), Typer CLI (`cli.py`), settings (`settings.py`, pydantic-settings with `NG_` env prefix), business services in `services/` (LLM/chat, documents, memory, MCP hub, skills, context firewall), and `container.py` — the composition root wiring stores + LLM gateway.
+- **`negotium/app/console_site.py`** — serves the built React console (`frontend/dist`, override with `NG_FRONTEND_DIST`) from the backend process, so UI and API share one port. `/assets` is a `StaticFiles` mount; the SPA shell comes from the app's 404 handler, **only** for GET/HEAD requests that matched no route (`scope["endpoint"] is None`) outside `/api` and `/assets` — so 405s, slash redirects, and endpoint-raised 404 bodies keep working. The legacy contributor site lives under `/contribute`, not `/`.
+- **`negotium/app/`** — FastAPI app (`main.py`), Typer CLI (`cli.py`), settings (`settings.py`, pydantic-settings with `NG_` env prefix), business services in `services/` (LLM/chat, documents, memory, MCP hub, skills, context firewall), and `container.py` — the composition root wiring stores + LLM gateway. Attachments: `services/office_doc_parser.py` extracts docx/hwpx (stdlib zip+XML) and binary hwp (olefile) locally; `services/document_parse_service.py` calls Upstage Document Parse (same Solar key) **only on the cloud route** with a `<upload>.parsed.md` sidecar cache — the route is threaded into `_resolve_document_attachments` so local-route files never leave the machine.
 - **`negotium/app/api/`** — the frontend REST API split by domain: `auth.py`, `setup.py`, `uploads.py`, `documents.py` (documents + /hr), `integrations.py` (MCP hub), `llm.py`, `work.py` (work-schedule/process-plans/status/progress/handover + **/reports/weekly**), `agent.py` (office agent plans, ai-jobs, skills), `admin.py`, `memory.py`. Each exposes `create_<domain>_router(container)`; `__init__.py` aggregates them under `/api`. Cross-domain helpers live in `api/_shared.py` — notably `_complete_office_task` (single LLM entry point, task-routed, empty-response fallback) and the step engine `_generate_process_steps` + `_enqueue_process_steps` (turns any markdown into ordered, dependency-chained WorkScheduleItems; used by meeting minutes, handover, and process design).
 - **`negotium/llm_gateway/`** — optional standalone FastAPI process for external LLM calls only; the main backend delegates to it when `NG_LLM_GATEWAY_URL` is set.
 - **`negotium/skills/<id>/SKILL.md`** — office skill definitions (YAML front-matter + body), loaded by `services/skill_registry.py`; shared by the HTTP API, MCP hub, and CLI.
-- **`frontend/`** — React 19 + TypeScript + Vite console; every page is lazy-loaded (see App.tsx page map), API client split by domain under `src/api/` with an index barrel. Auth is header-based: requests carry `X-NG-User`; permissions come from the user's assigned position.
+- **`frontend/`** — React 19 + TypeScript + Vite console; every page is lazy-loaded (see App.tsx page map), API client split by domain under `src/api/` with an index barrel. Auth is token-based: `POST /api/auth/login` (PBKDF2 credentials in `archive/auth.json`) returns a session token, sent as `X-NG-User: Bearer <token>` (12h sliding TTL, renewed on activity). Effective permissions resolve position → department policy → role; `/auth/me` reports the same set enforcement uses. Login is rate-limited (5 fails / 5 min per user id and per IP).
 
 ## Core office loops (what must keep working)
 

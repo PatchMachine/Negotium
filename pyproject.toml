@@ -24,6 +24,7 @@ dependencies = [
     "python-multipart>=0.0.9",
     "openpyxl>=3.1",
     "pypdf>=4.0",
+    "olefile>=0.47",
 ]
 
 [project.optional-dependencies]
@@ -96,6 +97,7 @@ module = [
     "pytesseract",
     "PIL",
     "PIL.*",
+    "olefile",
     "transformers",
     "vllm",
     "torch",

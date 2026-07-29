@@ -520,6 +520,79 @@ def test_document_generation_honors_format_directive_and_attachment(tmp_path: Pa
     assert (archive_dir / body["path"]).exists()
 
 
+def test_document_generation_with_docx_attachment_on_cloud_route(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import zipfile
+    from io import BytesIO
+
+    from negotium.app.api import _shared
+
+    archive_dir = tmp_path / "archive"
+    container = Container.build(
+        Settings(env="test", archive_dir=archive_dir, workspace_dir=tmp_path / "workspaces")
+    )
+    container.llm = FakeLlmProvider(responses=[ScriptedResponse(text="# 회의 보고\n첨부 반영")])
+    container.llm_runtime.write(
+        LlmRuntimeConfig(
+            default_route="api", default_provider="fake", local_enabled=True, api_enabled=True
+        )
+    )
+    container.settings.llm.solar_api_key = "up_test_key"
+    headers = _auth_headers(container)
+
+    parse_calls: list[str] = []
+
+    async def fake_parse(path, **kwargs):
+        parse_calls.append(path.name)
+        return "# Document Parse 마크다운\n| 항목 | 값 |", ""
+
+    monkeypatch.setattr(_shared, "parse_office_document", fake_parse)
+
+    docx = BytesIO()
+    with zipfile.ZipFile(docx, "w") as archive:
+        archive.writestr(
+            "word/document.xml",
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            "<w:body><w:p><w:r><w:t>본문</w:t></w:r></w:p></w:body></w:document>",
+        )
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        upload = client.post(
+            "/api/uploads",
+            headers=headers,
+            files={
+                "file": (
+                    "회의자료.docx",
+                    docx.getvalue(),
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            },
+            data={"work_title": "docx attachment"},
+        )
+        assert upload.status_code == 200
+        upload_id = upload.json()["upload"]["id"]
+
+        response = client.post(
+            "/api/documents/generate",
+            headers=headers,
+            json={
+                "document_type": "report_draft",
+                "title": "첨부 문서 보고",
+                "source_text": "첨부를 반영해줘",
+                "audience": "관리팀",
+                "attachment_ids": [upload_id],
+                "output_format": "auto",
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert parse_calls, "cloud route must call Document Parse for docx"
+    assert any("Document Parse" in note for note in body["attachment_notes"])
+
+
 def test_skills_endpoints_list_and_run(tmp_path: Path) -> None:
     container = Container.build(
         Settings(

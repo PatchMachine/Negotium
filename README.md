@@ -54,35 +54,42 @@ archive/*.md · *.json  (MD GitOps — DB 없음)
 ```bash
 uv venv --python 3.11 .venv && source .venv/bin/activate
 uv pip install -e ".[dev]"
-cp .env.example .env          # 값 채워 넣기
-negotium serve
+cp .env.example .env                     # 값 채워 넣기
+negotium serve --build-frontend          # 콘솔 빌드 + 서버 실행 (Node 20+ 필요)
 ```
 
-백엔드 API와 기존 서버 렌더링 페이지는 FastAPI 서버에서 제공됩니다.
+**콘솔과 API는 하나의 포트(`8080`)에서 함께 제공됩니다.** 브라우저에서
+`http://localhost:8080` 하나만 열면 됩니다. `--build-frontend`는 `frontend/dist`가
+없거나 프론트엔드를 수정했을 때만 필요하고, 이후에는 `negotium serve`로 충분합니다.
+
 개발 모드에서는 API 키 암호화용 개발 키가 자동 적용됩니다. 운영 배포에서는 반드시 `.env`에
 충분히 긴 `NG_SECRET_KEY`를 직접 설정하세요.
 
-- 외부 참여 안내: `http://localhost:8080/`
-- 참여 방법: `http://localhost:8080/join`
-- 운영 메모리 설정: `http://localhost:8080/operations`
-- 운영 메모리 API: `http://localhost:8080/api/operations-memory`
+- 콘솔(React): `http://localhost:8080/`
 - API 문서: `http://localhost:8080/docs`
 - 상태 확인: `http://localhost:8080/health`
+- 운영 메모리 API: `http://localhost:8080/api/operations-memory`
+- 외부 참여 안내: `http://localhost:8080/contribute`
+- 참여 방법: `http://localhost:8080/contribute/join`
+- 운영 메모리 설정: `http://localhost:8080/contribute/operations`
 
 운영 메모리는 처음에는 비어 있으며 UI에서 저장하면 `archive/operations_memory.json`에 기록됩니다.
 회사 이름, 오피스 프로젝트, 진행 중 계획은 모든 문서 생성·업무 배정 프롬프트에 회사 컨텍스트로 전달됩니다.
 
-## 프론트엔드 로컬 실행
+콘솔에는 홈(하루 업무 흐름), 문서 자동화·회의록, 업무 현황·주간보고, 업무 배정,
+인수인계, 채용/면접, AI 어시스턴트, 인사관리 탭이 포함됩니다.
+
+## 프론트엔드 개발 (HMR)
+
+프론트엔드를 고칠 때만 Vite 개발 서버를 따로 띄웁니다. 배포·일반 실행에는 필요 없습니다.
 
 ```bash
 npm install --prefix frontend
-npm run dev --prefix frontend
+npm run dev --prefix frontend    # http://localhost:5173, /api·/health는 :8080으로 프록시
 ```
 
-React 프론트엔드는 `http://localhost:5173`에서 열립니다. 개발 서버는 `/api`와 `/health` 요청을
-`http://localhost:8080`의 FastAPI 백엔드로 프록시합니다.
-프론트엔드에는 홈(하루 업무 흐름), 문서 자동화·회의록, 업무 현황·주간보고, 업무 배정,
-인수인계, 채용/면접, AI 어시스턴트, 인사관리 탭이 포함됩니다.
+수정이 끝나면 `npm run build --prefix frontend`로 빌드하면 `http://localhost:8080`에
+바로 반영됩니다(백엔드 재시작 불필요). 빌드 산출물 위치는 `NG_FRONTEND_DIST`로 바꿀 수 있습니다.
 
 ## Upstage Solar (기본 클라우드 provider)
 
@@ -196,6 +203,13 @@ negotium serve
 - **업무 병목 파악**: 최근 업무 로그 상태를 묶어 관리자용 병목 요약 제공.
 - **문서 자동화**: 회의록, 보고서, 업무 요청서, PPT 초안을 생성해 `archive/documents/`에 저장.
 
+### 첨부 문서 형식
+
+채팅·문서 생성·셋업 마법사에 md/txt/csv/xlsx/PDF/이미지 외에 **DOCX·HWP·HWPX**를 첨부할 수 있습니다.
+클라우드 라우트에서는 Upstage **Document Parse** API(같은 Solar API 키)가 표·서식까지 마크다운으로
+변환하며, 호출당 과금되지만 파일별로 결과가 캐시되어 같은 첨부를 다시 쓸 때는 재과금되지 않습니다.
+로컬 라우트·키 미설정·API 실패 시에는 내장 로컬 파서가 텍스트만 추출합니다(파일이 외부로 나가지 않음).
+
 운영 메모리는 장기적으로 유지되는 회사 정보이고, 현재 작업 메모리는 지금 진행 중인 업무 상태입니다.
 AI 업무 아키텍처 생성 결과는 `archive/work_architecture/`에 Markdown으로 남고, 관련 작업 스케줄은
 `archive/work_schedule.json`에서 CRUD로 관리됩니다.
@@ -269,11 +283,11 @@ Docker 이미지에는 vLLM/CUDA 스택이 포함되지 않습니다. 컨테이�
 라우트만 동작합니다. 사내 비공개 모델을 vLLM으로 직접 돌려야 한다면 위의
 "로컬 GPU 머신에서 vLLM 임베드 실행" 절을 따라 호스트에서 실행하세요.
 
-컨테이너가 올라오면 `http://localhost:5173`에서 React 프론트엔드를 확인할 수 있습니다.
-FastAPI 백엔드는 `http://localhost:8080`에서 계속 제공됩니다.
+컨테이너가 올라오면 콘솔과 API 모두 `http://localhost:8080`에서 제공됩니다.
+이미지 빌드 단계에서 React 콘솔을 함께 빌드해 백엔드가 직접 서빙하므로 프론트엔드 컨테이너는 없습니다.
 LLM 게이트웨이는 `http://localhost:8090`에서 별도로 뜨며, 메인 백엔드는 `NG_LLM_GATEWAY_URL`로
 게이트웨이에 LLM 호출을 위임합니다.
-`archive/`, `config/`, 작업 디렉터리는 compose 설정에 따라 호스트와 연결됩니다.
+`archive/`와 작업 디렉터리는 compose 설정에 따라 호스트와 연결됩니다.
 
 ## Patch Machine에서 마이그레이션
 
@@ -282,7 +296,8 @@ Negotium 리브랜딩은 breaking change입니다. 기존 Patch Machine 설치�
 1. **환경 변수**: `.env`의 모든 `PM_` 접두사를 `NG_`로 바꿉니다 (`sed -i 's/^PM_/NG_/' .env`).
    `PM_LLM_PROVIDER`처럼 문서에만 있고 실제로 읽히지 않던 이름도 이제 `NG_LLM_PROVIDER`로 정상 동작합니다.
 2. **CLI**: `patch-machine serve` → `negotium serve`. 재설치: `uv pip install -e ".[dev]"`.
-3. **인증 헤더**: API를 직접 호출하는 스크립트는 `X-PM-User` → `X-NG-User`.
+3. **인증**: API를 직접 호출하는 스크립트는 이제 `POST /api/auth/login`으로 세션 토큰을
+   발급받아 `X-NG-User: Bearer <토큰>` 헤더로 보내야 합니다 (사용자 이름만 넣는 방식은 401).
 4. **작업 디렉터리**: `mv .pm_workspaces .ng_workspaces` (또는 새로 클론 후 초기 세팅).
 5. **archive/**: 그대로 사용 가능합니다. 단, 이제 git이 추적하지 않으므로 별도 백업을 권장합니다.
 

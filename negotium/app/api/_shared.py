@@ -82,6 +82,8 @@ from negotium.app.services.document_output import (
     resolve_output_format,
     write_generated_doc,
 )
+from negotium.app.services.document_parse_service import parse_office_document
+from negotium.app.services.office_doc_parser import OFFICE_DOC_SUFFIXES
 from negotium.app.services.org_service import render_org_roster_markdown
 from negotium.app.services.setup_catalog import (
     recommend_patchnote_setup,
@@ -806,8 +808,12 @@ async def _chat_complete(
     model = _resolve_task_model(container, payload.task or "chat", provider, llm_route)
     vision = model_supports_vision(provider, model)
     audio = model_supports_audio(provider, model)
-    attachment_context, media_parts, attachment_notes = _resolve_document_attachments(
-        container, payload.attachment_ids, vision_enabled=vision, audio_enabled=audio
+    attachment_context, media_parts, attachment_notes = await _resolve_document_attachments(
+        container,
+        payload.attachment_ids,
+        vision_enabled=vision,
+        audio_enabled=audio,
+        route=llm_route,
     )
     user_message = payload.message
     if attachment_context:
@@ -1576,6 +1582,12 @@ def _settings_api_key(container: Container, provider: str) -> str:
     return ""
 
 
+def _solar_api_key(container: Container) -> str:
+    """Upstage key: stored secret first, env/.env settings second (same as chat)."""
+    saved = container.secret_store.read("solar")
+    return (saved.api_key if saved else "") or _settings_api_key(container, "solar")
+
+
 def _audit(
     container: Container,
     *,
@@ -1969,8 +1981,12 @@ async def _generate_office_document(
     model = _resolve_task_model(container, "document_generation", provider, route)
     vision = model_supports_vision(provider, model)
     audio = model_supports_audio(provider, model)
-    attachment_context, image_parts, attachment_notes = _resolve_document_attachments(
-        container, payload.attachment_ids, vision_enabled=vision, audio_enabled=audio
+    attachment_context, image_parts, attachment_notes = await _resolve_document_attachments(
+        container,
+        payload.attachment_ids,
+        vision_enabled=vision,
+        audio_enabled=audio,
+        route=route,
     )
 
     prompt = render_prompt(
@@ -2965,12 +2981,13 @@ def _office_context(container: Container) -> str:
 """.strip()
 
 
-def _resolve_document_attachments(
+async def _resolve_document_attachments(
     container: Container,
     attachment_ids: list[str],
     *,
     vision_enabled: bool,
     audio_enabled: bool = False,
+    route: str = "",
 ) -> tuple[str, list[dict[str, Any]], list[str]]:
     """Resolve upload ids into prompt text, media parts, and human-readable notes.
 
@@ -2978,6 +2995,10 @@ def _resolve_document_attachments(
     attachments are flattened into ``attachment_context``; images/audio are passed
     through as multimodal parts only when a capable model is active, otherwise text
     (OCR for images) is used and a note explains the fallback.
+
+    Office documents (docx/hwp/hwpx) go to Upstage Document Parse only when
+    ``route == "cloud"`` — a blank route counts as local so an unknown route can
+    never leak file bytes off the machine or bill the account.
     """
 
     if not attachment_ids:
@@ -2993,7 +3014,22 @@ def _resolve_document_attachments(
             notes.append(f"첨부 {attachment_id}: 업로드를 찾을 수 없습니다.")
             continue
         path = archive_dir / str(record.get("path") or "")
-        extracted = extract_attachment(path, archive_root=archive_dir)
+        parsed_markdown = ""
+        if path.suffix.lower() in OFFICE_DOC_SUFFIXES and route == "cloud":
+            api_key = _solar_api_key(container)
+            if api_key:
+                markdown, reason = await parse_office_document(
+                    path, api_key=api_key, base_url=container.settings.llm.solar_base_url
+                )
+                if markdown:
+                    parsed_markdown = markdown
+                elif reason:
+                    notes.append(
+                        f"{path.name}: 클라우드 문서 파싱 실패 — 로컬 파서로 대체합니다. ({reason})"
+                    )
+        extracted = extract_attachment(
+            path, archive_root=archive_dir, office_doc_markdown=parsed_markdown
+        )
         if extracted.has_audio:
             if audio_enabled:
                 media_parts.append(

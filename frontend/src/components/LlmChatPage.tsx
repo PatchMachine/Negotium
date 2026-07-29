@@ -880,7 +880,7 @@ export default function LlmChatPage() {
               <input
                 type="file"
                 multiple
-                accept=".png,.jpg,.jpeg,.webp,.gif,.bmp,.pdf,.txt,.md,.csv,.mp3,.wav,.m4a,.ogg,.webm,.flac"
+                accept=".png,.jpg,.jpeg,.webp,.gif,.bmp,.pdf,.txt,.md,.csv,.docx,.hwp,.hwpx,.mp3,.wav,.m4a,.ogg,.webm,.flac"
                 onChange={(event) => void handleFiles(event.target.files)}
                 style={{ display: 'none' }}
               />

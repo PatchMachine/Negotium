@@ -7,9 +7,8 @@ local/cloud LLM routing over a Markdown-first archive (no database).
 
 ```mermaid
 flowchart TB
-  User["Users: owner, manager, staff, viewer"] --> Frontend["React Frontend: localhost:5173"]
-
-  Frontend -->|"REST API (X-NG-User)"| FastAPI["FastAPI Backend: negotium serve"]
+  User["Users: owner, manager, staff, viewer"] --> Frontend["React Console (frontend/dist, served at /)"]
+  Frontend -->|"REST API (X-NG-User: Bearer token), same origin"| FastAPI["FastAPI Backend: negotium serve — localhost:8080"]
 
   FastAPI --> Documents["Documents API (회의록/보고서/HR)"]
   FastAPI --> Work["Work API (배정/현황/주간보고/인수인계)"]
@@ -89,14 +88,21 @@ All stores share the locked-file helpers in `negotium/archive/_store.py`
 
 ```mermaid
 flowchart TB
-  Request["Frontend request"] --> Header["X-NG-User"]
-  Header --> ACL["AccessControlStore"]
+  Login["POST /api/auth/login (PBKDF2 검증, 5회 실패 시 429)"] --> Token["세션 토큰 (12h 슬라이딩 TTL)"]
+  Token --> Request["X-NG-User: Bearer &lt;token&gt;"]
+  Request --> AuthStore["AuthStore.resolve_token (archive/auth.json)"]
+  AuthStore -->|"만료/위조"| Unauthorized["401"]
+  AuthStore --> ACL["AccessControlStore"]
   ACL --> User["UserRecord"]
   User --> Position["PositionRecord permissions"]
   Position --> Check{"Required permission?"}
   Check -->|"allowed"| Handler["API handler"]
   Check -->|"denied"| Forbidden["403"]
 ```
+
+비밀번호는 PBKDF2-SHA256(20만 회) 해시로, 세션 토큰은 SHA-256 해시로만
+`archive/auth.json`에 저장됩니다. 유효 권한은 직급(position) → 부서 정책 → 역할(role)
+순으로 해석되며, `/auth/me`가 반환하는 권한 목록도 동일한 규칙을 따릅니다.
 
 Default roles: `owner` (all via `*`), `manager` (memory/LLM/documents/uploads/work),
 `staff` (LLM chat/uploads/work read), `viewer` (work read only). Day-to-day access

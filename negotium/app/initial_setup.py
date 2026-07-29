@@ -80,6 +80,25 @@ def parse_setup_file(path: Path, *, archive_root: Path | None = None) -> ParsedS
             rows=rows,
             sensitive_hint=_has_sensitive_hint(path.name, text),
         )
+    if suffix in {".docx", ".hwp", ".hwpx"}:
+        # Local parsers only — analyze runs in bulk and a cloud key may not
+        # even exist yet. Lazy import mirrors _read_xlsx below.
+        from negotium.app.services.office_doc_parser import (
+            OfficeDocParseError,
+            extract_office_doc_text,
+        )
+
+        try:
+            text = extract_office_doc_text(path)[:12000]
+        except OfficeDocParseError as exc:
+            text = f"(문서 파싱 실패: {exc})"
+        return ParsedSetupFile(
+            path=relative,
+            filename=path.name,
+            kind=suffix.lstrip("."),
+            text=text,
+            sensitive_hint=_has_sensitive_hint(path.name, text),
+        )
     text = path.read_text(encoding="utf-8", errors="ignore")[:12000]
     return ParsedSetupFile(
         path=relative,

@@ -187,7 +187,7 @@ export default function SetupChatStep({
             <input
               type="file"
               multiple
-              accept=".csv,.tsv,.xlsx,.txt,.md"
+              accept=".csv,.tsv,.xlsx,.txt,.md,.docx,.hwp,.hwpx"
               disabled={busy || uploading}
               onChange={(event) => void handleFiles(event.target.files)}
             />

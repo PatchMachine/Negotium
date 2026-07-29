@@ -263,10 +263,11 @@ export default function DocumentAutomationPage() {
       </div>
       </div>
       <details className="advanced-panel">
-        <summary>파일 첨부 (이미지 / PDF / txt / md / 표)</summary>
+        <summary>파일 첨부 (이미지 / PDF / docx / hwp / txt / md / 표)</summary>
         <p className="muted small">
           파일을 올리면 AI 모델이 직접 읽습니다. 이미지/PDF는 텍스트로 추출하거나, 비전 모델이 설정된
-          경우 이미지를 그대로 전달합니다.
+          경우 이미지를 그대로 전달합니다. docx/hwp/hwpx 문서는 API 경로에서 표·서식까지 변환하고,
+          로컬 경로에서는 텍스트만 추출합니다.
         </p>
         <label className="file-upload-label">
           파일 업로드

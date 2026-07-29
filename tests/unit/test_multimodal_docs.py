@@ -156,3 +156,50 @@ def test_extract_missing_file(tmp_path: Path) -> None:
     extracted = extract_attachment(tmp_path / "nope.txt", archive_root=tmp_path)
     assert extracted.kind == "unsupported"
     assert extracted.note
+
+
+def _write_minimal_docx(path: Path, body_text: str) -> Path:
+    import zipfile
+
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        f"<w:body><w:p><w:r><w:t>{body_text}</w:t></w:r></w:p></w:body></w:document>"
+    )
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("word/document.xml", xml)
+    return path
+
+
+def test_extract_docx_attachment_uses_local_parser(tmp_path: Path) -> None:
+    file = _write_minimal_docx(tmp_path / "minutes.docx", "주간 회의 내용")
+    extracted = extract_attachment(file, archive_root=tmp_path)
+    assert extracted.kind == "document"
+    assert "주간 회의 내용" in extracted.text
+    assert "로컬 파서" in extracted.note
+
+
+def test_extract_docx_attachment_prefers_cloud_markdown(tmp_path: Path) -> None:
+    file = _write_minimal_docx(tmp_path / "minutes.docx", "로컬 본문")
+    extracted = extract_attachment(
+        file, archive_root=tmp_path, office_doc_markdown="# 클라우드 변환 결과\n| 표 | 값 |"
+    )
+    assert extracted.kind == "document"
+    assert "클라우드 변환 결과" in extracted.text
+    assert "로컬 본문" not in extracted.text
+    assert "Document Parse" in extracted.note
+
+
+def test_extract_sensitive_docx_sets_hint(tmp_path: Path) -> None:
+    file = _write_minimal_docx(tmp_path / "급여명세.docx", "3월 급여 내역")
+    extracted = extract_attachment(file, archive_root=tmp_path)
+    assert extracted.sensitive_hint is True
+
+
+def test_extract_broken_hwp_reports_note_without_raising(tmp_path: Path) -> None:
+    file = tmp_path / "broken.hwp"
+    file.write_bytes(b"not an ole compound file")
+    extracted = extract_attachment(file, archive_root=tmp_path)
+    assert extracted.kind == "document"
+    assert not extracted.has_text
+    assert "문서 파싱 실패" in extracted.note

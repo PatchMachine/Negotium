@@ -116,6 +116,10 @@ class UploadStore:
         path = self._archive_dir / target.path
         if path.exists() and path.is_file():
             path.unlink()
+        # Document Parse sidecar cache lives next to the upload.
+        sidecar = Path(f"{path}.parsed.md")
+        if sidecar.exists() and sidecar.is_file():
+            sidecar.unlink()
         self._write_index([record for record in records if record.id != upload_id])
         return True
 
