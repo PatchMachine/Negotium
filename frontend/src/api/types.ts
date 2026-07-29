@@ -865,3 +865,44 @@ export type SetupChatCapability = {
   tier: ModelTier;
   reasons: string[];
 };
+
+/** Automation scheduler config (관리자 설정 → 자동화). */
+export type WeeklyReportConfig = {
+  enabled: boolean;
+  weekday: number; // 0=Mon .. 6=Sun
+  time: string; // "HH:MM"
+  timezone: string;
+};
+
+export type ReminderConfig = {
+  enabled: boolean;
+  time: string;
+  stale_days: number;
+};
+
+export type AutomationConfig = {
+  weekly_report: WeeklyReportConfig;
+  reminders: ReminderConfig;
+  webhook_url: string;
+};
+
+export type AutomationStatus = {
+  config: AutomationConfig;
+  state: Record<string, string>;
+};
+
+export type NotificationItem = {
+  id: string;
+  user_id: string;
+  kind: 'weekly_report' | 'reminder' | 'system';
+  title: string;
+  body: string;
+  link_path: string;
+  created_at: string;
+  read_by: string[];
+};
+
+export type NotificationsPayload = {
+  items: NotificationItem[];
+  unread: number;
+};

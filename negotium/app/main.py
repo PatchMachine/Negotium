@@ -13,18 +13,43 @@ from negotium.app.api import create_operations_api_router
 from negotium.app.console_site import install_console
 from negotium.app.container import Container
 from negotium.app.contributor_site import create_contributor_site_router
+from negotium.app.services.automation_service import run_due_jobs
 from negotium.observability import get_logger
+
+_AUTOMATION_TICK_SECONDS = 60
+
+
+async def _automation_loop(container: Container) -> None:
+    """Minute tick for scheduled automation. Sleep-first: a short-lived app
+    (e.g. TestClient lifespans) never executes a tick."""
+    log = get_logger(component="automation")
+    while True:
+        await asyncio.sleep(_AUTOMATION_TICK_SECONDS)
+        try:
+            executed = await run_due_jobs(container)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("automation.tick_failed")
+            continue
+        if executed:
+            log.info("automation.jobs_executed", jobs=executed)
 
 
 def create_app(container: Container | None = None) -> FastAPI:
     container = container or Container.build()
     log = get_logger(component="app")
     llm_preload_task: asyncio.Task[None] | None = None
+    automation_task: asyncio.Task[None] | None = None
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        nonlocal llm_preload_task
+        nonlocal llm_preload_task, automation_task
         log.info("app.startup")
+        if container.settings.env != "test" and container.settings.automation_enabled:
+            automation_task = asyncio.create_task(
+                _automation_loop(container), name="automation-scheduler"
+            )
         runtime = container.llm_runtime.read()
         embedded_vllm = container.embedded_vllm()
         if (
@@ -42,10 +67,11 @@ def create_app(container: Container | None = None) -> FastAPI:
             yield
         finally:
             log.info("app.shutdown")
-            if llm_preload_task is not None:
-                llm_preload_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await llm_preload_task
+            for task in (llm_preload_task, automation_task):
+                if task is not None:
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
 
     app = FastAPI(title="Negotium", version="0.1.0", lifespan=lifespan)
     app.include_router(create_operations_api_router(container))

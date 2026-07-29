@@ -25,6 +25,7 @@ from negotium.app.api._shared import (
 from negotium.app.api.admin import create_admin_router
 from negotium.app.api.agent import create_agent_router
 from negotium.app.api.auth import create_auth_router
+from negotium.app.api.automation import create_automation_router
 from negotium.app.api.documents import create_documents_router
 from negotium.app.api.integrations import create_integrations_router
 from negotium.app.api.llm import create_llm_router
@@ -53,6 +54,7 @@ __all__ = [
     "create_admin_router",
     "create_agent_router",
     "create_auth_router",
+    "create_automation_router",
     "create_documents_router",
     "create_integrations_router",
     "create_llm_router",
@@ -77,4 +79,5 @@ def create_operations_api_router(container: Container) -> APIRouter:
     router.include_router(create_agent_router(container))
     router.include_router(create_admin_router(container))
     router.include_router(create_memory_router(container))
+    router.include_router(create_automation_router(container))
     return router

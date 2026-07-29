@@ -2,6 +2,7 @@ import { ReactNode, useEffect, useMemo, useState } from 'react';
 
 import { logout, type AuthUser } from '../api';
 import { setSessionToken } from '../auth';
+import NotificationBell from './NotificationBell';
 import { applyTheme, getTheme, setTheme, toggleTheme, type Theme } from '../theme';
 
 type NavItem<T extends string> = {
@@ -75,6 +76,7 @@ export default function AppShell<T extends string>({ page, navItems, onNavigate,
           </div>
         </div>
         <div className="topbar-actions">
+          <NotificationBell />
           {canGoBack ? (
             <button className="secondary-button app-back-button" type="button" onClick={onBack}>
               ← 이전 화면

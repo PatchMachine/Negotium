@@ -114,7 +114,10 @@ class WorkScheduleItem:
             signed_off_at=str(payload.get("signed_off_at") or "").strip(),
             completion_record=str(payload.get("completion_record") or "").strip(),
             created_at=str(payload.get("created_at") or now),
-            updated_at=now,
+            # Preserve a stored timestamp: rows round-trip through create() on
+            # every read, so stamping here unconditionally would rewrite
+            # updated_at to read-time and break staleness detection.
+            updated_at=str(payload.get("updated_at") or now),
         )
 
     @classmethod
@@ -180,7 +183,9 @@ class WorkScheduleStore:
         if not item.title:
             raise ValueError("schedule item title is required")
         items = [existing for existing in self._read_items() if existing.id != item.id]
-        saved = WorkScheduleItem.create(**item.to_dict())
+        saved = WorkScheduleItem.create(
+            **{**item.to_dict(), "updated_at": datetime.now(UTC).isoformat()}
+        )
         items.append(saved)
         self._write_items(items)
         return saved

@@ -18,6 +18,7 @@ from negotium.archive.agent_execution import AgentExecutionStore
 from negotium.archive.ai_jobs import AiJobStore
 from negotium.archive.audit_log import AuditLogStore
 from negotium.archive.auth_store import AuthStore
+from negotium.archive.automation import AutomationStore
 from negotium.archive.context_compressor import CompressedContextStore
 from negotium.archive.context_firewall import ContextFirewallStore
 from negotium.archive.conversation_store import ConversationStore
@@ -27,6 +28,7 @@ from negotium.archive.llm_runtime import LlmRuntimeStore
 from negotium.archive.mcp_audit import McpAuditStore
 from negotium.archive.mcp_sessions import McpSessionStore
 from negotium.archive.memory_schema import MemorySchemaStore
+from negotium.archive.notifications import NotificationStore
 from negotium.archive.operations_memory import OperationsMemoryStore
 from negotium.archive.permanent_memory import PermanentMemoryStore
 from negotium.archive.process_plans import ProcessPlanStore
@@ -69,6 +71,8 @@ class Container:
     work_memory: WorkMemoryStore
     work_schedule: WorkScheduleStore
     process_plans: ProcessPlanStore
+    automation: AutomationStore
+    notifications: NotificationStore
     llm: LlmProvider
     metrics: AgentMetrics = field(default_factory=AgentMetrics)
 
@@ -114,6 +118,8 @@ class Container:
         work_memory = WorkMemoryStore(settings.archive_dir)
         work_schedule = WorkScheduleStore(settings.archive_dir)
         process_plans = ProcessPlanStore(settings.archive_dir)
+        automation = AutomationStore(settings.archive_dir)
+        notifications = NotificationStore(settings.archive_dir)
 
         metrics = AgentMetrics()
         llm = cls._build_llm(settings)
@@ -150,6 +156,8 @@ class Container:
             work_memory=work_memory,
             work_schedule=work_schedule,
             process_plans=process_plans,
+            automation=automation,
+            notifications=notifications,
             llm=llm,
             metrics=metrics,
         )

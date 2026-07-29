@@ -11,3 +11,4 @@ export * from './work';
 export * from './agent';
 export * from './admin';
 export * from './memory';
+export * from './automation';

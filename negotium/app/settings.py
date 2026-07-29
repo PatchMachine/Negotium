@@ -88,6 +88,9 @@ class Settings(BaseSettings):
     llm_gateway_host: str = "0.0.0.0"
     llm_gateway_port: int = 8090
     secret_key: str = ""
+    # Kill switch for the background automation scheduler (NG_AUTOMATION_ENABLED).
+    # Individual jobs stay off until an admin enables them in the console.
+    automation_enabled: bool = True
 
     llm: LlmSettings = Field(default_factory=LlmSettings)
 

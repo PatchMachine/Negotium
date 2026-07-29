@@ -16,6 +16,7 @@ import {
   type LlmProviderInfo,
   type ProviderModelPayload,
 } from '../api';
+import AutomationPanel from './admin/AutomationPanel';
 import LocalAgentAdminPanel from './admin/LocalAgentAdminPanel';
 import {
   ModelCapabilityNotice,
@@ -33,13 +34,14 @@ const FALLBACK_PROVIDER_CATALOG: LlmProviderInfo[] = [
   { provider: 'together', label: 'Together AI', base_url: '', base_url_source: '', fallback_models: [] },
 ];
 
-type AdminSettingsSection = 'api-keys' | 'local-agent' | 'task-routing' | 'context-firewall';
+type AdminSettingsSection = 'api-keys' | 'local-agent' | 'task-routing' | 'context-firewall' | 'automation';
 
 const adminSettingsSections: Array<{ id: AdminSettingsSection; label: string; description: string }> = [
   { id: 'api-keys', label: 'API 키', description: '외부 LLM provider와 모델 선택' },
   { id: 'local-agent', label: '로컬 에이전트', description: '로컬 모델과 기동 상태 관리' },
   { id: 'task-routing', label: '작업 라우팅', description: '업무별 local/API 배정' },
   { id: 'context-firewall', label: '반출 제어', description: '외부 LLM 검열과 감사 로그' },
+  { id: 'automation', label: '자동화', description: '주간보고 스케줄·리마인더·웹훅' },
 ];
 
 export default function AdminSettingsPage() {
@@ -267,6 +269,7 @@ export default function AdminSettingsPage() {
       {activeSection === 'local-agent' ? <LocalAgentAdminPanel /> : null}
       {activeSection === 'task-routing' ? <LlmTaskRoutingPanel /> : null}
       {activeSection === 'context-firewall' ? <ContextFirewallPanel /> : null}
+      {activeSection === 'automation' ? <AutomationPanel /> : null}
     </section>
   );
 }
