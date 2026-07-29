@@ -5,14 +5,13 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import json
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, TypedDict
 
-import portalocker
+from negotium.archive._store import read_json_file, write_json_file
 
 SESSION_TTL = timedelta(hours=12)
 PASSWORD_ITERATIONS = 200_000
@@ -193,15 +192,24 @@ class AuthStore:
         sessions = _active_sessions(payload["sessions"])
         changed = len(sessions) != len(payload["sessions"])
         match = next((session for session in sessions if session.token_hash == token_hash), None)
+        user: AuthUser | None = None
+        if match is not None:
+            user = next(
+                (candidate for candidate in payload["users"] if candidate.id == match.user_id),
+                None,
+            )
+        if match is not None and user is not None and user.active:
+            renewed = _renew_session(match)
+            if renewed is not match:
+                sessions = [
+                    renewed if session.token_hash == token_hash else session
+                    for session in sessions
+                ]
+                changed = True
         if changed:
             payload["sessions"] = sessions
             self._write_payload(payload)
-        if match is None:
-            return None
-        user = next(
-            (candidate for candidate in payload["users"] if candidate.id == match.user_id), None
-        )
-        if user is None or not user.active:
+        if match is None or user is None or not user.active:
             return None
         return user.id
 
@@ -274,12 +282,9 @@ class AuthStore:
         return decided
 
     def _read_payload(self) -> AuthPayload:
-        if not self._path.exists():
+        payload = read_json_file(self._path)
+        if not isinstance(payload, dict):
             return {"users": [], "sessions": [], "requests": []}
-        raw = self._path.read_text(encoding="utf-8")
-        if not raw.strip():
-            return {"users": [], "sessions": [], "requests": []}
-        payload = json.loads(raw)
         return {
             "users": [AuthUser.from_mapping(item) for item in payload.get("users", [])],
             "sessions": [SessionRecord.from_mapping(item) for item in payload.get("sessions", [])],
@@ -290,7 +295,6 @@ class AuthStore:
         self,
         payload: AuthPayload,
     ) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
         rendered = {
             "users": [user.to_dict() for user in payload["users"]],
             "sessions": [session.to_dict() for session in payload["sessions"]],
@@ -298,9 +302,7 @@ class AuthStore:
                 request.to_dict(include_password_hash=True) for request in payload["requests"]
             ],
         }
-        with portalocker.Lock(self._path, "w", encoding="utf-8", timeout=5) as fh:
-            json.dump(rendered, fh, ensure_ascii=False, indent=2)
-            fh.write("\n")
+        write_json_file(self._path, rendered)
 
 
 def _hash_password(password: str) -> str:
@@ -346,6 +348,26 @@ def _active_sessions(sessions: list[SessionRecord]) -> list[SessionRecord]:
         if expires_at > now:
             active.append(session)
     return active
+
+
+def _renew_session(session: SessionRecord) -> SessionRecord:
+    """Sliding expiry: extend only once less than half the TTL remains.
+
+    A fresh token therefore costs no rewrite on resolve, bounding renewal
+    writes to roughly one per session per ``SESSION_TTL / 2``.
+    """
+    now = datetime.now(UTC)
+    try:
+        expires_at = datetime.fromisoformat(session.expires_at)
+    except ValueError:
+        return session
+    if expires_at - now >= SESSION_TTL / 2:
+        return session
+    return SessionRecord(
+        token_hash=session.token_hash,
+        user_id=session.user_id,
+        expires_at=(now + SESSION_TTL).isoformat(),
+    )
 
 
 def _validate_user_id(user_id: str) -> None:

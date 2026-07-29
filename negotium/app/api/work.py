@@ -28,6 +28,7 @@ from negotium.app.api._shared import (
     _require,
     _require_editable_plan,
     _require_plan,
+    _require_user,
     _resequence_plan,
     _run_step_skill,
     _schedule_to_work_items,
@@ -92,7 +93,10 @@ def create_work_router(container: Container) -> APIRouter:
     router = APIRouter()
 
     @router.get("/status")
-    async def read_status() -> ApiStatusPayload:
+    async def read_status(
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
+    ) -> ApiStatusPayload:
+        _require_user(container, x_ng_user)
         memory = container.operations_memory.read()
         return ApiStatusPayload(
             ok=True,
@@ -101,7 +105,10 @@ def create_work_router(container: Container) -> APIRouter:
         )
 
     @router.get("/progress")
-    async def read_progress() -> ProgressPayload:
+    async def read_progress(
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
+    ) -> ProgressPayload:
+        _require(container, x_ng_user, "work:read")
         return ProgressPayload(
             current_status_md=container.archive.status.read(),
             recent_logs=_recent_logs(container.settings.archive_dir, limit=8),

@@ -319,12 +319,21 @@ class AccessControlStore:
         payload["department_permissions"] = policies
         self._write_payload(payload)
 
-    def has_permission(self, user_id: str | None, permission: str) -> bool:
+    def effective_permissions(self, user_id: str | None) -> list[str]:
+        """The permission set enforcement actually uses for this user.
+
+        Resolution order: department-scoped policy → position permissions →
+        role permissions. Exposed so API payloads (``/auth/me``, login) report
+        the same set ``has_permission`` enforces.
+        """
         payload = self._read_payload()
         user = self._resolve_user(payload, user_id)
         if user is None or not user.active:
-            return False
-        permissions = _effective_permissions(payload, user)
+            return []
+        return _effective_permissions(payload, user)
+
+    def has_permission(self, user_id: str | None, permission: str) -> bool:
+        permissions = self.effective_permissions(user_id)
         if not permissions:
             return False
         return "*" in permissions or permission in permissions

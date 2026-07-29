@@ -14,6 +14,7 @@ from negotium.app.api._shared import (
     _readable_source_payload,
     _refresh_volatile_memory,
     _require,
+    _require_user,
 )
 from negotium.app.container import Container
 from negotium.app.schemas.core import (
@@ -439,7 +440,10 @@ def create_memory_router(container: Container) -> APIRouter:
         return {"ok": True, "request": request.to_dict()}
 
     @router.get("/operations-memory")
-    async def read_operations_memory() -> OperationsMemoryPayload:
+    async def read_operations_memory(
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
+    ) -> OperationsMemoryPayload:
+        _require_user(container, x_ng_user)
         memory = container.operations_memory.read()
         return OperationsMemoryPayload(**memory.to_dict())
 

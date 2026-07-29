@@ -9,6 +9,7 @@ import {
   type AuthUser,
   type OperationsMemory,
 } from './api';
+import { SESSION_EXPIRED_EVENT } from './auth';
 import AppShell from './components/AppShell';
 import { ChatSurfaceProvider, useChatSurfaces } from './components/chat/ChatSurfaceContext';
 import { surfaceComponents } from './components/chat/surfaceRegistry';
@@ -193,11 +194,19 @@ function AppContent() {
       const setup = await fetchSetupStatus();
       setSetupRequired(setup.setup_required);
       setResumeInitialSetup(hasIncompleteInitialSetupDraft());
+      let authenticated = false;
       if (!setup.setup_required) {
         const me = await fetchCurrentUser();
+        authenticated = me.authenticated;
         setCurrentUser(me.authenticated ? me.user : null);
       }
-      await refresh();
+      // The dashboard endpoints require a session; calling them logged out
+      // would just paint the login page with a 401 banner.
+      if (authenticated) {
+        await refresh();
+      } else {
+        setLoading(false);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '알 수 없는 오류가 발생했습니다.');
       setLoading(false);
@@ -206,6 +215,15 @@ function AppContent() {
 
   useEffect(() => {
     void bootstrap();
+  }, []);
+
+  useEffect(() => {
+    // Fired by the API layer on any 401: the token is already cleared, so
+    // dropping the user state sends them to the login page instead of leaving
+    // a half-broken shell with red error banners.
+    const onExpired = () => setCurrentUser(null);
+    window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
   }, []);
 
   if (loading) {

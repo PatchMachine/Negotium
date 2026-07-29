@@ -1,5 +1,5 @@
 import { getAuthHeaders } from '../auth';
-import { requestJson } from './http';
+import { handleAuthFailure, requestJson } from './http';
 import type {
   ApprovalRequest,
   ChatResponse,
@@ -94,6 +94,10 @@ export async function streamChatMessage(
     }),
   });
   if (!response.ok || !response.body) {
+    if (handleAuthFailure(response)) {
+      handlers.onError?.('로그인이 필요합니다.');
+      return;
+    }
     const detail = response.body ? await response.text() : `${response.status} ${response.statusText}`;
     handlers.onError?.(detail);
     return;

@@ -12,6 +12,14 @@ export function setSessionToken(token: string) {
   }
 }
 
+export const SESSION_EXPIRED_EVENT = 'negotium:session-expired';
+
+/** Drop the stored token and tell the app shell to fall back to the login page. */
+export function notifySessionExpired() {
+  setSessionToken('');
+  window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+}
+
 export function getAuthHeaders(): Record<string, string> {
   const token = getSessionToken();
   if (!token) {

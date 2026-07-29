@@ -529,3 +529,79 @@ async def test_approved_call_message_has_no_dotted_name_field(tmp_path: Path, mo
 
     assistant = next(m for m in result.messages if m.role == "assistant" and m.tool_calls)
     assert assistant.name == ""
+
+
+async def test_missing_actor_gets_no_tools(tmp_path: Path) -> None:
+    """A falsy actor must be treated as unauthenticated, not as unrestricted."""
+
+    container = _container(tmp_path)
+    assert available_tools(container, "") == []
+    assert tool_name_map(container, "") == {}
+
+
+async def test_tool_call_denied_for_missing_actor(tmp_path: Path, monkeypatch) -> None:
+    container = _container(tmp_path)
+    monkeypatch.setattr(
+        mcp_hub_service,
+        "_dispatch_tool",
+        lambda *_a, **_kw: pytest.fail("tool must not run without an actor"),
+    )
+
+    fake = FakeLlmProvider(
+        supports_tools=True,
+        responses=[
+            ScriptedResponse(
+                text="",
+                tool_calls=[ToolCall(id="c1", name="skills.list", arguments={})],
+            ),
+            ScriptedResponse(text="로그인이 필요합니다."),
+        ],
+    )
+    result = await run_agent_loop(
+        container,
+        [LlmMessage("user", "스킬 목록 알려줘")],
+        complete=_complete_from(fake),
+        provider="fake",
+        route="cloud",
+        model="fake",
+        actor="",
+        task="chat",
+        conversation_id="conv-1",
+        tool_names=["skills.list"],
+    )
+
+    assert [item.status for item in result.invocations] == ["denied"]
+    assert result.invocations[0].result["error"] == "permission_denied"
+
+
+async def test_approval_replay_denied_for_missing_actor(tmp_path: Path, monkeypatch) -> None:
+    container = _container(tmp_path)
+    monkeypatch.setattr(
+        mcp_hub_service,
+        "_dispatch_tool",
+        lambda *_a, **_kw: pytest.fail("approved call must not run without an actor"),
+    )
+
+    arguments = {"skill_id": "office_summarize"}
+    fake = FakeLlmProvider(supports_tools=True, responses=[ScriptedResponse(text="안 됩니다.")])
+    result = await run_agent_loop(
+        container,
+        [LlmMessage("user", "실행해줘")],
+        complete=_complete_from(fake),
+        provider="fake",
+        route="cloud",
+        model="fake",
+        actor="",
+        task="chat",
+        conversation_id="conv-1",
+        tool_names=["skills.run"],
+        approvals={
+            approval_id_for("conv-1", "skills.run", arguments): {
+                "tool": "skills.run",
+                "arguments": arguments,
+                "decision": "approve",
+            }
+        },
+    )
+
+    assert result.invocations == []

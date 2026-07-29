@@ -23,6 +23,7 @@ from negotium.app.api._shared import (
     _default_base_url,
     _local_llm_status,
     _require,
+    _require_user,
     _settings_api_key,
     _sse_event,
     _sync_local_llm_state,
@@ -95,11 +96,19 @@ def create_llm_router(container: Container) -> APIRouter:
     router = APIRouter()
 
     @router.get("/llm/providers")
-    async def list_llm_providers() -> dict[str, object]:
+    async def list_llm_providers(
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
+    ) -> dict[str, object]:
+        _require_user(container, x_ng_user)
         return {"providers": provider_payload(vllm_base_url=container.settings.llm.vllm_base_url)}
 
     @router.get("/llm/providers/{provider}/models")
-    async def list_provider_models(provider: str) -> ProviderModelPayload:
+    async def list_provider_models(
+        provider: str,
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
+    ) -> ProviderModelPayload:
+        # Reads stored API keys and makes an outbound call with them.
+        _require(container, x_ng_user, "admin:api_keys")
         try:
             metadata = require_provider(provider)
             saved = container.secret_store.read(provider)
@@ -116,7 +125,9 @@ def create_llm_router(container: Container) -> APIRouter:
     async def preview_provider_models(
         provider: str,
         payload: ProviderModelPreviewPayload,
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
     ) -> ProviderModelPayload:
+        _require(container, x_ng_user, "admin:api_keys")
         try:
             metadata = require_provider(provider)
             base_url = payload.base_url.strip() or _default_base_url(container, provider)
@@ -179,7 +190,10 @@ def create_llm_router(container: Container) -> APIRouter:
         return route_recommendation(payload.provider, models, route=payload.route)
 
     @router.get("/llm/runtime")
-    async def read_llm_runtime() -> LlmRuntimePayload:
+    async def read_llm_runtime(
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
+    ) -> LlmRuntimePayload:
+        _require_user(container, x_ng_user)
         return LlmRuntimePayload.from_config(container.llm_runtime.read(), container)
 
     @router.put("/llm/runtime")
@@ -201,7 +215,10 @@ def create_llm_router(container: Container) -> APIRouter:
         return LlmRuntimePayload.from_config(config, container)
 
     @router.get("/llm/local-status")
-    async def read_local_llm_status() -> LocalLlmStatusPayload:
+    async def read_local_llm_status(
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
+    ) -> LocalLlmStatusPayload:
+        _require_user(container, x_ng_user)
         return _local_llm_status(container)
 
     @router.post("/llm/local/start")

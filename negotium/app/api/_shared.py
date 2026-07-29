@@ -1045,14 +1045,20 @@ def _chunk_text(text: str, size: int = 24) -> list[str]:
 
 
 def _require(container: Container, credential: str | None, permission: str) -> str:
-    user_id = _resolve_authenticated_user(container, credential)
-    if user_id is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="login required")
+    user_id = _require_user(container, credential)
     if not container.access_control.has_permission(user_id, permission):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             detail=f"permission required: {permission}",
         )
+    return user_id
+
+
+def _require_user(container: Container, credential: str | None) -> str:
+    """Authentication-only gate for endpoints every logged-in user may read."""
+    user_id = _resolve_authenticated_user(container, credential)
+    if user_id is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="login required")
     return user_id
 
 
@@ -1391,8 +1397,9 @@ def _user_payload(container: Container, user_id: str) -> dict[str, object]:
     user = next((entry for entry in acl["users"] if entry["id"] == user_id), None)
     if user is None:
         return {"id": user_id, "display_name": user_id, "role_id": "viewer", "permissions": []}
-    role = next((entry for entry in acl["roles"] if entry["id"] == user["role_id"]), None)
-    permissions = role["permissions"] if role else []
+    # Effective permissions (position → department policy → role), so the
+    # payload matches what has_permission enforces for this user.
+    permissions = container.access_control.effective_permissions(user_id)
     return {**user, "permissions": permissions}
 
 

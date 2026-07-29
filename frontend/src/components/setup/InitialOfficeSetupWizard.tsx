@@ -215,6 +215,8 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
   const [result, setResult] = useState<InitialOfficeSetupResult | null>(savedDraft?.result || null);
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
+  // One-time passwords returned by apply — held only in memory, shown once.
+  const [issuedCredentials, setIssuedCredentials] = useState<Record<string, string> | null>(null);
   const [aiJob, setAiJob] = useState<AiJobStatus | null>(null);
   const [apiRiskAccepted, setApiRiskAccepted] = useState(savedDraft?.apiRiskAccepted || false);
   const [applySections, setApplySections] = useState<Record<ReviewSection, boolean>>({
@@ -518,9 +520,16 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
     setBusy(true);
     setNotice('');
     try {
-      await applyInitialOfficeSetup(approvedResult(result, applySections));
+      const response = await applyInitialOfficeSetup(approvedResult(result, applySections));
       clearSetupDraft();
-      onAuthenticated(sessionUser);
+      const issued = response.issued_credentials ?? {};
+      if (Object.keys(issued).length > 0) {
+        // Exiting to the console here would discard the only copy of the
+        // generated passwords — show them once and let the admin confirm.
+        setIssuedCredentials(issued);
+      } else {
+        onAuthenticated(sessionUser);
+      }
     } catch (err) {
       setNotice(err instanceof Error ? err.message : '초기 세팅 적용 실패');
     } finally {
@@ -571,6 +580,66 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
       : step === 'llm'
         ? '저장 후 다음 단계'
         : '다음 단계';
+
+  if (issuedCredentials) {
+    const entries = Object.entries(issuedCredentials);
+    return (
+      <main className="auth-layout setup-layout">
+        <section className="panel setup-wizard">
+          <img className="auth-logo" src="/negotium-logo.png" alt="Negotium" />
+          <p className="eyebrow">First-run office setup</p>
+          <h1>구성원 로그인 정보 발급 완료</h1>
+          <p className="muted">
+            아래 임시 비밀번호는 <strong>지금 한 번만 표시됩니다.</strong> 각 구성원에게
+            안전한 경로로 전달하고, 첫 로그인 후 비밀번호를 바꾸도록 안내하세요.
+          </p>
+          <table>
+            <thead>
+              <tr><th>아이디</th><th>임시 비밀번호</th><th aria-label="복사" /></tr>
+            </thead>
+            <tbody>
+              {entries.map(([userId, password]) => (
+                <tr key={userId}>
+                  <td>{userId}</td>
+                  <td><code>{password}</code></td>
+                  <td>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => void navigator.clipboard.writeText(`${userId} / ${password}`)}
+                    >
+                      복사
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="setup-step-navigation">
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() =>
+                void navigator.clipboard.writeText(
+                  entries.map(([userId, password]) => `${userId}\t${password}`).join('\n'),
+                )
+              }
+            >
+              전체 복사
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (sessionUser) onAuthenticated(sessionUser);
+              }}
+            >
+              확인했습니다 · 콘솔 시작
+            </button>
+          </div>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="auth-layout setup-layout">
@@ -890,7 +959,7 @@ export default function InitialOfficeSetupWizard({ onAuthenticated, initialUser 
         {step === 'files' ? (
           <div className="memory-form">
             <p className="muted">회사 인적 사항, 조직도, 운영 규정 파일을 올리면 AI가 초기 메모리와 사용자/직함 초안을 만듭니다.</p>
-            <input type="file" multiple accept=".csv,.tsv,.xlsx,.txt,.md" onChange={(e) => void uploadFiles(e)} />
+            <input type="file" multiple accept=".csv,.tsv,.xlsx,.txt,.md,.docx,.hwp,.hwpx" onChange={(e) => void uploadFiles(e)} />
             <div className="log-list">
               {uploads.map((upload) => (
                 <article className="log-card" key={upload.id}>

@@ -906,6 +906,9 @@ class InitialOfficeSetupResult(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     questions: list[str] = Field(default_factory=list)
     sensitive_hint: bool = False
+    # Issue login credentials for users created by apply; defaults on so
+    # wizard-provisioned staff can actually sign in.
+    create_logins: bool = True
     ai_job: dict[str, Any] = Field(default_factory=dict)
 
 

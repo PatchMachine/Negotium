@@ -158,7 +158,7 @@ def available_tools(
         if not name or (wanted is not None and name not in wanted):
             continue
         permission = mcp_hub_service.required_permission(name)
-        if actor and not container.access_control.has_permission(actor, permission):
+        if not actor or not container.access_control.has_permission(actor, permission):
             continue
         schema = descriptor.get("input_schema")
         specs.append(
@@ -183,7 +183,7 @@ def tool_name_map(
         if not name or (wanted is not None and name not in wanted):
             continue
         permission = mcp_hub_service.required_permission(name)
-        if actor and not container.access_control.has_permission(actor, permission):
+        if not actor or not container.access_control.has_permission(actor, permission):
             continue
         mapping[to_wire_name(name)] = name
     return mapping
@@ -425,7 +425,7 @@ async def _execute_approved_calls(
             _log.warning("agent.loop.approval_hash_mismatch", tool=tool, actor=actor)
             continue
         permission = mcp_hub_service.required_permission(tool)
-        if actor and not container.access_control.has_permission(actor, permission):
+        if not actor or not container.access_control.has_permission(actor, permission):
             _log.warning(
                 "agent.loop.approval_permission_denied",
                 tool=tool,
@@ -481,7 +481,7 @@ async def _handle_call(
         },
     )
 
-    if actor and not container.access_control.has_permission(actor, permission):
+    if not actor or not container.access_control.has_permission(actor, permission):
         # Returned as a tool result rather than raised: the model can pick a
         # different approach, and one denied tool must not fail the whole turn.
         invocation.status = "denied"

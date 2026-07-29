@@ -20,8 +20,15 @@ export function analyzeInitialOfficeSetup(payload: {
   });
 }
 
-export function applyInitialOfficeSetup(payload: InitialOfficeSetupResult): Promise<{ ok: boolean; access_control: AccessControlPayload }> {
-  return requestJson<{ ok: boolean; access_control: AccessControlPayload }>('/api/setup/office/apply', {
+export interface ApplySetupResponse {
+  ok: boolean;
+  access_control: AccessControlPayload;
+  /** One-time passwords for users created by this apply — shown once, never persisted. */
+  issued_credentials: Record<string, string>;
+}
+
+export function applyInitialOfficeSetup(payload: InitialOfficeSetupResult): Promise<ApplySetupResponse> {
+  return requestJson<ApplySetupResponse>('/api/setup/office/apply', {
     method: 'POST',
     body: JSON.stringify(payload),
   });

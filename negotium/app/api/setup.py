@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import secrets
+
 from fastapi import APIRouter, Header
 
 from negotium.app.api._shared import (
@@ -122,6 +124,27 @@ def create_setup_router(container: Container) -> APIRouter:
         for user in payload.users:
             if user.id.strip():
                 container.access_control.upsert_user(user.to_record())
+        # One-time login issuance: without credentials, wizard-created users
+        # exist for permission resolution but cannot sign in at all. Existing
+        # ids are skipped so a re-run never rotates someone's password (the
+        # acting admin included), which also makes apply idempotent.
+        issued_credentials: dict[str, str] = {}
+        if payload.create_logins:
+            for user in payload.users:
+                user_id = user.id.strip()
+                if not user_id or container.auth_store.has_user(user_id):
+                    continue
+                password = secrets.token_urlsafe(8)
+                try:
+                    container.auth_store.create_user(
+                        user_id=user_id,
+                        display_name=user.display_name.strip() or user_id,
+                        password=password,
+                        active=user.active,
+                    )
+                except ValueError:
+                    continue
+                issued_credentials[user_id] = password
         if payload.llm_task_routes:
             _apply_initial_setup_llm_routes(container, payload.llm_task_routes)
         _audit(
@@ -132,6 +155,8 @@ def create_setup_router(container: Container) -> APIRouter:
             details={
                 "roles": [role.id for role in payload.roles],
                 "users": [user.id for user in payload.users],
+                # Ids only — the generated passwords must never reach the log.
+                "logins_issued": sorted(issued_credentials),
                 "sensitive_hint": payload.sensitive_hint,
                 "recommended_package": payload.recommended_package,
                 "agent_packs": [item.get("id") for item in payload.agent_packs],
@@ -146,6 +171,7 @@ def create_setup_router(container: Container) -> APIRouter:
         return {
             "ok": True,
             "access_control": {**container.access_control.read(), "permissions": ALL_PERMISSIONS},
+            "issued_credentials": issued_credentials,
         }
 
     return router

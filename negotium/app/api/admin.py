@@ -6,7 +6,7 @@ from typing import Any
 
 import portalocker
 import yaml
-from fastapi import APIRouter, Header, HTTPException, status
+from fastapi import APIRouter, Header, HTTPException, Request, status
 
 from negotium.adapters.llm.catalog import (
     require_provider,
@@ -36,6 +36,7 @@ from negotium.app.services.context_firewall_service import (
     record_firewall_audit,
     sanitize_context,
 )
+from negotium.app.services.rate_limit import SlidingWindowLimiter, client_ip
 from negotium.archive.access_control import UserRecord
 from negotium.archive.auth_store import RequestStatus
 from negotium.archive.secret_store import ApiKeyRecord
@@ -44,9 +45,24 @@ from negotium.archive.secret_store import ApiKeyRecord
 def create_admin_router(container: Container) -> APIRouter:
     """Routes for the admin domain."""
     router = APIRouter()
+    # The endpoint is public and every request writes to the archive, so all
+    # attempts count against the window, not just failures.
+    account_request_limiter = SlidingWindowLimiter()
 
     @router.post("/account-requests")
-    async def create_account_request(payload: AccountRequestPayload) -> dict[str, object]:
+    async def create_account_request(
+        payload: AccountRequestPayload, http_request: Request
+    ) -> dict[str, object]:
+        client = http_request.client
+        key = f"account_request:ip:{client_ip(client.host if client else None)}"
+        decision = account_request_limiter.check(key)
+        if not decision.allowed:
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="too many requests, try again later",
+                headers={"Retry-After": str(decision.retry_after_seconds)},
+            )
+        account_request_limiter.record_failure(key)
         try:
             request = container.auth_store.request_account(
                 user_id=payload.user_id.strip(),

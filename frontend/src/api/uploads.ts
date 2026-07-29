@@ -1,5 +1,5 @@
 import { getAuthHeaders } from '../auth';
-import { requestJson } from './http';
+import { handleAuthFailure, requestJson } from './http';
 import type {
   UploadRecord,
 } from './types';
@@ -15,6 +15,9 @@ export async function uploadDocument(formData: FormData): Promise<{ ok: boolean;
     body: formData,
   });
   if (!response.ok) {
+    if (handleAuthFailure(response)) {
+      throw new Error('로그인이 필요합니다.');
+    }
     throw new Error(await response.text());
   }
   return (await response.json()) as { ok: boolean; upload: UploadRecord };

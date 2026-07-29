@@ -10,7 +10,7 @@ from negotium.adapters.llm.fake_adapter import FakeLlmProvider, ScriptedResponse
 from negotium.app.container import Container
 from negotium.app.main import create_app
 from negotium.app.settings import Settings
-from negotium.archive.access_control import UserRecord
+from negotium.archive.access_control import PositionRecord, UserRecord
 from negotium.archive.llm_runtime import LlmRuntimeConfig
 from negotium.archive.operations_memory import OperationsMemory
 from negotium.archive.work_memory import WorkScheduleItem
@@ -35,10 +35,10 @@ def test_contributor_site_routes_are_served(tmp_path: Path) -> None:
     )
     app = create_app(container)
     with TestClient(app) as client:
-        home = client.get("/")
-        join = client.get("/join")
-        operations = client.get("/operations")
-        styles = client.get("/site.css")
+        home = client.get("/contribute")
+        join = client.get("/contribute/join")
+        operations = client.get("/contribute/operations")
+        styles = client.get("/contribute/site.css")
 
     assert home.status_code == 200
     assert "네고티움은 외부 기여와 함께 더 똑똑해집니다" in home.text
@@ -59,7 +59,7 @@ def test_operations_memory_can_be_saved_from_ui(tmp_path: Path) -> None:
 
     with TestClient(app) as client:
         response = client.post(
-            "/operations",
+            "/contribute/operations",
             data={
                 "company_name": "Acme Retail",
                 "office_project": "환불 자동화",
@@ -67,7 +67,7 @@ def test_operations_memory_can_be_saved_from_ui(tmp_path: Path) -> None:
             },
             follow_redirects=False,
         )
-        saved = client.get("/operations")
+        saved = client.get("/contribute/operations")
 
     assert response.status_code == 303
     assert container.operations_memory.read().company_name == "Acme Retail"
@@ -84,7 +84,9 @@ def test_operations_memory_api_round_trips(tmp_path: Path) -> None:
     app = create_app(container)
 
     with TestClient(app) as client:
-        empty = client.get("/api/operations-memory")
+        anonymous_memory = client.get("/api/operations-memory")
+        anonymous_status = client.get("/api/status")
+        empty = client.get("/api/operations-memory", headers=headers)
         saved = client.put(
             "/api/operations-memory",
             headers=headers,
@@ -94,8 +96,10 @@ def test_operations_memory_api_round_trips(tmp_path: Path) -> None:
                 "active_plan": "프론트엔드 로컬 검증",
             },
         )
-        status = client.get("/api/status")
+        status = client.get("/api/status", headers=headers)
 
+    assert anonymous_memory.status_code == 401
+    assert anonymous_status.status_code == 401
     assert empty.status_code == 200
     assert empty.json()["company_name"] == ""
     assert saved.status_code == 200
@@ -123,7 +127,7 @@ def test_llm_chat_uses_operations_memory_context(tmp_path: Path) -> None:
     app = create_app(container)
 
     with TestClient(app) as client:
-        runtime = client.get("/api/llm/runtime")
+        runtime = client.get("/api/llm/runtime", headers=headers)
         response = client.post(
             "/api/llm/chat",
             headers=headers,
@@ -232,9 +236,11 @@ def test_progress_and_work_items_respond_without_external_config(tmp_path: Path)
     app = create_app(container)
 
     with TestClient(app) as client:
-        progress = client.get("/api/progress")
+        anonymous_progress = client.get("/api/progress")
+        progress = client.get("/api/progress", headers=headers)
         work_items = client.get("/api/work-items", headers=headers)
 
+    assert anonymous_progress.status_code == 401
     assert progress.status_code == 200
     assert "current_status" in progress.json()["current_status_md"]
     assert work_items.status_code == 200
@@ -730,7 +736,7 @@ def test_secure_admin_and_upload_endpoints(tmp_path: Path) -> None:
             headers=headers,
             json={"provider": "openai", "api_key": "sk-test-1234567890", "model": "gpt-test"},
         )
-        together_models = client.get("/api/llm/providers/together/models")
+        together_models = client.get("/api/llm/providers/together/models", headers=headers)
         saved_together_key = client.put(
             "/api/admin/api-keys/together",
             headers=headers,
@@ -740,7 +746,7 @@ def test_secure_admin_and_upload_endpoints(tmp_path: Path) -> None:
                 "model": "openai/gpt-oss-20b",
             },
         )
-        solar_models = client.get("/api/llm/providers/solar/models")
+        solar_models = client.get("/api/llm/providers/solar/models", headers=headers)
         saved_solar_key = client.put(
             "/api/admin/api-keys/solar",
             headers=headers,
@@ -1001,3 +1007,144 @@ def _auth_headers(
     token = container.auth_store.authenticate(user_id, password)
     assert token is not None
     return {"X-NG-User": f"Bearer {token}"}
+
+
+def test_previously_public_endpoints_require_auth(tmp_path: Path) -> None:
+    container = Container.build(
+        Settings(
+            env="test", archive_dir=tmp_path / "archive", workspace_dir=tmp_path / "workspaces"
+        )
+    )
+    app = create_app(container)
+
+    gated = [
+        ("get", "/api/status"),
+        ("get", "/api/progress"),
+        ("get", "/api/operations-memory"),
+        ("get", "/api/llm/providers"),
+        ("get", "/api/llm/providers/solar/models"),
+        ("post", "/api/llm/providers/solar/models/preview"),
+        ("get", "/api/llm/runtime"),
+        ("get", "/api/llm/local-status"),
+    ]
+    with TestClient(app) as client:
+        for method, path in gated:
+            response = client.request(method.upper(), path, json={} if method == "post" else None)
+            assert response.status_code == 401, f"{path} must require login"
+        # Bootstrap and health stay public.
+        assert client.get("/api/auth/setup-status").status_code == 200
+        assert client.get("/health").status_code == 200
+
+
+def test_provider_model_listing_requires_api_key_admin(tmp_path: Path) -> None:
+    container = Container.build(
+        Settings(
+            env="test", archive_dir=tmp_path / "archive", workspace_dir=tmp_path / "workspaces"
+        )
+    )
+    container.auth_store.create_user(
+        user_id="viewer1", display_name="Viewer", password="password-1234"
+    )
+    container.access_control.upsert_user(
+        UserRecord(id="viewer1", display_name="Viewer", title="사원", role_id="viewer")
+    )
+    token = container.auth_store.authenticate("viewer1", "password-1234")
+    assert token is not None
+    headers = {"X-NG-User": f"Bearer {token}"}
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        models = client.get("/api/llm/providers/solar/models", headers=headers)
+        preview = client.post(
+            "/api/llm/providers/solar/models/preview",
+            headers=headers,
+            json={"api_key": "up-test-1234567890", "base_url": ""},
+        )
+
+    assert models.status_code == 403
+    assert preview.status_code == 403
+
+
+def test_auth_me_reports_position_effective_permissions(tmp_path: Path) -> None:
+    """/auth/me must report the permissions enforcement actually uses."""
+
+    container = Container.build(
+        Settings(
+            env="test", archive_dir=tmp_path / "archive", workspace_dir=tmp_path / "workspaces"
+        )
+    )
+    container.access_control.upsert_position(
+        PositionRecord(id="ops-lead", name="운영 리드", permissions=["work:read", "memory:write"])
+    )
+    container.auth_store.create_user(
+        user_id="staff1", display_name="Staff", password="password-1234"
+    )
+    container.access_control.upsert_user(
+        UserRecord(
+            id="staff1",
+            display_name="Staff",
+            title="주임",
+            role_id="viewer",
+            position_id="ops-lead",
+        )
+    )
+    token = container.auth_store.authenticate("staff1", "password-1234")
+    assert token is not None
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        me = client.get("/api/auth/me", headers={"X-NG-User": f"Bearer {token}"})
+
+    assert me.status_code == 200
+    payload = me.json()
+    assert payload["authenticated"] is True
+    assert sorted(payload["user"]["permissions"]) == ["memory:write", "work:read"]
+
+
+def test_login_lockout_after_repeated_failures(tmp_path: Path) -> None:
+    container = Container.build(
+        Settings(
+            env="test", archive_dir=tmp_path / "archive", workspace_dir=tmp_path / "workspaces"
+        )
+    )
+    container.auth_store.create_user(
+        user_id="owner", display_name="Local Owner", password="password-1234"
+    )
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        for _ in range(5):
+            failed = client.post(
+                "/api/auth/login", json={"user_id": "owner", "password": "wrong-password"}
+            )
+            assert failed.status_code == 401
+        locked = client.post(
+            "/api/auth/login", json={"user_id": "owner", "password": "password-1234"}
+        )
+
+    assert locked.status_code == 429, "correct password must not bypass the lockout"
+    assert int(locked.headers["Retry-After"]) > 0
+
+
+def test_successful_login_clears_the_failure_counter(tmp_path: Path) -> None:
+    container = Container.build(
+        Settings(
+            env="test", archive_dir=tmp_path / "archive", workspace_dir=tmp_path / "workspaces"
+        )
+    )
+    container.auth_store.create_user(
+        user_id="owner", display_name="Local Owner", password="password-1234"
+    )
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        for _ in range(4):
+            client.post("/api/auth/login", json={"user_id": "owner", "password": "wrong-password"})
+        ok = client.post("/api/auth/login", json={"user_id": "owner", "password": "password-1234"})
+        assert ok.status_code == 200
+        # The window restarts: four more failures stay under the limit.
+        for _ in range(4):
+            failed = client.post(
+                "/api/auth/login", json={"user_id": "owner", "password": "wrong-password"}
+            )
+            assert failed.status_code == 401

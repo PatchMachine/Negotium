@@ -179,6 +179,38 @@ def test_auth_store_delete_user_removes_login_and_sessions(archive_tmp: Path) ->
     assert store.delete_user("staff1") is False
 
 
+def test_auth_store_renews_session_when_half_ttl_elapsed(archive_tmp: Path) -> None:
+    import json
+    from datetime import UTC, datetime, timedelta
+
+    store = AuthStore(archive_tmp)
+    store.create_user(user_id="admin", display_name="Admin", password="password-1234")
+    token = store.authenticate("admin", "password-1234")
+    assert token is not None
+
+    auth_path = archive_tmp / "auth.json"
+    payload = json.loads(auth_path.read_text(encoding="utf-8"))
+    payload["sessions"][0]["expires_at"] = (datetime.now(UTC) + timedelta(hours=5)).isoformat()
+    auth_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert store.resolve_token(token) == "admin"
+    renewed = json.loads(auth_path.read_text(encoding="utf-8"))
+    expires_at = datetime.fromisoformat(renewed["sessions"][0]["expires_at"])
+    assert expires_at > datetime.now(UTC) + timedelta(hours=11)
+
+
+def test_auth_store_does_not_rewrite_fresh_session(archive_tmp: Path) -> None:
+    store = AuthStore(archive_tmp)
+    store.create_user(user_id="admin", display_name="Admin", password="password-1234")
+    token = store.authenticate("admin", "password-1234")
+    assert token is not None
+
+    auth_path = archive_tmp / "auth.json"
+    before = auth_path.read_bytes()
+    assert store.resolve_token(token) == "admin"
+    assert auth_path.read_bytes() == before, "a fresh session must not trigger a rewrite"
+
+
 def test_audit_log_store_appends_recent_records(archive_tmp: Path) -> None:
     store = AuditLogStore(archive_tmp)
 
