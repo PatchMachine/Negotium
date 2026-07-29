@@ -85,15 +85,31 @@ class ReminderConfig:
 
 
 @dataclass(frozen=True)
+class SearchConfig:
+    """Archive semantic search: chunks leave the machine only when enabled."""
+
+    embeddings_enabled: bool = False
+
+    @classmethod
+    def from_mapping(cls, payload: dict[str, Any]) -> SearchConfig:
+        return cls(embeddings_enabled=bool(payload.get("embeddings_enabled", False)))
+
+    def to_dict(self) -> dict[str, object]:
+        return {"embeddings_enabled": self.embeddings_enabled}
+
+
+@dataclass(frozen=True)
 class AutomationConfig:
     weekly_report: WeeklyReportConfig = field(default_factory=WeeklyReportConfig)
     reminders: ReminderConfig = field(default_factory=ReminderConfig)
+    search: SearchConfig = field(default_factory=SearchConfig)
     webhook_url: str = ""
 
     @classmethod
     def from_mapping(cls, payload: dict[str, Any]) -> AutomationConfig:
         weekly = payload.get("weekly_report")
         reminders = payload.get("reminders")
+        search = payload.get("search")
         return cls(
             weekly_report=WeeklyReportConfig.from_mapping(
                 weekly if isinstance(weekly, dict) else {}
@@ -101,6 +117,7 @@ class AutomationConfig:
             reminders=ReminderConfig.from_mapping(
                 reminders if isinstance(reminders, dict) else {}
             ),
+            search=SearchConfig.from_mapping(search if isinstance(search, dict) else {}),
             webhook_url=str(payload.get("webhook_url") or "").strip(),
         )
 
@@ -108,6 +125,7 @@ class AutomationConfig:
         return {
             "weekly_report": self.weekly_report.to_dict(),
             "reminders": self.reminders.to_dict(),
+            "search": self.search.to_dict(),
             "webhook_url": self.webhook_url,
         }
 

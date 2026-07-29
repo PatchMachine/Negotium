@@ -580,10 +580,15 @@ def _build_chat_messages(
     volatile_global = container.volatile_memory.read(scope="global", key="default").to_markdown()
     compressed = container.compressed_context.read(scope="user", key=user_id).to_markdown()
     permanent = container.permanent_memory.search(user_message, limit=5)
-    permanent_md = "\n".join(
-        f"- [{source.get('kind')}] {source.get('path')}: {source.get('title')}"
-        for source in permanent
-    )
+    permanent_lines: list[str] = []
+    for source in permanent:
+        permanent_lines.append(
+            f"- [{source.get('kind')}] {source.get('path')}: {source.get('title')}"
+        )
+        excerpt = " ".join(str(source.get("excerpt") or "").split())
+        if excerpt:
+            permanent_lines.append(f"  ↳ {excerpt[:120]}")
+    permanent_md = "\n".join(permanent_lines)
     status_md = container.archive.status.read()
     recent = _recent_logs(container.settings.archive_dir, limit=5)
     recent_md = "\n".join(
@@ -3738,6 +3743,7 @@ def _is_internal_archive_document(rel: str) -> bool:
         or rel.startswith("token_usage/")
         or rel.startswith("context_firewall/")
         or rel.startswith("mcp_hub/")
+        or rel.startswith("search_index/")
         or rel.startswith("ai_jobs/")
         or rel.startswith("patch_ops/events/")
         or rel.startswith("patch_ops/runs/")

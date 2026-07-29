@@ -13,6 +13,7 @@ from negotium.app.api import create_operations_api_router
 from negotium.app.console_site import install_console
 from negotium.app.container import Container
 from negotium.app.contributor_site import create_contributor_site_router
+from negotium.app.services.archive_search_service import make_query_embedder
 from negotium.app.services.automation_service import run_due_jobs
 from negotium.observability import get_logger
 
@@ -38,6 +39,9 @@ async def _automation_loop(container: Container) -> None:
 
 def create_app(container: Container | None = None) -> FastAPI:
     container = container or Container.build()
+    # Semantic search stays off until the admin enables it; the embedder
+    # checks the toggle on every call, so wiring it unconditionally is safe.
+    container.search_index.set_query_embedder(make_query_embedder(container))
     log = get_logger(component="app")
     llm_preload_task: asyncio.Task[None] | None = None
     automation_task: asyncio.Task[None] | None = None

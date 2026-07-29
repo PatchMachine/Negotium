@@ -18,12 +18,13 @@ from negotium.app.schemas.automation import (
 )
 from negotium.app.services.automation_service import (
     REMINDER_JOB,
+    SEARCH_INDEX_JOB,
     WEEKLY_JOB,
     run_due_jobs,
     run_jobs,
 )
 
-_KNOWN_JOBS = {WEEKLY_JOB, REMINDER_JOB}
+_KNOWN_JOBS = {WEEKLY_JOB, REMINDER_JOB, SEARCH_INDEX_JOB}
 
 
 def create_automation_router(container: Container) -> APIRouter:
@@ -68,6 +69,7 @@ def create_automation_router(container: Container) -> APIRouter:
             details={
                 "weekly_enabled": config.weekly_report.enabled,
                 "reminders_enabled": config.reminders.enabled,
+                "search_embeddings_enabled": config.search.embeddings_enabled,
                 "webhook_url_set": bool(config.webhook_url),
             },
         )
@@ -94,6 +96,17 @@ def create_automation_router(container: Container) -> APIRouter:
             details={"requested": jobs, "executed": executed},
         )
         return RunResultPayload(executed=executed)
+
+    @router.get("/automation/search-index")
+    async def read_search_index_stats(
+        x_ng_user: str | None = Header(default=None, alias="X-NG-User"),
+    ) -> dict[str, object]:
+        _require(container, x_ng_user, "admin:integrations")
+        config = container.automation.read_config()
+        return {
+            **container.search_index.stats(),
+            "embeddings_enabled": config.search.embeddings_enabled,
+        }
 
     @router.get("/notifications")
     async def read_notifications(

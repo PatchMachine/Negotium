@@ -10,21 +10,28 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
 from uuid import uuid4
 
 import portalocker
 
-SourceKind = Literal[
-    "patch_log",
-    "audit_log",
-    "document",
-    "conversation",
-    "promoted_memory",
-    "upload",
-    "token_usage",
-    "unknown",
-]
+from negotium.archive._corpus import (
+    SourceKind,
+)
+from negotium.archive._corpus import (
+    is_operational_internal_file as _is_operational_internal_file,
+)
+from negotium.archive._corpus import (
+    kind_for as _kind_for,
+)
+from negotium.archive._corpus import (
+    title_for as _title_for,
+)
+from negotium.archive._corpus import (
+    tombstoned_source_ids as _corpus_tombstoned_source_ids,
+)
+from negotium.archive.search_index import SearchIndexStore
+
+__all__ = ["PermanentMemorySource", "PermanentMemoryStore", "SourceKind"]
 
 
 @dataclass(frozen=True)
@@ -48,13 +55,18 @@ class PermanentMemorySource:
 
 
 class PermanentMemoryStore:
-    def __init__(self, archive_dir: Path) -> None:
+    def __init__(self, archive_dir: Path, search_index: SearchIndexStore | None = None) -> None:
         # Keep every later path comparison in the same form. Deletion and
         # single-source reads resolve their target path for traversal safety,
         # so a relative archive root would otherwise make a valid source look
         # as though it lived outside the archive.
         self._archive_dir = archive_dir.resolve()
         self._promoted_dir = self._archive_dir / "memory" / "promoted"
+        self._search_index = search_index or SearchIndexStore(self._archive_dir)
+
+    @property
+    def search_index(self) -> SearchIndexStore:
+        return self._search_index
 
     def recent(self, *, limit: int = 50) -> list[dict[str, object]]:
         sources = self._scan_sources()
@@ -62,6 +74,28 @@ class PermanentMemoryStore:
         return [source.to_dict() for source in sources[:limit]]
 
     def search(self, query: str, *, limit: int = 50) -> list[dict[str, object]]:
+        if not query.strip():
+            # Blank query keeps the legacy recency listing semantics.
+            return self.recent(limit=limit)
+        try:
+            hits = self._search_index.search(query, limit=limit)
+        except Exception:
+            # A corrupt/partial index must never break chat — degrade to the
+            # legacy substring scan.
+            return self._legacy_search(query, limit=limit)
+        return [
+            {
+                "id": hit.path,
+                "kind": hit.kind,
+                "path": hit.path,
+                "title": hit.title,
+                "excerpt": hit.snippet,
+                "updated_at": hit.updated_at,
+            }
+            for hit in hits
+        ]
+
+    def _legacy_search(self, query: str, *, limit: int = 50) -> list[dict[str, object]]:
         tokens = query.strip().lower().split()
         sources = self._scan_sources()
         if tokens:
@@ -198,26 +232,7 @@ class PermanentMemoryStore:
         return cleaned, path
 
     def _tombstoned_source_ids(self) -> set[str]:
-        path = self._archive_dir / "memory" / "tombstones.jsonl"
-        if not path.exists():
-            return set()
-        tombstoned: set[str] = set()
-        try:
-            lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
-        except OSError:
-            return tombstoned
-        for line in lines:
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(payload, dict):
-                continue
-            for key in ("target_id", "source_path"):
-                value = str(payload.get(key) or "").strip().lstrip("/")
-                if value:
-                    tombstoned.add(value)
-        return tombstoned
+        return _corpus_tombstoned_source_ids(self._archive_dir)
 
 
 def _matches_tokens(source: PermanentMemorySource, tokens: list[str]) -> bool:
@@ -229,44 +244,6 @@ def _matches_tokens(source: PermanentMemorySource, tokens: list[str]) -> bool:
     compact = haystack.replace("_", "").replace("-", "")
     return all(
         token in haystack or token.replace("_", "").replace("-", "") in compact for token in tokens
-    )
-
-
-def _kind_for(path: Path, archive_dir: Path) -> SourceKind:
-    try:
-        rel = path.relative_to(archive_dir)
-    except ValueError:
-        return "unknown"
-    parts = rel.parts
-    if len(parts) >= 3 and parts[0].isdigit() and parts[1].isdigit() and path.suffix == ".md":
-        return "patch_log"
-    if parts and parts[0] == "conversations" and path.suffix == ".jsonl":
-        return "conversation"
-    if parts[:2] == ("memory", "promoted") and path.suffix == ".md":
-        return "promoted_memory"
-    if (
-        parts
-        and parts[0] == "uploads"
-        and path.suffix in {".md", ".markdown", ".txt", ".json", ".jsonl", ".yaml", ".yml"}
-    ):
-        return "upload"
-    if (
-        parts
-        and parts[0] in {"documents", "hr", "handover", "work_architecture"}
-        and path.suffix in {".md", ".jsonl"}
-    ):
-        return "document"
-    return "unknown"
-
-
-def _is_operational_internal_file(path: Path, archive_dir: Path) -> bool:
-    try:
-        rel = path.relative_to(archive_dir)
-    except ValueError:
-        return True
-    parts = rel.parts
-    return rel.as_posix() == "audit_log.jsonl" or bool(
-        parts and parts[0] in {"token_usage", "context_firewall", "mcp_hub"}
     )
 
 
@@ -312,14 +289,6 @@ def _read_content(path: Path, *, max_chars: int) -> str:
         return path.read_text(encoding="utf-8", errors="ignore")[:max_chars]
     except OSError:
         return ""
-
-
-def _title_for(path: Path, text: str) -> str:
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("#"):
-            return stripped.lstrip("#").strip()
-    return path.stem
 
 
 def _safe_slug(value: str) -> str:

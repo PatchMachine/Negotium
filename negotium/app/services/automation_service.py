@@ -32,7 +32,9 @@ _log = structlog.get_logger(component="automation")
 AUTOMATION_ACTOR = "automation"
 WEEKLY_JOB = "weekly_report"
 REMINDER_JOB = "reminders"
+SEARCH_INDEX_JOB = "search_index"
 _WEBHOOK_TIMEOUT_SECONDS = 10.0
+_EMBED_REFRESH_MINUTES = 15
 
 
 @dataclass
@@ -59,6 +61,8 @@ async def run_due_jobs(container: Container, *, now: datetime | None = None) -> 
         due.append(WEEKLY_JOB)
     if config.reminders.enabled and _is_reminder_due(config.reminders, state, local_now):
         due.append(REMINDER_JOB)
+    if config.search.embeddings_enabled and _is_embed_refresh_due(container, moment):
+        due.append(SEARCH_INDEX_JOB)
     if not due:
         return []
     return await run_jobs(container, due, now=moment)
@@ -95,6 +99,12 @@ async def run_jobs(
             )
             if await _run_reminders(container, config, today=local_now.date()):
                 executed.append(REMINDER_JOB)
+        elif job == SEARCH_INDEX_JOB:
+            # Bookkeeping lives in the index manifest, not AutomationState —
+            # marking first keeps the attempt-once-per-slot idiom.
+            container.search_index.mark_embed_run(moment.isoformat())
+            if await _run_search_index(container, config):
+                executed.append(SEARCH_INDEX_JOB)
     return executed
 
 
@@ -112,6 +122,40 @@ async def deliver_webhook(container: Container, url: str, text: str) -> bool:
         _log.warning("automation.webhook_failed", error=str(exc))
         _audit_event(container, action="automation.webhook_failed", details={"error": str(exc)})
         return False
+    return True
+
+
+def _is_embed_refresh_due(container: Container, moment: datetime) -> bool:
+    last_run = str(container.search_index.stats().get("last_embed_run") or "")
+    if not last_run:
+        return True
+    try:
+        parsed = datetime.fromisoformat(last_run)
+    except ValueError:
+        return True
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return (moment - parsed) >= timedelta(minutes=_EMBED_REFRESH_MINUTES)
+
+
+async def _run_search_index(container: Container, config: AutomationConfig) -> bool:
+    from negotium.app.services.archive_search_service import refresh_embeddings
+
+    try:
+        if config.search.embeddings_enabled:
+            result = await refresh_embeddings(container)
+        else:
+            # Manual "지금 재색인" with embeddings off still refreshes keywords.
+            result = {"refresh": container.search_index.refresh()}
+    except Exception as exc:
+        _log.warning("automation.search_index_failed", error=str(exc))
+        _audit_event(
+            container,
+            action="automation.job_failed",
+            details={"job": SEARCH_INDEX_JOB, "error": str(exc)},
+        )
+        return False
+    _audit_event(container, action="automation.search_index", details=dict(result))
     return True
 
 

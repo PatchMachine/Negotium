@@ -33,6 +33,7 @@ from negotium.archive.operations_memory import OperationsMemoryStore
 from negotium.archive.permanent_memory import PermanentMemoryStore
 from negotium.archive.process_plans import ProcessPlanStore
 from negotium.archive.public_references import PublicReferenceStore
+from negotium.archive.search_index import SearchIndexStore
 from negotium.archive.secret_store import SecretStore
 from negotium.archive.token_usage import TokenUsageStore
 from negotium.archive.uploads import UploadStore
@@ -73,6 +74,7 @@ class Container:
     process_plans: ProcessPlanStore
     automation: AutomationStore
     notifications: NotificationStore
+    search_index: SearchIndexStore
     llm: LlmProvider
     metrics: AgentMetrics = field(default_factory=AgentMetrics)
 
@@ -106,7 +108,8 @@ class Container:
         mcp_audit = McpAuditStore(settings.archive_dir)
         mcp_sessions = McpSessionStore(settings.archive_dir)
         memory_schema = MemorySchemaStore(settings.archive_dir)
-        permanent_memory = PermanentMemoryStore(settings.archive_dir)
+        search_index = SearchIndexStore(settings.archive_dir)
+        permanent_memory = PermanentMemoryStore(settings.archive_dir, search_index=search_index)
         public_references = PublicReferenceStore(settings.archive_dir)
         secret_store = SecretStore(
             settings.archive_dir,
@@ -158,6 +161,7 @@ class Container:
             process_plans=process_plans,
             automation=automation,
             notifications=notifications,
+            search_index=search_index,
             llm=llm,
             metrics=metrics,
         )

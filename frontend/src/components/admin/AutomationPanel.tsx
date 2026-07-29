@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react';
 
 import {
   fetchAutomationStatus,
+  fetchSearchIndexStats,
   runAutomationJobs,
   saveAutomationConfig,
   type AutomationConfig,
+  type SearchIndexStats,
 } from '../../api';
 
 const WEEKDAY_LABELS = ['월', '화', '수', '목', '금', '토', '일'];
@@ -12,12 +14,14 @@ const WEEKDAY_LABELS = ['월', '화', '수', '목', '금', '토', '일'];
 const emptyConfig: AutomationConfig = {
   weekly_report: { enabled: false, weekday: 0, time: '09:00', timezone: 'Asia/Seoul' },
   reminders: { enabled: false, time: '09:30', stale_days: 3 },
+  search: { embeddings_enabled: false },
   webhook_url: '',
 };
 
 export default function AutomationPanel() {
   const [config, setConfig] = useState<AutomationConfig>(emptyConfig);
   const [state, setState] = useState<Record<string, string>>({});
+  const [searchStats, setSearchStats] = useState<SearchIndexStats | null>(null);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -28,6 +32,11 @@ export default function AutomationPanel() {
       setState(status.state);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : '자동화 설정 로드 실패');
+    }
+    try {
+      setSearchStats(await fetchSearchIndexStats());
+    } catch {
+      setSearchStats(null);
     }
   }
 
@@ -183,6 +192,36 @@ export default function AutomationPanel() {
         </button>
         {state.last_reminder_date ? (
           <p className="muted small">마지막 리마인더 날짜: {state.last_reminder_date}</p>
+        ) : null}
+      </div>
+
+      <div className="memory-form">
+        <h3>아카이브 검색 (시맨틱)</h3>
+        <p className="muted small">
+          키워드 검색은 항상 로컬에서 동작합니다. 아래를 켜면 문서 조각을 Upstage 임베딩 API로
+          보내 유의어 검색을 보강합니다 — 반출 제어(방화벽)를 통과한 조각만 전송됩니다.
+        </p>
+        <label>
+          <input
+            type="checkbox"
+            checked={config.search.embeddings_enabled}
+            onChange={(e) =>
+              setConfig({ ...config, search: { embeddings_enabled: e.target.checked } })
+            }
+          />
+          임베딩 시맨틱 검색 사용 (호출당 과금)
+        </label>
+        <button type="button" disabled={busy} onClick={() => void runNow('search_index')}>
+          지금 재색인
+        </button>
+        {searchStats ? (
+          <p className="muted small">
+            파일 {searchStats.files} · 청크 {searchStats.chunks} · 임베딩 {searchStats.embedded} ·
+            제외 {searchStats.embed_skipped}
+            {searchStats.last_embed_run
+              ? ` · 마지막 실행 ${searchStats.last_embed_run.slice(0, 16).replace('T', ' ')}`
+              : ''}
+          </p>
         ) : null}
       </div>
 

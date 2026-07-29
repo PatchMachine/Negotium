@@ -880,10 +880,24 @@ export type ReminderConfig = {
   stale_days: number;
 };
 
+export type SearchConfig = {
+  embeddings_enabled: boolean;
+};
+
 export type AutomationConfig = {
   weekly_report: WeeklyReportConfig;
   reminders: ReminderConfig;
+  search: SearchConfig;
   webhook_url: string;
+};
+
+export type SearchIndexStats = {
+  files: number;
+  chunks: number;
+  embedded: number;
+  embed_skipped: number;
+  last_embed_run: string;
+  embeddings_enabled: boolean;
 };
 
 export type AutomationStatus = {
