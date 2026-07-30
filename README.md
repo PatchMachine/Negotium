@@ -1,352 +1,143 @@
-# Negotium
+# Negotium (네고티움)
 
-비 IT 기업이 사내 업무를 AI 기반으로 전환할 수 있도록 돕는
-LLM 에이전트 기반 **AI 오피스워크 / BPA(Business Process Automation) 시스템**입니다.
+**비 IT 한국 중소기업을 위한 LLM 에이전트 오피스워크 / BPA 콘솔.**
+회의록 → 업무 배정 → 주간보고 → 인수인계/채용까지, 회사의 반복 오피스워크가
+하나의 닫힌 루프로 굴러갑니다. DB 없이 `archive/`의 Markdown/JSON이 단일 진실
+원본이며(**MD GitOps**), 기본 클라우드 LLM은 **Upstage Solar** (`solar-pro3`)입니다.
 
-회의록 작성 → 업무 배정 → 주간보고 → 인수인계/채용까지, 회사의 반복 오피스워크를
-AI가 정리하고 굴러가게 돕습니다.
-민감한 사내 내용은 로컬 LLM으로, 일반 생성 업무는 클라우드 API로 라우팅할 수 있습니다.
-기본 클라우드 provider는 **Upstage Solar** (`solar-pro3`)이며 GPT/Claude/Gemini/Together도 지원합니다.
-모든 추론 과정과 결정 근거는 Markdown 파일로 저장되어(**MD GitOps**) 누구나 메모장으로 읽고 수정할 수 있습니다.
+> Upstage **Solar Agent Partner Stage 1** 프로젝트입니다.
+> Solar 사용 경험과 기술 피드백: [SOLAR_REVIEW.md](SOLAR_REVIEW.md) ·
+> 개발 현황과 향후 계획: [docs/ROADMAP.md](docs/ROADMAP.md)
 
-> 이 프로젝트는 **Patch Machine**에서 **Negotium(네고티움)** 으로 리브랜딩되었습니다.
-> 기존 설치에서 마이그레이션하려면 아래 [Patch Machine에서 마이그레이션](#patch-machine에서-마이그레이션) 절을 참고하세요.
+## 왜 만들었나
 
-## 핵심 가치
+한국 중소기업의 오피스워크는 여전히 한글 문서, 엑셀, 구두 지시로 돌아갑니다.
+IT 팀이 없는 회사가 SaaS를 도입하려면 데이터를 남의 DB에 맡겨야 하고,
+AI를 쓰려면 민감한 사내 문서를 통째로 외부에 보내야 합니다. Negotium은 반대로 설계했습니다:
 
-- **AI 오피스워크**: 회의록, 보고서, 업무 요청서, 인수인계, 면접 키트를 한 콘솔에서 생성.
-- **BPA 지향**: 반복 업무와 병목을 기록하고 회사 운영 흐름을 자동화.
-- **코어 루프 완결**: 회의록이 업무가 되고, 업무 기록이 보고서·인수인계가 되는 닫힌 흐름.
-- **Ports-and-Adapters**: Solar -> GPT, 클라우드 -> 로컬 vLLM 등 LLM 어댑터만 바꾸면 됨.
-- **GitOps**: 별도 DB 없이 `archive/*.md`가 단일 진실 원본.
-- **Privacy by Default**: 사내 핵심 로직은 로컬 LLM 라우트로 강제.
+- **모든 데이터는 내 서버의 파일로** — DB 없이 `archive/*.md`가 원본. 메모장으로도 읽힙니다.
+- **AI는 라우팅으로 통제** — 민감 작업은 로컬 vLLM, 일반 작업은 클라우드(Solar 기본).
+  외부로 나가는 모든 컨텍스트는 **반출 제어(컨텍스트 방화벽)** 를 통과합니다.
+- **업무가 스스로 굴러가게** — 회의록이 업무가 되고, 업무 기록이 보고서·인수인계가 되는
+  닫힌 루프 + 스케줄러가 주간보고·리마인더를 알아서 돌립니다.
 
-## 아키텍처 (요약)
+## 핵심 기능
 
-```
-회의 메모 · 업무 기록 · 업로드 문서
-        |
-        v
-FastAPI 콘솔 API ──> 회사 메모리(운영/영구/휘발성) + LLM 라우팅(Solar 기본, 로컬 vLLM 옵션)
-        |
-        v
-회의록 ─> 액션아이템 ─> 업무 배정(work_schedule)
-업무 기록 ─> 주간보고 · 병목 요약
-담당자 변경 ─> 인수인계 킷(+후속 업무 자동 배정)
-빈 자리 ─> 채용/면접 키트
-        |
-        v
-archive/*.md · *.json  (MD GitOps — DB 없음)
-```
+| 영역 | 내용 |
+| --- | --- |
+| **코어 루프 4종** | 회의록→업무배정(담당자·순서·의존성 자동), 업무현황→주간보고, 인수인계 킷(+후속 업무 배정), 채용/면접 킷 |
+| **AI 어시스턴트** | `solar-pro3` 도구 호출 에이전트 — 조직 조회·문서 생성·메모리 검색·엑셀 읽기를 스스로 수행, 쓰기 작업은 승인 카드로 통제 |
+| **문서 첨부** | **HWP·HWPX·DOCX**·PDF·이미지·엑셀 — 클라우드 라우트는 Upstage Document Parse로 표/서식까지 변환(파일별 캐시로 재과금 없음), 로컬 라우트는 내장 파서 |
+| **아카이브 검색** | 청크 BM25 + 한국어 문자 2-gram("합의했지"로 "합의" 문서 검색) + 옵트인 Upstage 임베딩 시맨틱 검색 |
+| **자동화** | 주간보고 자동 생성, 마감/정체 업무 리마인더, 인앱 알림함(🔔) + 슬랙 호환 웹훅 |
+| **보안** | 세션 토큰 인증(PBKDF2)·로그인 스로틀링·직급 기반 접근 제어·감사 로그·컨텍스트 방화벽·archive 자동 git 백업 |
 
-## 하루 업무 흐름 (코어 루프)
+## Upstage Solar 활용 (3종)
 
-1. **회의록 → 업무 배정**: 회의 메모를 붙여넣으면 회의록이 생성되고, "액션 아이템을 업무로 등록"을
-   켜면 담당자별 순서/의존성이 붙은 업무가 `업무 배정`에 자동 등록됩니다.
-2. **업무 현황 → 주간보고**: 진행/완료/병목을 한 화면에서 보고, `주간보고 자동 생성` 버튼으로
-   관리자용 보고서를 만듭니다 (`POST /api/reports/weekly`).
-3. **인수인계**: 담당자가 바뀌면 그 사람의 업무 기록·감사 로그를 모아 인수인계 문서를 만들고,
-   후속 업무를 새 담당자에게 배정합니다.
-4. **채용/면접**: 부서·직급 컨텍스트를 반영한 직무 요구사항, 면접 질문, 온보딩 계획을 생성합니다.
+Negotium은 Upstage API를 세 곳에서 사용합니다 — 모두 같은 `NG_SOLAR_API_KEY` 하나로 동작합니다.
 
-## 빠른 시작
-
-```bash
-uv venv --python 3.11 .venv && source .venv/bin/activate
-uv pip install -e ".[dev]"
-cp .env.example .env                     # 값 채워 넣기
-negotium serve --build-frontend          # 콘솔 빌드 + 서버 실행 (Node 20+ 필요)
-```
-
-**콘솔과 API는 하나의 포트(`8080`)에서 함께 제공됩니다.** 브라우저에서
-`http://localhost:8080` 하나만 열면 됩니다. `--build-frontend`는 `frontend/dist`가
-없거나 프론트엔드를 수정했을 때만 필요하고, 이후에는 `negotium serve`로 충분합니다.
-
-개발 모드에서는 API 키 암호화용 개발 키가 자동 적용됩니다. 운영 배포에서는 반드시 `.env`에
-충분히 긴 `NG_SECRET_KEY`를 직접 설정하세요.
-
-- 콘솔(React): `http://localhost:8080/`
-- API 문서: `http://localhost:8080/docs`
-- 상태 확인: `http://localhost:8080/health`
-- 운영 메모리 API: `http://localhost:8080/api/operations-memory`
-- 외부 참여 안내: `http://localhost:8080/contribute`
-- 참여 방법: `http://localhost:8080/contribute/join`
-- 운영 메모리 설정: `http://localhost:8080/contribute/operations`
-
-운영 메모리는 처음에는 비어 있으며 UI에서 저장하면 `archive/operations_memory.json`에 기록됩니다.
-회사 이름, 오피스 프로젝트, 진행 중 계획은 모든 문서 생성·업무 배정 프롬프트에 회사 컨텍스트로 전달됩니다.
-
-콘솔에는 홈(하루 업무 흐름), 문서 자동화·회의록, 업무 현황·주간보고, 업무 배정,
-인수인계, 채용/면접, AI 어시스턴트, 인사관리 탭이 포함됩니다.
-
-## 프론트엔드 개발 (HMR)
-
-프론트엔드를 고칠 때만 Vite 개발 서버를 따로 띄웁니다. 배포·일반 실행에는 필요 없습니다.
-
-```bash
-npm install --prefix frontend
-npm run dev --prefix frontend    # http://localhost:5173, /api·/health는 :8080으로 프록시
-```
-
-수정이 끝나면 `npm run build --prefix frontend`로 빌드하면 `http://localhost:8080`에
-바로 반영됩니다(백엔드 재시작 불필요). 빌드 산출물 위치는 `NG_FRONTEND_DIST`로 바꿀 수 있습니다.
-
-## Upstage Solar (기본 클라우드 provider)
-
-Negotium의 기본 클라우드 LLM은 Upstage **Solar Pro 3** (`solar-pro3`)입니다.
-[Upstage Console](https://console.upstage.ai)에서 API 키를 발급받아 설정하면 바로 사용할 수 있습니다.
-
-```bash
-NG_LLM_DEFAULT_ROUTE=cloud
-NG_LLM_PROVIDER=solar
-NG_SOLAR_API_KEY=up_xxx           # console.upstage.ai에서 발급
-NG_SOLAR_MODEL=solar-pro3
-NG_SOLAR_BASE_URL=https://api.upstage.ai/v1
-```
+1. **Chat Completions — 에이전트 루프의 심장.** `solar-pro3`의 병렬 도구 호출로
+   AI 어시스턴트·셋업 마법사가 조직 설계, 문서 생성, 메모리 검색을 수행합니다.
+   `reasoning_effort=minimal` 기본값 덕에 오피스 작업 응답이 빠릅니다.
+2. **Document Parse (`/v1/document-digitization`)** — 한국 기업 문서의 실제 형식인
+   HWP/HWPX/DOCX를 표·서식이 살아있는 마크다운으로 변환해 회의록·문서 생성에 반영합니다.
+3. **Embeddings (`/v1/embeddings`)** — `embedding-passage`/`embedding-query`로 아카이브
+   청크를 색인해 키워드 검색과 RRF 융합. **방화벽을 통과한 청크만 전송**됩니다
+   (주민등록번호가 든 청크는 아예 나가지 않고 감사 기록만 남음).
 
 ### 모델 티어
 
-모델 선택 화면은 모델을 **에이전트형 / 추론형 / 일반형 / 미분류** 로 구분해 보여주고,
-고른 모델로 인해 제한되는 기능을 함께 안내합니다.
+모델 선택 화면은 모델을 **에이전트형 / 추론형 / 일반형** 으로 구분해 보여주고,
+선택한 모델로 제한되는 기능을 함께 안내합니다.
 
 | 모델 | 티어 | 컨텍스트 | 도구 호출 | reasoning_effort |
 | --- | --- | --- | --- | --- |
 | `solar-pro3` | 에이전트형 (기본값) | 128k | 지원 (병렬 호출) | `high\|medium\|low\|minimal` |
 | `solar-pro2` | 추론형 | 65k | 지원 | `high\|medium\|low\|minimal` |
 | `solar-open2` | 에이전트형 (자체 호스팅) | 1M | 지원 | `high\|none` |
-| `solar-mini`, `syn-pro` | 일반형 | 32k | 지원 | 미지원 |
+| `solar-mini` | 일반형 | 32k | 지원 | 미지원 |
 
-`solar-open2`는 오픈 웨이트 모델로, vLLM 서빙 시
-`--tool-call-parser solar_open2 --enable-auto-tool-choice` 옵션이 필요합니다.
-응답 전에 숨은 추론에 토큰을 크게 쓰므로 `max_tokens`를 넉넉히 주세요.
+`solar-open2`는 오픈 웨이트 모델로 vLLM 서빙 시
+`--tool-call-parser solar_open2 --enable-auto-tool-choice`가 필요하며, 응답 전에
+숨은 추론에 토큰을 크게 쓰므로 `max_tokens`를 넉넉히 주어야 합니다.
 
-Solar는 OpenAI-compatible API로 호출되므로 별도 SDK 없이 동작하며, 키가 없어도
-UI의 provider 목록에는 fallback 모델 목록(`solar-pro3` 등)이 표시됩니다.
-관리자 화면(API 키 설정)이나 초기 셋업 마법사에서 키를 저장한 뒤 "모델 목록 확인"으로
-사용 가능한 모델을 라이브로 조회할 수 있습니다.
-
-빠른 동작 확인:
-
-```bash
-curl -s https://api.upstage.ai/v1/chat/completions \
-  -H "Authorization: Bearer $NG_SOLAR_API_KEY" -H "Content-Type: application/json" \
-  -d '{"model":"solar-pro3","messages":[{"role":"user","content":"ping"}]}'
-```
-
-## LLM 채팅
-
-기본 로컬 모델은 vLLM Python 엔진의 `Qwen/Qwen3-4B`입니다.
-vLLM은 별도 프로세스/컨테이너 없이 FastAPI 백엔드 안에 임베드되어 GPU에서 직접 로드됩니다.
-
-```bash
-NG_LLM_DEFAULT_ROUTE=local
-NG_LLM_PROVIDER=vllm
-NG_VLLM_MODE=embedded             # FastAPI 내부에서 vllm.LLM로 직접 로드
-NG_VLLM_MODEL=Qwen/Qwen3-4B
-NG_VLLM_DTYPE=bfloat16
-NG_VLLM_MAX_MODEL_LEN=8192
-NG_VLLM_GPU_MEMORY_UTILIZATION=0.9
-```
-
-외부에 OpenAI 호환 vLLM 서버를 별도로 띄우고 싶다면 `NG_VLLM_MODE=http`로 두고
-`NG_VLLM_BASE_URL`을 가리키면 됩니다.
-
-GPT, Claude, Gemini, Together API는 각각 `NG_OPENAI_API_KEY`, `NG_ANTHROPIC_API_KEY`,
-`NG_GEMINI_API_KEY`, `NG_TOGETHER_API_KEY`를 설정하면 프론트엔드의 LLM 채팅 탭에서 provider를 바꿔 호출할 수 있습니다.
-Together는 OpenAI-compatible 엔드포인트를 사용하며 기본값은 `NG_TOGETHER_BASE_URL=https://api.together.ai/v1`,
-기본 모델은 `NG_TOGETHER_MODEL=openai/gpt-oss-20b`입니다.
-API 설정 화면은 OpenAI, Anthropic, Gemini, Together의 모델 목록 API를 호출해 최신 모델을 불러옵니다.
-아직 키를 저장하지 않은 상태에서도 입력 중인 키로 “모델 목록 확인”을 눌러 live 목록을 확인할 수 있습니다.
-채팅은 `archive/operations_memory.json`, `archive/work_memory.json`, `archive/current_status.md`,
-최근 archive 로그를 컨텍스트로 사용합니다.
-
-외부 LLM 호출만 별도 프로세스로 분리하려면 경량 게이트웨이를 실행합니다.
-
-```bash
-negotium llm-gateway --port 8090
-NG_LLM_GATEWAY_URL=http://localhost:8090 negotium serve
-```
-
-게이트웨이는 Solar/GPT/Claude/Gemini/Together/vLLM HTTP 호출, 공급자별 모델 목록 조회, API 키 저장소 조회만 담당합니다.
-로컬 vLLM 임베드 프리로드 없이 독립적으로 실행됩니다.
-
-### 로컬 GPU 머신에서 vLLM 임베드 실행
-
-NVIDIA GPU + 최신 드라이버가 있는 호스트에서 곧바로 백엔드를 실행합니다.
+## 빠른 시작 (3분)
 
 ```bash
 uv venv --python 3.11 .venv && source .venv/bin/activate
-uv pip install -e ".[dev,local-ai]"
-# flash-attn은 CUDA 빌드가 까다로워 build isolation 없이 별도 설치합니다.
-uv pip install --no-build-isolation "flash-attn>=2.6"
-cp .env.example .env              # NG_VLLM_MODE=embedded 등 확인
-negotium serve
+uv pip install -e ".[dev]"
+cp .env.example .env
+# .env에서 NG_SOLAR_API_KEY만 채우면 됩니다 (console.upstage.ai에서 발급)
+negotium serve --build-frontend          # 콘솔 빌드 + 서버 (Node 20+ 필요)
 ```
 
-첫 요청에서 모델 가중치 로딩 + CUDA 그래프 캡처가 일어나기 때문에 수십 초~수 분이 걸릴 수 있습니다.
-이후 요청은 동일 프로세스 안에서 즉시 처리됩니다.
+브라우저에서 `http://localhost:8080` 하나만 열면 콘솔과 API가 함께 제공됩니다.
+첫 화면의 **초기 셋업 마법사**가 관리자 생성 → LLM 연결 → 회사 프로필 → 조직 설계 →
+구성원 로그인 발급까지 안내합니다. Solar 키가 있으면 마법사가 대화형(에이전트)으로,
+없으면 폼 기반으로 동작하며 — **키가 없어도 모든 화면은 열리고 AI 생성만 안내 문구로 대체**됩니다.
 
-## AI 오피스 BPA 기능
+- 콘솔: `http://localhost:8080/` · API 문서: `/docs` · 상태: `/health`
 
-- **회사 메모리 엔진**: 조직 구조, 부서, 역할, 핵심 업무 흐름, 사용 도구, 민감정보 정책 저장.
-- **인사관리(조직도/직급/직원 배정)**: `인사관리` 화면에서 부서를 상위 부서(`parent_id`)와 연결한 계층형 조직도로 설계하고, 새 직급(`PositionRecord`)을 만들 때 그 직급에 포함될 권한까지 함께 정의합니다. 인사평가는 같은 화면의 하위 탭으로 분리되어 제공됩니다.
-- **직급 중심 접근 제어**: 직원에게 별도 권한 역할을 고르는 방식이 아니라, 직원에게 배정된 직급의 권한 목록으로 기능 접근을 판단합니다. `권한 관리` 화면은 부서별 예외 접근 권한만 조정합니다.
-- **영구 메모리 원천**: 업무 처리 로그, 감사 로그, 생성 문서, 승격된 메모리, LLM-사용자 대화 JSONL을 검색 가능한 원천 기록으로 유지.
-- **휘발성 작업 메모리**: 영구 메모리와 현재 대화를 LLM이 요약한 전역/사용자/세션별 작업 기억을 `archive/volatile_memory/`에 저장.
-- **컨텍스트 압축**: 긴 영구 원천 기록을 원문 삭제 없이 source refs를 가진 압축 컨텍스트 캐시로 변환.
-- **메모리 스키마/삭제 승인**: 회사별 영구메모리 타입과 필드를 `archive/memory/schema.json`에서 관리하고, 민감 기록 삭제는 요청/승인/tombstone 흐름으로 처리.
-- **에이전트 실행 허가**: 작업 스케줄과 영구 메모리를 근거로 작업 계획을 만들고, 계획 전용/승인 작업/정책 기반 자동 실행 모드를 구분.
-- **업무 아키텍처**: 회사 진행 업무를 단계, 역할, 의존성, 리스크, 산출물 중심의 계획 문서로 생성.
-- **작업 스케줄링**: 작업자별 업무, 상태, 우선순위, 시작일/마감일을 `archive/work_schedule.json`에 저장.
-- **채용/면접**: 직무 요구사항, 면접 질문, 평가 루브릭, 온보딩 계획을 Markdown으로 생성.
-- **인수인계**: archive 로그와 회사 메모리를 바탕으로 담당자 변경 문서를 생성.
-- **업무 병목 파악**: 최근 업무 로그 상태를 묶어 관리자용 병목 요약 제공.
-- **문서 자동화**: 회의록, 보고서, 업무 요청서, PPT 초안을 생성해 `archive/documents/`에 저장.
-
-### 첨부 문서 형식
-
-채팅·문서 생성·셋업 마법사에 md/txt/csv/xlsx/PDF/이미지 외에 **DOCX·HWP·HWPX**를 첨부할 수 있습니다.
-클라우드 라우트에서는 Upstage **Document Parse** API(같은 Solar API 키)가 표·서식까지 마크다운으로
-변환하며, 호출당 과금되지만 파일별로 결과가 캐시되어 같은 첨부를 다시 쓸 때는 재과금되지 않습니다.
-로컬 라우트·키 미설정·API 실패 시에는 내장 로컬 파서가 텍스트만 추출합니다(파일이 외부로 나가지 않음).
-
-### 자동화 (스케줄러)
-
-**관리자 설정 → 자동화**에서 반복 업무를 예약할 수 있습니다 (기본은 모두 꺼짐):
-
-- **주간보고 자동 생성**: 매주 지정 요일·시각(기본 KST)에 주간 업무 보고서를 자동 생성합니다.
-- **업무 리마인더**: 매일 지정 시각에 마감 초과·오늘 마감·N일 이상 정체된 업무를 담당자별로 알립니다.
-
-알림은 콘솔 상단의 알림함(🔔)에 쌓이고, 웹훅 URL을 설정하면 `{"text": "..."}` JSON을
-POST합니다(슬랙 incoming webhook 호환 — 카카오워크/디스코드류 수신기에 연결 가능).
-스케줄러 자체는 `NG_AUTOMATION_ENABLED=false`로 완전히 끌 수 있습니다.
-설정·실행 상태는 `archive/automation.json`, 알림은 `archive/notifications.json`에 저장됩니다.
-
-### 아카이브 백업 (git)
-
-**관리자 설정 → 자동화**에서 켜면 `archive/`가 자체 git 저장소로 버전 관리됩니다 —
-주기적으로(기본 30분) 변경분이 자동 커밋되어 문서 이력 추적과 실수 복구가 가능합니다
-(`git -C archive log`). `secrets/`(마스터 키)·인증 상태·파생 캐시는 커밋되지 않습니다.
-원격 저장소 URL을 설정하면 커밋 후 push까지 수행합니다 — 회사 데이터가 외부로 전송되니
-사설 저장소를 사용하고, URL에 포함된 토큰은 로그·감사에 기록되지 않습니다.
-`negotium reset-state`는 git 이력까지 함께 삭제합니다.
-
-### 아카이브 검색
-
-채팅과 메모리 검색은 아카이브 전체(회의록·보고서·인수인계·업로드·대화 기록)를
-**청크 단위 BM25 + 한국어 문자 2-gram**으로 검색합니다 — "합의했지"로도 "합의" 문서를
-찾고, 문서 중간에 묻힌 키워드도 스니펫과 함께 나옵니다. 색인은 `archive/search_index/`에
-저장되는 재생성 가능한 파생 캐시이며 변경된 파일만 증분 재색인됩니다(진실 원본은 여전히 md).
-
-**관리자 설정 → 자동화**에서 시맨틱 검색(Upstage 임베딩, 기본 꺼짐)을 켤 수 있습니다.
-켜면 문서 청크가 Upstage 임베딩 API로 전송되어 유의어 검색이 보강되는데, **반출
-제어(컨텍스트 방화벽)를 통과한 청크만** 전송됩니다 — 주민등록번호 등 민감 정보가 담긴
-청크는 아예 나가지 않고 감사 로그에 기록됩니다.
-
-운영 메모리는 장기적으로 유지되는 회사 정보이고, 현재 작업 메모리는 지금 진행 중인 업무 상태입니다.
-AI 업무 아키텍처 생성 결과는 `archive/work_architecture/`에 Markdown으로 남고, 관련 작업 스케줄은
-`archive/work_schedule.json`에서 CRUD로 관리됩니다.
-
-## 관리 로그와 초기화
-
-관리자 변경, API 키 변경, 계정 요청 승인/거절, 업로드, 문서 생성, 운영 메모리/LLM 런타임 변경은
-`archive/audit_log.jsonl`에 append-only JSONL로 기록됩니다. 관리자 화면은
-`/api/admin/audit-log`를 통해 최근 감사 로그를 조회할 수 있습니다.
-
-### 초기화 CLI 명세
-
-초기화는 Negotium 백엔드가 설치된 호스트에서 실행합니다. 개발 환경에서는 저장소 루트에서
-가상환경을 활성화한 뒤 실행하고, Docker 환경에서는 `negotium` 이미지/컨테이너 안에서 실행합니다.
+Docker로 실행하려면 (vLLM/CUDA 미포함, 클라우드 라우트 전용):
 
 ```bash
-# 로컬 개발 환경
-cd /path/to/Negotium_Core_Engine
-source .venv/bin/activate
-negotium reset-state --yes --actor admin
-
-# uv로 실행하는 경우
-uv run negotium reset-state --yes --actor admin
-```
-
-Docker Compose로 띄운 경우에는 archive 볼륨을 공유하는 백엔드 컨테이너에서 실행합니다.
-
-```bash
-docker compose -f docker/docker-compose.yml run --rm negotium \
-  negotium reset-state --yes --actor admin
-```
-
-옵션은 다음과 같습니다.
-
-- `--yes`: 필수 확인 플래그입니다. 없으면 파괴적 초기화를 거부합니다.
-- `--actor <name>`: 감사 로그에 남길 실행자 이름입니다. 예: `admin`, `ops`, `local-owner`.
-- `--include-workspaces / --no-include-workspaces`: `.ng_workspaces/` 작업 디렉터리까지 비울지 결정합니다. 기본값은 포함입니다.
-
-예를 들어 내부 메모리와 계정/API 키만 초기화하고 작업 디렉터리는 남기려면 다음처럼 실행합니다.
-
-```bash
-negotium reset-state --yes --actor admin --no-include-workspaces
-```
-
-이 명령은 `archive/`의 운영 메모리, 권한, 인증 세션, API 키 저장소, 업로드, 생성 문서,
-`archive/conversations/`, `archive/volatile_memory/`, `archive/memory/`, `archive/agent_execution/`와
-`.ng_workspaces/` 작업 디렉터리를 비웁니다. `.env`, 소스 코드, 외부 공급자 모델 캐시나 API 서버는
-건드리지 않습니다. 초기화 작업 자체는 새 `archive/audit_log.jsonl`에 `system.reset`으로 기록됩니다.
-
-### 메모리 저장 위치
-
-- `archive/YYYY/MM/*.md`: 과거 처리 로그 영구 메모리 (읽기 호환)
-- `archive/audit_log.jsonl`: 감사 로그 영구 메모리
-- `archive/conversations/*.jsonl`: 사용자/LLM 대화 영구 메모리
-- `archive/documents/`, `archive/hr/`, `archive/handover/`, `archive/work_architecture/`: 생성 산출물 영구 메모리
-- `archive/memory/promoted/*.md`: 관리자가 휘발성 요약을 영구 원천으로 승격한 기록
-- `archive/memory/schema.json`, `archive/memory/schema_proposals.json`: 동적 영구메모리 스키마와 승인 대기 제안
-- `archive/memory/deletion_requests.json`, `archive/memory/tombstones.jsonl`: 삭제 승인 요청과 tombstone 이력
-- `archive/volatile_memory/`: 전역/사용자/세션별 휘발성 메모리와 압축 컨텍스트
-- `archive/agent_execution/`: 에이전트 작업 계획과 실행 요청 로그
-
-## Docker 실행
-
-```bash
-cp .env.example .env          # 값 채워 넣기
+cp .env.example .env
 docker compose -f docker/docker-compose.yml up --build
 ```
 
-Docker 이미지에는 vLLM/CUDA 스택이 포함되지 않습니다. 컨테이너에서 백엔드를 띄우면
-`NG_VLLM_MODE=http`로 강제되고, 로컬 LLM은 사용하지 않은 채 Solar/GPT/Claude/Gemini/Together API
-라우트만 동작합니다. 사내 비공개 모델을 vLLM으로 직접 돌려야 한다면 위의
-"로컬 GPU 머신에서 vLLM 임베드 실행" 절을 따라 호스트에서 실행하세요.
+## 아키텍처 (요약)
 
-컨테이너가 올라오면 콘솔과 API 모두 `http://localhost:8080`에서 제공됩니다.
-이미지 빌드 단계에서 React 콘솔을 함께 빌드해 백엔드가 직접 서빙하므로 프론트엔드 컨테이너는 없습니다.
-LLM 게이트웨이는 `http://localhost:8090`에서 별도로 뜨며, 메인 백엔드는 `NG_LLM_GATEWAY_URL`로
-게이트웨이에 LLM 호출을 위임합니다.
-`archive/`와 작업 디렉터리는 compose 설정에 따라 호스트와 연결됩니다.
+```
+회의 메모 · 업로드 문서(HWP/DOCX/PDF/XLSX)
+        │
+        ▼
+FastAPI 콘솔 API ──▶ 회사 메모리(운영/영구/휘발성) + 아카이브 검색(BM25+임베딩)
+        │                 │
+        │           컨텍스트 방화벽 (반출 제어·PII 마스킹)
+        ▼                 ▼
+solar-pro3 에이전트 루프 ──▶ 회의록→업무배정 / 주간보고 / 인수인계 / 채용킷
+        │
+        ▼
+archive/*.md · *.json  (MD GitOps — DB 없음, 자동 git 백업)
+```
 
-## Patch Machine에서 마이그레이션
+- **Ports-and-Adapters**: LLM 어댑터만 바꾸면 Solar ↔ GPT/Claude/Gemini/Together ↔ 로컬 vLLM 전환.
+  Solar는 OpenAI-compatible이라 별도 SDK 없이 동작합니다.
+- **로컬 vLLM**: GPU 호스트에서는 `NG_VLLM_MODE=embedded`로 FastAPI 프로세스 안에 직접 로드
+  (`uv pip install -e ".[dev,local-ai]"`), 외부 서버는 `NG_VLLM_MODE=http`.
+- **6개 작업 라우트**(회의록/계획/문서/채용/인수인계/채팅)별로 provider·모델을 관리자 화면에서 지정.
+- 외부 LLM 호출만 분리하려면 `negotium llm-gateway --port 8090` + `NG_LLM_GATEWAY_URL`.
 
-Negotium 리브랜딩은 breaking change입니다. 기존 Patch Machine 설치를 이어 쓰려면:
+## 보안·프라이버시
 
-1. **환경 변수**: `.env`의 모든 `PM_` 접두사를 `NG_`로 바꿉니다 (`sed -i 's/^PM_/NG_/' .env`).
-   `PM_LLM_PROVIDER`처럼 문서에만 있고 실제로 읽히지 않던 이름도 이제 `NG_LLM_PROVIDER`로 정상 동작합니다.
-2. **CLI**: `patch-machine serve` → `negotium serve`. 재설치: `uv pip install -e ".[dev]"`.
-3. **인증**: API를 직접 호출하는 스크립트는 이제 `POST /api/auth/login`으로 세션 토큰을
-   발급받아 `X-NG-User: Bearer <토큰>` 헤더로 보내야 합니다 (사용자 이름만 넣는 방식은 401).
-4. **작업 디렉터리**: `mv .pm_workspaces .ng_workspaces` (또는 새로 클론 후 초기 세팅).
-5. **archive/**: 그대로 사용 가능합니다. 단, 이제 git이 추적하지 않으므로 별도 백업을 권장합니다.
+- **인증**: PBKDF2 비밀번호 + 12시간 슬라이딩 세션 토큰, 로그인 시도 제한(5회/5분), 계정 신청·승인 흐름.
+- **접근 제어**: 직급(position) 중심 권한 — 직원에게 배정된 직급의 권한 목록으로 기능 접근을 판단.
+- **컨텍스트 방화벽**: 외부 LLM·임베딩으로 나가는 모든 컨텍스트에서 비밀키·주민등록번호·카드번호
+  등을 마스킹하고, 민감 등급에 따라 로컬 강제/차단. 모든 결정이 감사 로그에 남습니다.
+- **아카이브 git 백업**: `archive/`를 중첩 git 저장소로 자동 커밋(기본 30분) — 문서 이력 추적과
+  실수 복구. `secrets/`·인증 상태는 이력에서 제외되며, 옵트인 원격 push를 지원합니다.
+- 관리자 변경·문서 생성·키 변경 등 모든 관리 행위는 `archive/audit_log.jsonl`에 append-only 기록.
 
 ## 개발
 
 ```bash
 ruff check . && ruff format --check .
-mypy negotium
-pytest -q
+mypy negotium                     # --strict
+pytest -q                         # 353 tests
+npm run dev --prefix frontend     # 프론트 HMR (선택, :5173 → :8080 프록시)
 ```
+
+운영 상세(초기화 CLI, 메모리 저장 위치, Patch Machine 마이그레이션)는
+[docs/operations.md](docs/operations.md), 전체 아키텍처는 [docs/architecture.md](docs/architecture.md)를 보세요.
 
 ## 로드맵
 
-- 현재: 오피스 코어 루프(회의록→업무배정→주간보고→인수인계/채용) + Upstage Solar 기본 라우팅.
-- 다음: 이메일/그룹웨어 인제스트, HWP·Excel·PPT 실파일 출력, 결재(승인) 흐름 연동.
-- 이후: 업무 자동 실행 에이전트 확대(승인 기반), 조직별 메모리 스키마 고도화.
+완료된 기능과 향후 개발 계획은 **[docs/ROADMAP.md](docs/ROADMAP.md)** 에 정리되어 있습니다. 요약:
+
+- **완료**: 코어 루프 4종, Solar 에이전트 루프, HWP/DOCX 파싱(Document Parse),
+  자동화 스케줄러(주간보고·리마인더·웹훅), 아카이브 검색(BM25+임베딩), 보안 하드닝, git 백업.
+- **다음**: 업종별 온보딩 템플릿·데모 데이터, 결재(승인) 흐름, 이메일/그룹웨어 인제스트,
+  HWP·Excel·PPT 실파일 출력, 생성 문서 품질 피드백 루프.
 
 ## 라이선스
 

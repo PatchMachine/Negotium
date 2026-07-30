@@ -2419,17 +2419,26 @@ async def _complete_office_task(
         else _OFFICE_MAX_TOKENS
     )
     options = _office_call_options(provider, model)
-    response = await _complete_with_provider(
-        container,
-        messages,
-        provider=provider,
-        route=route,
-        temperature=0.2,
-        max_tokens=first_max_tokens,
-        task=task,
-        model=model,
-        options=options,
-    )
+    try:
+        response = await _complete_with_provider(
+            container,
+            messages,
+            provider=provider,
+            route=route,
+            temperature=0.2,
+            max_tokens=first_max_tokens,
+            task=task,
+            model=model,
+            options=options,
+        )
+    except HTTPException as exc:
+        # A firewall block is a policy decision the caller must see; anything
+        # else (missing key, unreachable local model, provider 5xx) degrades to
+        # the offline scaffold so first-run setup and office flows never 500.
+        if exc.status_code == status.HTTP_403_FORBIDDEN:
+            raise
+        diagnostic = f"provider={provider}, route={route}, model={model}, error={exc.detail}"
+        return _fallback_office_task_markdown(prompt, task=task, diagnostic=diagnostic)
     text = response.text.strip()
     if text:
         return text
@@ -2587,6 +2596,20 @@ async def _complete_with_provider(
         # skip every per-provider branch and fall through to the container-default
         # model, silently ignoring the per-task model override.
         api_key = (saved.api_key if saved else "") or _settings_api_key(container, provider)
+        if (
+            not api_key
+            and route != "local"
+            and provider in {"solar", "openai", "anthropic", "gemini", "together"}
+        ):
+            # Fail before the SDK does: a raw English "Missing credentials"
+            # error is the first thing a keyless install would otherwise see.
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"{provider} API 키가 설정되지 않았습니다. 관리자 설정 → API 키에서 "
+                    f"등록하거나 .env의 NG_{provider.upper()}_API_KEY를 채워주세요."
+                ),
+            )
         if api_key and provider == "openai" and route != "local":
             response = await OpenAiProvider(
                 api_key=api_key,
