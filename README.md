@@ -78,6 +78,9 @@ negotium serve --build-frontend          # 콘솔 빌드 + 서버 (Node 20+ 필�
 
 - 콘솔: `http://localhost:8080/` · API 문서: `/docs` · 상태: `/health`
 
+관리자가 무엇을 어떤 순서로 설정하고 매일·매주·매월 무엇을 봐야 하는지는
+**[관리자 운영 가이드](docs/admin-guide.md)** 에 정리했습니다.
+
 Docker로 실행하려면 (vLLM/CUDA 미포함, 클라우드 라우트 전용):
 
 ```bash

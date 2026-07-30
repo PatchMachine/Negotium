@@ -98,7 +98,7 @@ const navItems: NavItem[] = [
   { id: 'dashboard', label: '회사 운영 설정', group: '조직·운영 관리', requiredPermission: 'memory:write' },
   { id: 'personnel', label: '인사관리', group: '조직·운영 관리', requiredPermission: 'admin:users' },
   { id: 'uploads', label: '업로드', group: '시스템 관리', requiredPermission: 'uploads:write' },
-  { id: 'admin', label: 'API 키·로컬 에이전트', group: '시스템 관리', requiredPermission: 'admin:api_keys' },
+  { id: 'admin', label: 'AI·자동화 설정', group: '시스템 관리', requiredPermission: 'admin:api_keys' },
   { id: 'workflow-status', label: '워크플로우 상태', group: '시스템 관리', requiredPermission: 'admin:users' },
   { id: 'integrations', label: 'MCP 서버 연동', group: '시스템 관리', requiredPermission: 'admin:mcp' },
   { id: 'token-limits', label: '토큰 사용량·한도', group: '시스템 관리', requiredPermission: 'admin:token_limits' },
