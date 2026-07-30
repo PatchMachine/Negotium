@@ -259,8 +259,8 @@ _HOME_HTML = f"""
       <div class="eyebrow">Open Collaboration</div>
       <h1>네고티움은 외부 기여와 함께 더 똑똑해집니다.</h1>
       <p class="lede">
-        GitHub Issue와 Discord 제보만으로 문제를 수집하고, PM / Developer / Reviewer
-        에이전트가 패치 제안까지 이어가는 자동 SI/SE 실험에 참여하세요.
+        사용 중 발견한 문제와 개선 아이디어를 남기면, 오피스워크 자동화(회의록·업무배정·
+        주간보고·인수인계)를 더 똑똑하게 만드는 데 바로 반영됩니다.
       </p>
       <div class="actions">
         <a class="button primary" href="{BASE}/join">참여 방법 보기</a>
@@ -275,14 +275,15 @@ _HOME_HTML = f"""
       <article class="card featured">
         <h2>버그 리포트</h2>
         <p>
-          재현 단계, 기대 동작, 실제 동작을 Issue나 Discord 메시지로 남기면
+          재현 단계, 기대 동작, 실제 동작을 GitHub Issue로 남기면
           네고티움이 분석 큐에 올립니다.
         </p>
       </article>
       <article class="card">
-        <h2>패치 검증</h2>
+        <h2>결과물 검증</h2>
         <p>
-          제안된 Diff에 대해 테스트 결과, 반례, 운영상 위험을 덧붙여 자동 리뷰 품질을 높입니다.
+          AI가 만든 회의록·보고서·업무 배정에 대해 잘된 점과 어긋난 점을 남기면
+          생성 품질 개선의 근거가 됩니다.
         </p>
       </article>
       <article class="card">
@@ -317,9 +318,9 @@ _JOIN_HTML = f"""
   <main class="shell">
     <section class="hero">
       <div class="eyebrow">How to Join</div>
-      <h1>좋은 제보 하나가 자동 패치의 출발점입니다.</h1>
+      <h1>좋은 제보 하나가 더 나은 자동화의 출발점입니다.</h1>
       <p class="lede">
-        지금은 GitHub Issue와 Discord를 중심으로 참여를 받습니다. 민감한 정보는 제거하고,
+        지금은 GitHub Issue를 중심으로 참여를 받습니다. 민감한 정보는 제거하고,
         재현 가능한 맥락을 남기는 것이 가장 큰 도움이 됩니다.
       </p>
       <div class="actions">
@@ -347,8 +348,8 @@ _JOIN_HTML = f"""
       <article class="step">
         <strong>3</strong>
         <div>
-          <h2>패치 제안을 검토합니다</h2>
-          <p>자동 생성된 Diff는 사람이 검증합니다. 테스트 결과와 반례를 댓글로 남겨주세요.</p>
+          <h2>개선 결과를 함께 검토합니다</h2>
+          <p>제보로 바뀐 동작은 사람이 검증합니다. 확인 결과와 반례를 댓글로 남겨주세요.</p>
         </div>
       </article>
       <article class="step">

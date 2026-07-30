@@ -370,9 +370,9 @@ def _initial_setup_memories_with_recommendations(
     recommendation_md = render_recommendation_markdown(payload.model_dump())
     operations_memory.setdefault(
         "office_project",
-        f"{payload.recommended_package or 'Patch Note Team'} 계정 맞춤 도입",
+        f"{payload.recommended_package or 'Negotium Team'} 계정 맞춤 도입",
     )
-    operations_memory.setdefault("active_plan", "계정 맞춤 Patch Note 조립안 검토 및 적용")
+    operations_memory.setdefault("active_plan", "계정 맞춤 Negotium 조립안 검토 및 적용")
     operations_memory["key_workflows"] = _join_markdown_blocks(
         str(operations_memory.get("key_workflows") or ""),
         recommendation_md,
@@ -388,7 +388,7 @@ def _initial_setup_memories_with_recommendations(
             "초기 보안 기본값:\n" + "\n".join(f"- {line}" for line in security_lines if line),
         )
 
-    work_memory.setdefault("goals", "첫 30일 동안 Patch Note 기반 AI 업무 운영 레이어 정착")
+    work_memory.setdefault("goals", "첫 30일 동안 Negotium 기반 AI 업무 운영 레이어 정착")
     work_memory["active_projects"] = _join_markdown_blocks(
         str(work_memory.get("active_projects") or ""),
         _items_to_lines("에이전트 팩", payload.agent_packs),

@@ -43,7 +43,7 @@ def test_contributor_site_routes_are_served(tmp_path: Path) -> None:
     assert home.status_code == 200
     assert "네고티움은 외부 기여와 함께 더 똑똑해집니다" in home.text
     assert join.status_code == 200
-    assert "좋은 제보 하나가 자동 패치의 출발점입니다" in join.text
+    assert "좋은 제보 하나가 더 나은 자동화의 출발점입니다" in join.text
     assert operations.status_code == 200
     assert "네고티움이 지금 운영할 회사를 기억하게 합니다" in operations.text
     assert styles.status_code == 200

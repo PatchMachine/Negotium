@@ -1,4 +1,4 @@
-"""Patch Note setup recommendation catalog."""
+"""Negotium setup recommendation catalog."""
 
 from __future__ import annotations
 
@@ -8,11 +8,11 @@ from negotium.adapters.llm.catalog import PROVIDERS
 from negotium.app.schemas.core import CompanyProfilePayload
 
 PACKAGE_BY_SIZE = {
-    "solo": "Patch Note Solo",
-    "startup": "Patch Note Team",
-    "smb": "Patch Note Business",
-    "mid_market": "Patch Note Business",
-    "enterprise_public": "Patch Note Enterprise",
+    "solo": "Negotium Solo",
+    "startup": "Negotium Team",
+    "smb": "Negotium Business",
+    "mid_market": "Negotium Business",
+    "enterprise_public": "Negotium Enterprise",
 }
 
 DEPARTMENT_AGENT_PACKS: dict[str, dict[str, Any]] = {
@@ -174,7 +174,7 @@ def recommend_patchnote_setup(
 
     return {
         "workspace_profile": profile.model_dump(),
-        "recommended_package": PACKAGE_BY_SIZE.get(profile.organization_size, "Patch Note Team"),
+        "recommended_package": PACKAGE_BY_SIZE.get(profile.organization_size, "Negotium Team"),
         "agent_packs": agent_packs,
         "templates": templates,
         "workflows": workflows,
@@ -190,7 +190,7 @@ def recommend_patchnote_setup(
 
 def render_recommendation_markdown(recommendation: dict[str, Any]) -> str:
     sections = [
-        f"추천 패키지: {recommendation.get('recommended_package', 'Patch Note Team')}",
+        f"추천 패키지: {recommendation.get('recommended_package', 'Negotium Team')}",
         _items_markdown("에이전트 팩", recommendation.get("agent_packs", [])),
         _items_markdown("템플릿", recommendation.get("templates", [])),
         _items_markdown("워크플로우", recommendation.get("workflows", [])),

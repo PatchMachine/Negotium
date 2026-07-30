@@ -65,7 +65,7 @@ def test_patchnote_catalog_recommends_dev_release_note_setup() -> None:
         )
     )
 
-    assert recommendation["recommended_package"] == "Patch Note Team"
+    assert recommendation["recommended_package"] == "Negotium Team"
     assert any(item["id"] == "product_dev_it" for item in recommendation["agent_packs"])
     assert any(item["id"] == "release_notes" for item in recommendation["templates"])
     assert recommendation["llm_task_routes"]["memory_summary"]["route"] == "local"

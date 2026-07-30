@@ -1087,11 +1087,11 @@ const GOAL_WORKFLOW_MAP: Record<GoalId, { name: string; description: string }> =
 };
 
 const ORGANIZATION_OPTIONS: Array<[string, string]> = [
-  ['solo', '1인/프리랜서 — Patch Note Solo'],
-  ['startup', '스타트업/소규모 팀 — Patch Note Team'],
-  ['smb', '중소기업 — Patch Note Business'],
-  ['mid_market', '중견기업 — Patch Note Business'],
-  ['enterprise_public', '대기업/공공기관 — Patch Note Enterprise'],
+  ['solo', '1인/프리랜서 — Negotium Solo'],
+  ['startup', '스타트업/소규모 팀 — Negotium Team'],
+  ['smb', '중소기업 — Negotium Business'],
+  ['mid_market', '중견기업 — Negotium Business'],
+  ['enterprise_public', '대기업/공공기관 — Negotium Enterprise'],
 ];
 
 function ProfileStep({
@@ -1112,7 +1112,7 @@ function ProfileStep({
   );
   const recommendedPackage = ORGANIZATION_OPTIONS.find(
     ([id]) => id === companyProfile.organization_size,
-  )?.[1] ?? 'Patch Note Team';
+  )?.[1] ?? 'Negotium Team';
   const previewAgents = (companyProfile.departments as DepartmentId[])
     .filter((id) => DEPARTMENT_PACK_MAP[id])
     .slice(0, 6)

@@ -852,7 +852,7 @@ class CompanyProfilePayload(BaseModel):
 
 class PatchNoteRecommendationPayload(BaseModel):
     workspace_profile: dict[str, Any] = Field(default_factory=dict)
-    recommended_package: str = "Patch Note Team"
+    recommended_package: str = "Negotium Team"
     agent_packs: list[dict[str, Any]] = Field(default_factory=list)
     templates: list[dict[str, Any]] = Field(default_factory=list)
     workflows: list[dict[str, Any]] = Field(default_factory=list)
@@ -891,7 +891,7 @@ class InitialOfficeSetupResult(BaseModel):
     operations_memory: dict[str, Any] = Field(default_factory=dict)
     work_memory: dict[str, Any] = Field(default_factory=dict)
     workspace_profile: dict[str, Any] = Field(default_factory=dict)
-    recommended_package: str = "Patch Note Team"
+    recommended_package: str = "Negotium Team"
     agent_packs: list[dict[str, Any]] = Field(default_factory=list)
     templates: list[dict[str, Any]] = Field(default_factory=list)
     workflows: list[dict[str, Any]] = Field(default_factory=list)
