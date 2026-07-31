@@ -39,7 +39,7 @@ negotium serve --build-frontend
 생기고 바로 로그인됩니다. **이 비밀번호를 분실하면 복구 경로가 없으니** 안전하게 보관하세요.
 
 📸 **스크린샷 ①** `images/01-setup-admin.png` — 셋업 마법사 첫 화면(관리자 생성 폼)
-<!-- ![셋업 마법사 — 관리자 생성](images/01-setup-admin.png) -->
+![셋업 마법사 — 관리자 생성](images/01-setup-admin.png)
 
 ### 1-3. AI 연결 (Solar 키)
 마법사의 LLM 단계에서 Upstage Solar 키를 입력합니다
@@ -51,7 +51,7 @@ negotium serve --build-frontend
   (GPU 필요, README의 vLLM 절 참고).
 
 📸 **스크린샷 ②** `images/02-setup-llm.png` — 마법사 LLM 단계(Solar 선택 + 모델 티어 표시 상태)
-<!-- ![셋업 마법사 — LLM 연결](images/02-setup-llm.png) -->
+![셋업 마법사 — LLM 연결](images/02-setup-llm.png)
 
 ### 1-4. 회사 정보와 조직 설계
 마법사가 회사 프로필 → (선택) 기존 문서 업로드 → 분석 → 검토 순서로 안내합니다.
