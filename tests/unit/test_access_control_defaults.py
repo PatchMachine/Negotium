@@ -170,3 +170,17 @@ def test_legacy_position_id_hydrates_permissions_and_order(tmp_path: Path) -> No
     position = next(item for item in payload["positions"] if item["id"] == "staff")
     assert position["permissions"] == ["work:read"]
     assert position["display_order"] == 40
+
+
+def test_position_permission_role_id_survives_persistence(tmp_path: Path) -> None:
+    # to_dict used to drop permission_role_id, so an explicitly chosen role was
+    # silently discarded on save and only the legacy level fallback kept working.
+    store = AccessControlStore(tmp_path)
+    store.upsert_position(
+        PositionRecord(id="lead", name="팀장", level=70, permission_role_id="manager")
+    )
+
+    reloaded = AccessControlStore(tmp_path)
+    payload = reloaded.read()
+    position = next(item for item in payload["positions"] if item["id"] == "lead")
+    assert position["permission_role_id"] == "manager"

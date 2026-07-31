@@ -147,6 +147,7 @@ class PositionRecord:
         return {
             "id": self.id,
             "name": self.name,
+            "permission_role_id": self.permission_role_id,
             "permissions": self.permissions,
             "display_order": self.display_order,
             "restrict_title_assignment": self.restrict_title_assignment,
@@ -493,6 +494,7 @@ def _hydrate_position_defaults(position: PositionRecord, payload: AclPayload) ->
         name=position.name,
         level=position.level,
         description=position.description,
+        permission_role_id=position.permission_role_id,
         permissions=[permission for permission in permissions if permission in allowed],
         display_order=position.display_order
         or position.level
