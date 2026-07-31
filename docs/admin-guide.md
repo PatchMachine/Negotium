@@ -59,7 +59,7 @@ negotium serve --build-frontend
 표시됩니다** — 복사해서 각자에게 안전하게 전달하고, 첫 로그인 후 변경하도록 안내하세요.
 
 📸 **스크린샷 ③** `images/03-setup-credentials.png` — 적용 직후 임시 비밀번호 패널("지금 한 번만 표시" 경고 포함)
-<!-- ![셋업 마법사 — 구성원 임시 비밀번호 발급](images/03-setup-credentials.png) -->
+![셋업 마법사 — 구성원 임시 비밀번호 발급](images/03-setup-credentials.png)
 
 이후 조직을 바꿀 때는 `인사관리`에서:
 1. **부서** 만들기 (상위 부서를 지정해 계층 구조로)
@@ -70,7 +70,7 @@ negotium serve --build-frontend
 > 주는** 방식입니다. 신입이 들어올 때마다 권한을 고민할 필요가 없습니다.
 
 📸 **스크린샷 ④** `images/04-personnel.png` — 인사관리 화면(부서 계층 + 직급의 권한 편집이 함께 보이게)
-<!-- ![인사관리 — 부서·직급·권한](images/04-personnel.png) -->
+![인사관리 — 부서·직급·권한](images/04-personnel.png)
 
 ### 1-5. 회사 운영 정보 입력
 `회사 운영 설정`에서 회사명·핵심 업무 흐름·사용 도구·민감정보 정책을 저장합니다.
@@ -87,7 +87,7 @@ negotium serve --build-frontend
   통과한 조각만 나가지만, 민감도가 높은 회사는 꺼둔 채 키워드 검색만 써도 충분합니다
 
 📸 **스크린샷 ⑤** `images/05-automation.png` — AI·자동화 설정 → 자동화 섹션(주간보고·리마인더·백업·웹훅이 한 화면에)
-<!-- ![AI·자동화 설정 — 자동화](images/05-automation.png) -->
+![AI·자동화 설정 — 자동화](images/05-automation.png)
 
 ---
 
@@ -96,7 +96,7 @@ negotium serve --build-frontend
 1. **알림함 🔔** — 상단 벨을 확인합니다. 주간보고 생성 알림, 담당자별 업무 리마인더가 쌓입니다.
 
    📸 **스크린샷 ⑥** `images/06-notifications.png` — 알림 벨 드롭다운(리마인더 알림이 쌓인 상태)
-   <!-- ![알림함](images/06-notifications.png) -->
+   ![알림함](images/06-notifications.png)
 2. **`업무 현황 · 주간보고`** — 진행/완료/병목을 한 화면에서 봅니다. 빨간 항목(마감 초과)이
    있으면 담당자에게 확인하세요.
 3. **회의가 있었다면 `문서 자동화 · 회의록`** — 회의 메모를 붙여넣고 "액션 아이템을 업무로
@@ -104,7 +104,7 @@ negotium serve --build-frontend
    한글(HWP)·워드 파일도 첨부할 수 있습니다.
 
    📸 **스크린샷 ⑦** `images/07-minutes-to-tasks.png` — 회의록 생성 결과 + 업무 배정에 자동 등록된 항목 (제품의 핵심 장면이므로 가장 공들여 찍을 것)
-   <!-- ![회의록 → 업무 배정](images/07-minutes-to-tasks.png) -->
+   ![회의록 → 업무 배정](images/07-minutes-to-tasks.png)
 
 ---
 
@@ -115,7 +115,7 @@ negotium serve --build-frontend
    생성된 문서는 `문서 열람`에서 언제든 다시 볼 수 있습니다.
 
    📸 **스크린샷 ⑧** `images/08-weekly-report.png` — 업무 현황 화면 + 생성된 주간보고
-   <!-- ![업무 현황 · 주간보고](images/08-weekly-report.png) -->
+   ![업무 현황 · 주간보고](images/08-weekly-report.png)
 2. **`업무 배정` 정리** — 완료된 업무 상태 갱신, 정체 업무 재배정, 새 업무 추가.
 3. **계정 요청 승인** — 직원이 직접 계정을 신청했다면 `인사관리`에서 승인/거절합니다.
 4. **담당자 변경이 있으면 `인수인계`** — 떠나는 담당자를 지정하면 그 사람의 업무 기록을 모아
@@ -129,12 +129,12 @@ negotium serve --build-frontend
    API 키 변경, 문서 생성, 계정 승인) 모두 기록됩니다. 예상 못 한 행위가 있는지 확인하세요.
 
    📸 **스크린샷 ⑨** `images/09-audit-log.png` — 워크플로우 상태의 감사 로그 목록
-   <!-- ![감사 로그](images/09-audit-log.png) -->
+   ![감사 로그](images/09-audit-log.png)
 2. **`토큰 사용량·한도`** — AI 호출량과 비용 추이를 봅니다. 과다 사용이 보이면 한도를
    설정하거나, `AI·자동화 설정 → 작업 라우팅`에서 일부 작업을 저렴한 모델/로컬로 돌립니다.
 
    📸 **스크린샷 ⑩** `images/10-token-usage.png` — 토큰 사용량 화면(사용 이력이 있는 상태)
-   <!-- ![토큰 사용량·한도](images/10-token-usage.png) -->
+   ![토큰 사용량·한도](images/10-token-usage.png)
 3. **백업 이력 확인** — `AI·자동화 설정 → 자동화`의 아카이브 백업 상태 줄에서 커밋 수와
    마지막 커밋 시각을 확인합니다. 서버에서 직접 이력을 보려면:
    ```bash
