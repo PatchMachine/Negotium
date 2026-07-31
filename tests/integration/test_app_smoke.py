@@ -16,8 +16,14 @@ from negotium.archive.operations_memory import OperationsMemory
 from negotium.archive.work_memory import WorkScheduleItem
 
 
-def test_health_endpoint_reports_metrics() -> None:
-    container = Container.build()
+def test_health_endpoint_reports_metrics(tmp_path: Path) -> None:
+    # Must pass explicit Settings: a bare build() reads .env and would point the
+    # app — and its startup hooks — at the developer's real archive/.
+    container = Container.build(
+        Settings(
+            env="test", archive_dir=tmp_path / "archive", workspace_dir=tmp_path / "workspaces"
+        )
+    )
     app = create_app(container)
     with TestClient(app) as client:
         response = client.get("/health")

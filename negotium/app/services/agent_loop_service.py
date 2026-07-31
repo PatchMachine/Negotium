@@ -16,9 +16,11 @@ Two policies shape the loop:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
+import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -30,13 +32,21 @@ from negotium.observability import get_logger
 
 _log = get_logger(component="agent.loop")
 
-# A turn is bounded on three axes so one chat message cannot silently consume a
-# day's token budget: iterations, per-result size, and total output tokens.
+# A turn is bounded on four axes so one chat message cannot silently consume a
+# day's token budget — or hang forever: iterations, per-result size, total output
+# tokens, and wall clock.
 MAX_TOOL_ITERATIONS = 6
 MAX_TOOL_RESULT_CHARS = 8000
 # Kept well under the default daily allowance (200k in TokenLimitConfig) so a
 # single chat turn cannot silently consume a team's budget for the day.
 MAX_TURN_OUTPUT_TOKENS = 60_000
+# Wall-clock guards. Without these a stalled provider call leaves the caller's
+# ai_job stuck at "running" and the UI spinning forever. Agent-loop turns on
+# reasoning models legitimately take tens of seconds per call, so the per-call
+# cap is generous; the turn deadline is what actually bounds the request.
+MAX_TURN_SECONDS = 300.0
+MAX_LLM_CALL_SECONDS = 150.0
+_TIMEOUT_FALLBACK = "모델 응답이 제한 시간을 넘겨 이번 턴을 중단했습니다. 다시 시도해 주세요."
 
 # Prepended to every tool result. Tool output is untrusted data — a spreadsheet
 # cell or fetched page can contain instructions aimed at the model.
@@ -295,9 +305,19 @@ async def run_agent_loop(
         emit=emit,
     )
 
+    deadline = time.monotonic() + MAX_TURN_SECONDS
+
     for iteration in range(1, MAX_TOOL_ITERATIONS + 1):
         result.iterations = iteration
         budget_exhausted = result.completion_tokens >= MAX_TURN_OUTPUT_TOKENS
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            # Out of wall clock mid-loop: stop rather than start another call.
+            if not result.text:
+                result.text = _TIMEOUT_FALLBACK
+            result.notes.append("턴 제한 시간에 도달해 도구 사용을 중단했습니다.")
+            _log.warning("agent.loop.turn_deadline", iteration=iteration, task=task, model=model)
+            return result
         final_pass = budget_exhausted or iteration == MAX_TOOL_ITERATIONS
         options = LlmCallOptions(
             tools=tuple(specs),
@@ -307,18 +327,29 @@ async def run_agent_loop(
             reasoning_effort=reasoning_effort,
             parallel_tool_calls=parallel_tool_calls,
         )
-        response = await complete(
-            container,
-            result.messages,
-            provider=provider,
-            route=route,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            task=task,
-            actor=actor,
-            model=model,
-            options=options,
-        )
+        try:
+            response = await asyncio.wait_for(
+                complete(
+                    container,
+                    result.messages,
+                    provider=provider,
+                    route=route,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    task=task,
+                    actor=actor,
+                    model=model,
+                    options=options,
+                ),
+                timeout=min(MAX_LLM_CALL_SECONDS, remaining),
+            )
+        except TimeoutError:
+            # A single stalled provider call must not hang the whole request.
+            if not result.text:
+                result.text = _TIMEOUT_FALLBACK
+            result.notes.append("모델 응답 대기 시간을 초과했습니다.")
+            _log.warning("agent.loop.call_timeout", iteration=iteration, task=task, model=model)
+            return result
         result.prompt_tokens += response.prompt_tokens
         result.completion_tokens += response.completion_tokens
         result.model = response.model or model

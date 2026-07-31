@@ -8,6 +8,8 @@ import time
 from collections.abc import Sequence
 from typing import Any
 
+import httpx
+
 from negotium.adapters.llm.multimodal import to_openai_content
 from negotium.domain.entities import LlmRoute
 from negotium.domain.ports import (
@@ -19,6 +21,12 @@ from negotium.domain.ports import (
     ToolSpec,
 )
 from negotium.observability import get_logger
+
+# The SDK default is read=600s with max_retries=2, so a single stalled call can
+# hang a request for ~30 minutes. Agent-loop turns on reasoning models legitimately
+# take tens of seconds, so keep the read budget generous but bounded.
+_DEFAULT_TIMEOUT = httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=10.0)
+_MAX_RETRIES = 1
 
 _COMPLETION_TOKENS_PREFIXES = (
     "o1",
@@ -312,5 +320,10 @@ class OpenAiProvider(LlmProvider):
             return self._client
         from openai import AsyncOpenAI
 
-        self._client = AsyncOpenAI(api_key=self._api_key, base_url=self._base_url)
+        self._client = AsyncOpenAI(
+            api_key=self._api_key,
+            base_url=self._base_url,
+            timeout=_DEFAULT_TIMEOUT,
+            max_retries=_MAX_RETRIES,
+        )
         return self._client

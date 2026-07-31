@@ -265,7 +265,10 @@ _MODEL_PROFILES: dict[str, dict[str, ModelProfile]] = {
                 context_window=128_000,
                 supports_tools=True,
                 supports_parallel_tool_calls=True,
-                reasoning_effort_agent="high",
+                # "high" cost ~32s for a single 279-token setup-chat turn, which
+                # reads as a hang in the wizard. One step down keeps tool-call
+                # quality while cutting the hidden-reasoning stall.
+                reasoning_effort_agent="medium",
                 reasoning_effort_direct="minimal",
             ),
             _profile(

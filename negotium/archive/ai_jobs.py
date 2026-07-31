@@ -129,6 +129,20 @@ class AiJobStore:
                 return record
         return None
 
+    def fail_orphans(self, *, error: str = "") -> list[AiJobRecord]:
+        """Close out jobs left ``queued``/``running`` by a dead process.
+
+        ``_finish_ai_job`` only runs if the process that started the job survives
+        to hit its ``except``. A crash mid-call therefore strands the record at
+        ``running`` forever, and the UI polls it indefinitely. Called at startup,
+        when no job from a previous lifetime can still be in flight.
+        """
+        stranded = [
+            record for record in self.recent(limit=10_000) if record.status in {"queued", "running"}
+        ]
+        message = error or "서버가 재시작되어 이전 작업을 완료할 수 없습니다."
+        return [self.update(record.with_status("failed", error=message)) for record in stranded]
+
     def recent(self, *, limit: int = 50) -> list[AiJobRecord]:
         if not self._root.exists():
             return []

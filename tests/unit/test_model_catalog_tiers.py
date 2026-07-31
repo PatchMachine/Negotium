@@ -122,7 +122,7 @@ def test_capability_matrix_and_restricted_labels() -> None:
 
 def test_solar_reasoning_effort_uses_the_per_model_vocabulary() -> None:
     # The hosted API takes high|medium|low|minimal ...
-    assert solar_reasoning_effort("solar", "solar-pro3", mode="agent") == "high"
+    assert solar_reasoning_effort("solar", "solar-pro3", mode="agent") == "medium"
     assert solar_reasoning_effort("solar", "solar-pro3", mode="chat") == "minimal"
     assert solar_reasoning_effort("solar", "solar-pro2", mode="chat") == "minimal"
     # ... while the open-weights model only accepts high|none. Sending

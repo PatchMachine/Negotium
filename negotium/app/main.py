@@ -50,6 +50,12 @@ def create_app(container: Container | None = None) -> FastAPI:
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         nonlocal llm_preload_task, automation_task
         log.info("app.startup")
+        if container.settings.env != "test":
+            # Nothing from a previous process lifetime can still be in flight,
+            # so any job left running is stranded and would poll forever.
+            orphans = container.ai_jobs.fail_orphans()
+            if orphans:
+                log.warning("ai_jobs.orphans_failed", count=len(orphans))
         if container.settings.env != "test" and container.settings.automation_enabled:
             automation_task = asyncio.create_task(
                 _automation_loop(container), name="automation-scheduler"
