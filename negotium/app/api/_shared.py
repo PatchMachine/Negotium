@@ -3275,7 +3275,11 @@ async def _generate_process_steps(
                 provider=provider,
                 route=route,
                 temperature=0.1,
-                max_tokens=1400,
+                # 1400 truncated real minutes mid-JSON (observed 1368/1400),
+                # which reads as "no steps" and drops to the single-step
+                # fallback. Steps JSON is bounded by the meeting size, so the
+                # larger cap only pays for itself when actually needed.
+                max_tokens=3000,
                 task="document_generation",
                 model=model,
             )

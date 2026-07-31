@@ -585,11 +585,23 @@ def _decision_for(
     return "allow_redacted" if findings else "allow"
 
 
+# Per-string ceiling for frontier egress. This is a data-minimization backstop,
+# not a token budget: office prompts routinely run 4-6k chars (company context +
+# template + meeting source), and a cap below that silently amputates whatever
+# the template puts last — at 2400 the model received truncated company memory
+# and never saw the meeting text at all, then narrated its confusion as the
+# generated document. Keep it well above any office prompt while still bounding
+# a runaway page dump.
+_FRONTIER_MAX_CHARS = 48_000
+
+
 def _abstract_for_frontier(value: Any, *, task_type: str, source_uri: str) -> Any:
     if isinstance(value, str):
-        if len(value) <= 2400:
+        if len(value) <= _FRONTIER_MAX_CHARS:
             return value
-        return value[:2400] + "\n\n[Context truncated locally before frontier routing.]"
+        return (
+            value[:_FRONTIER_MAX_CHARS] + "\n\n[Context truncated locally before frontier routing.]"
+        )
     if isinstance(value, list):
         return [
             _abstract_for_frontier(item, task_type=task_type, source_uri=source_uri)
